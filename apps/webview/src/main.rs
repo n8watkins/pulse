@@ -11,9 +11,9 @@
 //! write the open times.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use pulse_readings::{Sample, Snapshot, Source};
+use pulse_readings::{IconImage, Sample, Snapshot, Source};
 use serde::Serialize;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -30,6 +30,10 @@ const WIDTH: f64 = 380.0;
 const HEIGHT: f64 = 700.0;
 const MARGIN: f64 = 12.0;
 const HISTORY: usize = 90;
+/// Samples of history made up front with sample data.
+const SEED: usize = 60;
+/// Icon size asked of the reader; the page shows it at 24 px.
+const ICON_PX: u32 = 32;
 const TICK: Duration = Duration::from_secs(2);
 /// A toggle this soon after an automatic hide is the tray click that caused it.
 const REOPEN_GUARD_MS: u64 = 300;
@@ -40,6 +44,7 @@ struct Shared {
     /// Milliseconds since `start` of the last hide caused by losing focus, plus one.
     auto_hide_at: AtomicU64,
     keep_open_on_blur: bool,
+    suspend: bool,
     wake: Mutex<Sender<()>>,
     /// When the last show was requested and its first frame has not been reported.
     pending_show: Mutex<Option<Instant>>,
@@ -167,6 +172,9 @@ fn show(app: &AppHandle, state: &SharedState, activate: bool) {
     }
     place(app, &win);
     state.visible.store(true, Ordering::SeqCst);
+    if state.suspend {
+        suspend_webview(&win, false);
+    }
     if activate {
         let _ = win.show();
         let _ = win.set_focus();
@@ -186,8 +194,42 @@ fn hide(app: &AppHandle, state: &SharedState, automatic: bool) {
     }
     if let Some(win) = window(app) {
         let _ = win.hide();
+        if state.suspend {
+            suspend_webview(&win, true);
+        }
     }
 }
+
+/// Experiment, off unless `PULSE_SUSPEND=1` (not part of the shared hooks):
+/// WebView2's own suspend while hidden, resumed on show.
+#[cfg(windows)]
+fn suspend_webview(win: &WebviewWindow, suspend: bool) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
+    use windows_core::Interface;
+    let _ = win.with_webview(move |wv| {
+        // SAFETY: the controller belongs to this live webview, called on its thread.
+        unsafe {
+            let controller = wv.controller();
+            let _ = controller.SetIsVisible(!suspend);
+            let Ok(core) = controller.CoreWebView2() else {
+                return;
+            };
+            let Ok(core3) = core.cast::<ICoreWebView2_3>() else {
+                return;
+            };
+            if suspend {
+                let handler =
+                    webview2_com::TrySuspendCompletedHandler::create(Box::new(|_, _| Ok(())));
+                let _ = core3.TrySuspend(&handler);
+            } else {
+                let _ = core3.Resume();
+            }
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn suspend_webview(_win: &WebviewWindow, _suspend: bool) {}
 
 fn toggle(app: &AppHandle, state: &SharedState) {
     if state.visible.load(Ordering::SeqCst) {
@@ -221,10 +263,49 @@ fn make_tool_window(win: &WebviewWindow) {
 #[cfg(not(windows))]
 fn make_tool_window(_win: &WebviewWindow) {}
 
+/// The icon as a PNG data URL for the page.
+fn png_data_url(img: &IconImage) -> Option<String> {
+    use base64::Engine;
+    let mut out = Vec::new();
+    let mut enc = png::Encoder::new(&mut out, img.width, img.height);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut w = enc.write_header().ok()?;
+    w.write_image_data(&img.rgba).ok()?;
+    w.finish().ok()?;
+    Some(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(out)
+    ))
+}
+
+/// Appends a snapshot's processor and memory figures to the sparkline history.
+fn record(cpu: &mut VecDeque<f32>, mem: &mut VecDeque<f32>, snap: &Snapshot) {
+    let used = if snap.mem_total == 0 {
+        0.0
+    } else {
+        snap.mem_used as f64 / snap.mem_total as f64 * 100.0
+    };
+    cpu.push_back(snap.cpu_pct);
+    mem.push_back(used as f32);
+    while cpu.len() > HISTORY {
+        cpu.pop_front();
+        mem.pop_front();
+    }
+}
+
 /// The reader thread: one snapshot per tick, an extra one when woken by a show.
 fn reader(app: AppHandle, state: SharedState, mut source: Box<dyn Source>, wake: Receiver<()>) {
     let mut cpu = VecDeque::with_capacity(HISTORY + 1);
     let mut mem = VecDeque::with_capacity(HISTORY + 1);
+    // Paths whose icon was already tried (and sent when it exists).
+    let mut tried: HashSet<String> = HashSet::new();
+    if state.sample {
+        // Sample data starts with a full history, as the reference page does.
+        for _ in 0..SEED {
+            record(&mut cpu, &mut mem, &source.read(false));
+        }
+    }
     loop {
         let woken = match wake.recv_timeout(TICK) {
             Ok(()) => true,
@@ -233,19 +314,22 @@ fn reader(app: AppHandle, state: SharedState, mut source: Box<dyn Source>, wake:
         };
         let visible = state.visible.load(Ordering::SeqCst);
         let snap = source.read(visible);
-        let used = if snap.mem_total == 0 {
-            0.0
-        } else {
-            snap.mem_used as f64 / snap.mem_total as f64 * 100.0
-        };
-        cpu.push_back(snap.cpu_pct);
-        mem.push_back(used as f32);
-        while cpu.len() > HISTORY {
-            cpu.pop_front();
-            mem.pop_front();
-        }
+        record(&mut cpu, &mut mem, &snap);
         // Nothing reaches the page while it is hidden.
         if visible {
+            // Each icon goes to the page once, before the snapshot that uses it.
+            let mut fresh = serde_json::Map::new();
+            for path in snap.apps.iter().filter_map(|a| a.path.as_ref()) {
+                if tried.insert(path.clone())
+                    && let Some(url) =
+                        pulse_readings::icon_rgba(path, ICON_PX).and_then(|img| png_data_url(&img))
+                {
+                    fresh.insert(path.clone(), url.into());
+                }
+            }
+            if !fresh.is_empty() {
+                let _ = app.emit_to(LABEL, "icons", serde_json::Value::Object(fresh));
+            }
             let payload = Payload {
                 snapshot: &snap,
                 cpu: &cpu,
@@ -295,6 +379,7 @@ fn main() {
         visible: AtomicBool::new(false),
         auto_hide_at: AtomicU64::new(0),
         keep_open_on_blur: show_at_start,
+        suspend: env_on("PULSE_SUSPEND"),
         wake: Mutex::new(wake_tx),
         pending_show: Mutex::new(None),
         painted: Mutex::new(None),
@@ -349,10 +434,8 @@ fn main() {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
-                    "open" => {
-                        if !on_menu.visible.load(Ordering::SeqCst) {
-                            show(app, &on_menu, true);
-                        }
+                    "open" if !on_menu.visible.load(Ordering::SeqCst) => {
+                        show(app, &on_menu, true);
                     }
                     "exit" => app.exit(0),
                     _ => {}
@@ -377,6 +460,18 @@ fn main() {
             if let Some(rx) = wake_rx.lock().ok().and_then(|mut r| r.take()) {
                 let (a, s) = (handle.clone(), Arc::clone(&state));
                 std::thread::spawn(move || reader(a, s, source, rx));
+            }
+            if state.suspend && !show_at_start {
+                // Suspend the hidden page once it has loaded.
+                let (a, s) = (handle.clone(), Arc::clone(&state));
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(1500));
+                    if !s.visible.load(Ordering::SeqCst)
+                        && let Some(win) = window(&a)
+                    {
+                        suspend_webview(&win, true);
+                    }
+                });
             }
             if let Some(report) = selftest_report {
                 let (a, s) = (handle.clone(), Arc::clone(&state));

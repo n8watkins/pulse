@@ -36,10 +36,15 @@ button:focus-visible{outline:2px solid var(--mint);outline-offset:2px;border-rad
 .pulse .apps{margin-top:12px}
 .pulse .ah{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
 .pulse .ah h2{margin:0;font:600 14px/1 var(--text)}
+.pulse .seg{display:flex;background:var(--soft);border-radius:8px;padding:2px}
+.pulse .seg button{font-size:13px;padding:5px 10px;border-radius:6px;color:var(--mute);min-height:30px;cursor:default}
+.pulse .seg [aria-pressed=true]{background:var(--bg);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.12)}
 .pulse #list{list-style:none;margin:0;padding:0}
 .pulse #list li{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:8px 2px;border-bottom:1px solid var(--line);font-size:14px}
 .pulse #list li:last-child{border-bottom:0}
 .pulse #list .ic{grid-row:span 2;width:28px;height:28px;border-radius:7px;display:grid;place-items:center;font:700 13px/1 var(--text);color:#fff}
+.pulse #list .ic.real{background:none}
+.pulse #list .ic img{display:block;width:24px;height:24px}
 .pulse #list .nm{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pulse #list .val{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}
 .pulse #list .sb{grid-column:2/-1;display:grid;grid-template-columns:minmax(0,1fr) 90px;gap:10px;align-items:center;font-size:13px;color:var(--mute)}

@@ -13,7 +13,8 @@
 # The panel window is titled "Pulse" (a visible top-level window of the process
 # is used when no window has that title).
 #
-# Writes to -Out: report.json, panel-light.png and panel-dark.png.
+# Writes to -Out: report.json, panel-light.png and panel-dark.png (sample
+# readings) and panel-light-real.png and panel-dark-real.png (the real reader).
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\measure.ps1 `
 #     -Exe target\release\pulse-webview.exe -Out C:\path\to\out
@@ -21,6 +22,7 @@ param(
   [Parameter(Mandatory)] [string]$Exe,
   [Parameter(Mandatory)] [string]$Out,
   [int]$IdleSeconds = 90,
+  [int]$SettleSeconds = 20,
   [int]$LimitSeconds = 900
 )
 $ErrorActionPreference = "Stop"
@@ -82,11 +84,17 @@ function Descendants([int]$root) {
 }
 
 $all_started = New-Object System.Collections.Generic.List[int]
+$runs = 0
 function Start-Shell([hashtable]$envVars) {
   foreach ($k in @("PULSE_SAMPLE", "PULSE_SHOW", "PULSE_THEME", "PULSE_SELFTEST", "PULSE_REPORT")) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
   foreach ($k in $envVars.Keys) { Set-Item "env:$k" $envVars[$k] }
+  # A fresh WebView2 profile folder per start (ignored by shells without a
+  # webview), so a run never waits on the previous run's dying processes.
+  $script:runs++
+  $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $out "profiles\run$($script:runs)"
   try { $p = Start-Process $exe -PassThru } finally {
     foreach ($k in $envVars.Keys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+    Remove-Item env:WEBVIEW2_USER_DATA_FOLDER -ErrorAction SilentlyContinue
   }
   $all_started.Add($p.Id); Add-Content $pidFile $p.Id
   return $p
@@ -98,18 +106,26 @@ function Stop-Shell($p) {
   [array]::Reverse($tree)
   foreach ($id in $tree) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
   try { Wait-Process -Id $p.Id -Timeout 10 -ErrorAction SilentlyContinue } catch {}
+  # Wait until the whole tree is gone before the next start.
+  $end = (Get-Date).AddSeconds(15)
+  while ((Get-Date) -lt $end -and ($tree | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })) { Start-Sleep -Milliseconds 200 }
 }
 
 # ----- memory: Task Manager's number, "Working Set - Private" -----
 function Memory([int]$root) {
   $tree = Descendants $root
-  $samples = (Get-Counter -Counter "\Process V2(*)\Working Set - Private" -ErrorAction Stop).CounterSamples
+  # A process that exits during the sweep makes the whole read fail: read again.
+  $samples = $null
+  for ($try = 0; $try -lt 10 -and -not $samples; $try++) {
+    try { $samples = (Get-Counter -Counter "\Process V2(*)\Working Set - Private" -ErrorAction Stop).CounterSamples } catch { $lastErr = $_.Exception.Message; Start-Sleep -Milliseconds 1000 }
+  }
+  if (-not $samples) { throw "the Working Set - Private counter could not be read: $lastErr" }
   $private = 0.0; $found = 0
   foreach ($s in $samples) {
     $i = $s.InstanceName.LastIndexOf(":")
     if ($i -lt 0) { continue }
     $id = 0; if (-not [int]::TryParse($s.InstanceName.Substring($i + 1), [ref]$id)) { continue }
-    if ($tree -contains $id) { $private += $s.CookedValue; $found++ }
+    if (($tree -contains $id) -and $s.Status -eq 0) { $private += $s.CookedValue; $found++ }
   }
   $commit = 0.0
   foreach ($id in $tree) { $pr = Get-Process -Id $id -ErrorAction SilentlyContinue; if ($pr) { $commit += $pr.PrivateMemorySize64 } }
@@ -117,7 +133,10 @@ function Memory([int]$root) {
 }
 function Memory-Series([int]$root, [int]$count = 5, [int]$gap = 5) {
   $list = @()
-  for ($i = 0; $i -lt $count; $i++) { if ($i -gt 0) { Pause-Bounded $gap }; $list += , (Memory $root) }
+  for ($i = 0; $i -lt $count; $i++) { if ($i -gt 0) { Pause-Bounded $gap }; 
+    try { $list += , (Memory $root) } catch { $report.errors += "memory sample skipped: $($_.Exception.Message)" }
+  }
+  if (-not $list.Count) { throw "no memory sample could be taken" }
   $avg = { param($k) [math]::Round((($list | ForEach-Object { $_[$k] } | Measure-Object -Average).Average), 1) }
   return [ordered]@{ samples = $list; meanPrivateWorkingSetMb = (& $avg "privateWorkingSetMb"); meanCommitMb = (& $avg "commitMb") }
 }
@@ -181,7 +200,11 @@ try {
     if ($mode -eq "sample") { $vars.PULSE_SAMPLE = "1" }
     Log "selftest ($mode)"
     $proc = Start-Shell $vars
-    Wait-Until "the self-test report" { Test-Path $file } 60 | Out-Null
+    try { Wait-Until "the self-test report" { Test-Path $file } 90 | Out-Null } catch {
+      Log ("windows of pid {0}: {1}" -f $proc.Id, (([W]::Windows([uint32]$proc.Id) | ForEach-Object { "[" + ($_ -join "|") + "]" }) -join " "))
+      Log ("alive: {0}, tree: {1}" -f (-not $proc.HasExited), ((Descendants $proc.Id) -join ","))
+      throw
+    }
     Start-Sleep -Milliseconds 300
     $j = Get-Content -Raw $file | ConvertFrom-Json
     $ok = @($j.open_ms | Where-Object { $_ -ne $null })
@@ -193,17 +216,27 @@ try {
 
   # (c) Open: shown without activation, each theme.
   $report.open = [ordered]@{}
-  foreach ($theme in @("light", "dark")) {
-    Log "open: $theme"
-    $proc = Start-Shell @{ PULSE_SAMPLE = "1"; PULSE_SHOW = "1"; PULSE_THEME = $theme }
-    $h = Wait-Until "the visible window" { $w = Find-Window $proc.Id $true; if ($w -ne [IntPtr]::Zero) { $w } } 30
+  # Sample readings first, then the real reader (real icons and names).
+  foreach ($case in @(@("light", "sample"), @("dark", "sample"), @("light", "real"), @("dark", "real"))) {
+    $theme = $case[0]; $mode = $case[1]
+    $label = if ($mode -eq "sample") { $theme } else { "$theme-real" }
+    Log "open: $label"
+    $vars = @{ PULSE_SHOW = "1"; PULSE_THEME = $theme }
+    if ($mode -eq "sample") { $vars.PULSE_SAMPLE = "1" }
+    $proc = Start-Shell $vars
+    try {
+      $h = Wait-Until "the visible window" { $w = Find-Window $proc.Id $true; if ($w -ne [IntPtr]::Zero) { $w } } 45
+    } catch {
+      Log ("windows of pid {0}: {1}" -f $proc.Id, (([W]::Windows([uint32]$proc.Id) | ForEach-Object { "[" + ($_ -join "|") + "]" }) -join " "))
+      throw
+    }
     $bmp = $null
     Wait-Until "the first frame" { $b = Capture $h; if (-not (Blank $b)) { $script:bmp = $b; $true } else { $b.Dispose(); $false } } 30 | Out-Null
-    # Let the first snapshots land, then take the picture and the memory.
-    Pause-Bounded 4
+    # Let the sparklines fill and the icons arrive, then take the picture and the memory.
+    Pause-Bounded $SettleSeconds
     $bmp.Dispose()
     $bmp = Capture $h
-    $png = Join-Path $out "panel-$theme.png"
+    $png = Join-Path $out "panel-$label.png"
     $bmp.Save($png, [Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
     $r = Bounds $h
     $entry = [ordered]@{ png = $png }
@@ -218,8 +251,8 @@ try {
     $entry.appWindow = (($ex -band 0x40000) -ne 0)
     $entry.styleOk = ($entry.toolWindow -and -not $entry.appWindow)
     $entry.memory = Memory-Series $proc.Id
-    Log ("open {0}: private working set {1} MB, commit {2} MB, tool window {3}" -f $theme, $entry.memory.meanPrivateWorkingSetMb, $entry.memory.meanCommitMb, $entry.styleOk)
-    $report.open[$theme] = $entry
+    Log ("open {0}: private working set {1} MB, commit {2} MB, tool window {3}" -f $label, $entry.memory.meanPrivateWorkingSetMb, $entry.memory.meanCommitMb, $entry.styleOk)
+    $report.open[$label] = $entry
     Stop-Shell $proc; $proc = $null
   }
   $report.foregroundUnchanged = ([W]::GetForegroundWindow() -eq $fg0)
@@ -231,6 +264,9 @@ try {
   if ($proc) { Stop-Shell $proc }
   foreach ($id in $all_started) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
   if ($watch) { Stop-Process -Id $watch.Id -Force -ErrorAction SilentlyContinue }
+  Start-Sleep -Milliseconds 500
+  # The profile folders this run made.
+  Remove-Item (Join-Path $out "profiles") -Recurse -Force -ErrorAction SilentlyContinue
   $report.seconds = [int]((Get-Date) - $started).TotalSeconds
   $report | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $out "report.json")
 }

@@ -42,19 +42,22 @@ pub(crate) fn is_builtin(image: &str) -> bool {
     FRIENDLY.iter().any(|(k, _)| k.eq_ignore_ascii_case(s))
 }
 
+/// Pids kept per group, to try in turn when looking for one that can be opened.
+const PIDS_KEPT: usize = 8;
+
 /// Groups `(image name, private bytes, pid)` by image name (case-insensitive)
-/// and returns the biggest `TOP` groups, largest first, each with the pid of
-/// the first process seen in its group.
-pub(crate) fn top_apps<I>(processes: I) -> Vec<(AppRow, u32)>
+/// and returns the biggest `TOP` groups, largest first, each with the first
+/// few pids seen in its group.
+pub(crate) fn top_apps<I>(processes: I) -> Vec<(AppRow, Vec<u32>)>
 where
     I: IntoIterator<Item = (String, u64, u32)>,
 {
-    let mut groups: HashMap<String, (AppRow, u32)> = HashMap::new();
+    let mut groups: HashMap<String, (AppRow, Vec<u32>)> = HashMap::new();
     for (image, bytes, pid) in processes {
         if image.is_empty() {
             continue;
         }
-        let (row, _) = groups.entry(image.to_ascii_lowercase()).or_insert_with(|| {
+        let (row, pids) = groups.entry(image.to_ascii_lowercase()).or_insert_with(|| {
             let row = AppRow {
                 name: friendly(&image),
                 exe: image.clone(),
@@ -62,12 +65,15 @@ where
                 mem_bytes: 0,
                 path: None,
             };
-            (row, pid)
+            (row, Vec::new())
         });
         row.processes += 1;
         row.mem_bytes += bytes;
+        if pids.len() < PIDS_KEPT {
+            pids.push(pid);
+        }
     }
-    let mut rows: Vec<(AppRow, u32)> = groups.into_values().collect();
+    let mut rows: Vec<(AppRow, Vec<u32>)> = groups.into_values().collect();
     rows.sort_by(|a, b| {
         b.0.mem_bytes
             .cmp(&a.0.mem_bytes)
@@ -100,8 +106,8 @@ mod tests {
             ("svchost.exe".to_string(), 40, 4),
             (String::new(), 9999, 5),
         ]);
-        let pids: Vec<u32> = rows.iter().map(|r| r.1).collect();
-        assert_eq!(pids, [1, 2]);
+        let pids: Vec<Vec<u32>> = rows.iter().map(|r| r.1.clone()).collect();
+        assert_eq!(pids, [vec![1, 3], vec![2, 4]]);
         let rows: Vec<AppRow> = rows.into_iter().map(|r| r.0).collect();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].exe, "chrome.exe");

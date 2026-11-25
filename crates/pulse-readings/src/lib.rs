@@ -39,8 +39,10 @@ pub struct AppRow {
     pub processes: u32,
     /// Private working set summed over the group, as Task Manager shows it.
     pub mem_bytes: u64,
-    /// Full path of one process in the group; `None` when it cannot be opened
-    /// (protected processes) or there is no real process (sample data).
+    /// Where to get the row's icon: the full path of one process in the group,
+    /// or for system rows a stand-in file (the `System32` file of the same
+    /// name for protected processes, or a built-in pick such as `wsl.exe` for
+    /// WSL). `None` only when there is nothing to use (sample data).
     pub path: Option<String>,
 }
 

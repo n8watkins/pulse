@@ -4798,11 +4798,15 @@ dependencies = [
 name = "pulse-webview"
 version = "0.0.0"
 dependencies = [
+ "base64 0.23.1",
+ "png",
  "pulse-readings",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "webview2-com",
+ "windows-core",
  "windows-sys 0.61.2",
 ]
 
