@@ -115,6 +115,81 @@ component Hero inherits Rectangle {
     }
 }
 
+component Tile inherits Rectangle {
+    in property <string> k;
+    in property <string> v;
+    in property <string> s;
+    in property <bool> bar: true;
+    in property <float> frac;
+    // No reading: the value text is smaller so "Not reported" fits.
+    in property <bool> small-v: false;
+    height: 85px;
+    border-radius: 12px;
+    background: Theme.soft;
+
+    Text {
+        x: 10px;
+        y: 9px;
+        width: parent.width - 20px;
+        height: 19px;
+        text: root.k;
+        font-family: "Inter";
+        font-size: 13px;
+        font-weight: 500;
+        color: Theme.mute;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Text {
+        x: 10px;
+        y: 28px;
+        width: parent.width - 20px;
+        height: 20px;
+        text: root.v;
+        font-family: "Space Grotesk";
+        font-size: root.small-v ? 13px : 17px;
+        font-weight: 700;
+        color: Theme.ink;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Text {
+        x: 10px;
+        y: 48px;
+        width: parent.width - 20px;
+        height: 19px;
+        text: root.s;
+        font-family: "Inter";
+        font-size: 13px;
+        color: Theme.mute;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    if root.bar: Rectangle {
+        x: 10px;
+        y: 72px;
+        width: parent.width - 20px;
+        height: 5px;
+        border-radius: 3px;
+        background: Theme.line;
+        clip: true;
+        Rectangle {
+            x: 0;
+            width: parent.width * root.frac;
+            height: parent.height;
+            border-radius: 3px;
+            background: Theme.ink;
+            animate width {
+                duration: 400ms;
+                easing: cubic-bezier(0.25, 0.1, 0.25, 1);
+            }
+        }
+    }
+}
+
 component AppRow inherits Rectangle {
     in property <AppItem> item;
     in property <bool> last;
@@ -227,6 +302,18 @@ export component PanelWindow inherits Window {
     in property <string> mem-line: "";
     in property <string> mem-fill: "";
     in property <[AppItem]> apps;
+    in property <string> gpu-big: "";
+    in property <bool> gpu-missing: false;
+    in property <float> gpu-frac;
+    in property <string> drive-big: "";
+    in property <string> drive-sub: "";
+    in property <float> drive-frac;
+    in property <string> net-big: "";
+    in property <string> net-sub: "";
+    in property <bool> has-battery: false;
+    in property <string> bat-big: "";
+    in property <string> bat-sub: "";
+    in property <float> bat-frac;
     callback close-clicked;
 
     title: "Pulse";
@@ -404,7 +491,106 @@ export component PanelWindow inherits Window {
         x: 13px;
         y: floor(262.4 + i * 60.15) * 1px;
         item: item;
-        last: i == 5;
+        last: i == root.apps.length - 1;
+    }
+
+    // bottom row of tiles
+    Tile {
+        x: 13px;
+        y: root.has-battery ? 512px : 572px;
+        width: 112.67px;
+        k: "Graphics";
+        v: root.gpu-big;
+        s: root.gpu-missing ? "" : "3D engine";
+        small-v: root.gpu-missing;
+        bar: !root.gpu-missing;
+        frac: root.gpu-frac;
+    }
+
+    Tile {
+        x: 133.67px;
+        y: root.has-battery ? 512px : 572px;
+        width: 112.67px;
+        k: "Drive C:";
+        v: root.drive-big;
+        s: root.drive-sub;
+        frac: root.drive-frac;
+    }
+
+    Tile {
+        x: 254.33px;
+        y: root.has-battery ? 512px : 572px;
+        width: 112.67px;
+        k: "Network";
+        v: root.net-big;
+        s: root.net-sub;
+        bar: false;
+    }
+
+    if root.has-battery: Rectangle {
+        x: 13px;
+        y: 605px;
+        width: 354px;
+        height: 46px;
+        border-radius: 12px;
+        background: Theme.soft;
+        Text {
+            x: 10px;
+            y: 5px;
+            height: 19px;
+            text: "Battery";
+            font-family: "Inter";
+            font-size: 13px;
+            font-weight: 500;
+            color: Theme.mute;
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: 10px;
+            y: 22px;
+            height: 20px;
+            text: root.bat-big;
+            font-family: "Space Grotesk";
+            font-size: 17px;
+            font-weight: 700;
+            color: Theme.ink;
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: 76px;
+            y: 24px;
+            width: 140px;
+            height: 19px;
+            text: root.bat-sub;
+            font-family: "Inter";
+            font-size: 13px;
+            color: Theme.mute;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Rectangle {
+            x: parent.width - 10px - 110px;
+            y: 20px;
+            width: 110px;
+            height: 5px;
+            border-radius: 3px;
+            background: Theme.line;
+            clip: true;
+            Rectangle {
+                x: 0;
+                width: parent.width * root.bat-frac;
+                height: parent.height;
+                border-radius: 3px;
+                background: Theme.ink;
+                animate width {
+                    duration: 400ms;
+                    easing: cubic-bezier(0.25, 0.1, 0.25, 1);
+                }
+            }
+        }
     }
 
     // footer

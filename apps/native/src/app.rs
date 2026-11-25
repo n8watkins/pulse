@@ -52,6 +52,7 @@ impl Config {
 /// Newest reading, kept by the reader thread whether or not the panel is shown.
 struct Latest {
     snap: Snapshot,
+    extra: view::Extra,
     hist: History,
 }
 
@@ -180,7 +181,7 @@ impl Panel {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(l) = guard.as_ref() else { return };
-        let v = view::build(&l.snap, &l.hist, self.sample);
+        let v = view::build(&l.snap, &l.extra, &l.hist, self.sample);
         drop(guard);
         let ui = &self.ui;
         ui.set_status(v.status.into());
@@ -192,6 +193,21 @@ impl Panel {
         ui.set_mem_sub(v.mem_sub.into());
         ui.set_mem_line(v.mem_line.into());
         ui.set_mem_fill(v.mem_fill.into());
+        let t = v.tiles;
+        ui.set_gpu_big(t.gpu_big.into());
+        ui.set_gpu_missing(t.gpu_missing);
+        ui.set_gpu_frac(t.gpu_frac);
+        ui.set_drive_big(t.drive_big.into());
+        ui.set_drive_sub(t.drive_sub.into());
+        ui.set_drive_frac(t.drive_frac);
+        ui.set_net_big(t.net_big.into());
+        ui.set_net_sub(t.net_sub.into());
+        ui.set_has_battery(t.battery.is_some());
+        if let Some(b) = t.battery {
+            ui.set_bat_big(b.big.into());
+            ui.set_bat_sub(b.sub.into());
+            ui.set_bat_frac(b.frac);
+        }
         let rows: Vec<AppItem> = v
             .apps
             .into_iter()
@@ -323,10 +339,12 @@ fn spawn_reader(
             }
             force_apps = false;
             hist.push(&snap);
+            let extra = view::Extra::from_snapshot(&snap, sample);
             *latest
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Latest {
                 snap,
+                extra,
                 hist: hist.clone(),
             });
             if visible {

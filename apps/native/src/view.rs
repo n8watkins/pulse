@@ -70,10 +70,65 @@ pub struct View {
     pub mem_line: String,
     pub mem_fill: String,
     pub apps: Vec<AppView>,
+    pub tiles: Tiles,
+}
+
+/// The bottom row of tiles (and the battery tile when there is a battery).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Tiles {
+    pub gpu_big: String,
+    /// No reading: smaller text, no bar fill.
+    pub gpu_missing: bool,
+    pub gpu_frac: f32,
+    pub drive_big: String,
+    pub drive_sub: String,
+    pub drive_frac: f32,
+    pub net_big: String,
+    pub net_sub: String,
+    pub battery: Option<BatteryView>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BatteryView {
+    pub big: String,
+    pub sub: String,
+    pub frac: f32,
+}
+
+/// Readings beyond the first panel half. Stand-in until `Snapshot` carries them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Extra {
+    pub gpu_pct: Option<f32>,
+    pub disk_free: u64,
+    pub disk_total: u64,
+    pub disk_read_bps: u64,
+    pub disk_write_bps: u64,
+    pub net_down_bps: u64,
+    pub net_up_bps: u64,
+    pub battery: Option<(u8, bool)>,
+}
+
+impl Extra {
+    /// Stand-in: the reference page's figures for sample data, nothing otherwise.
+    pub fn from_snapshot(_snap: &Snapshot, sample: bool) -> Self {
+        if !sample {
+            return Self::default();
+        }
+        Self {
+            gpu_pct: Some(13.0),
+            disk_free: 296 * (1 << 30),
+            disk_total: 900 * (1 << 30),
+            disk_read_bps: 3_200_000,
+            disk_write_bps: 1_000_000,
+            net_down_bps: 1_780_000,
+            net_up_bps: 293_000,
+            battery: None,
+        }
+    }
 }
 
 #[allow(clippy::cast_precision_loss)]
-pub fn build(snap: &Snapshot, hist: &History, sample: bool) -> View {
+pub fn build(snap: &Snapshot, extra: &Extra, hist: &History, sample: bool) -> View {
     let used = snap.mem_used as f64;
     let total = snap.mem_total as f64;
     let (cpu_line, cpu_fill) = sparkline(&hist.cpu);
@@ -89,7 +144,7 @@ pub fn build(snap: &Snapshot, hist: &History, sample: bool) -> View {
         status: if sample {
             "Sample data, not this PC"
         } else {
-            "Running normally"
+            "Running smoothly"
         }
         .into(),
         cpu_big: format!("{}%", round_half_up(f64::from(snap.cpu_pct))),
@@ -111,7 +166,7 @@ pub fn build(snap: &Snapshot, hist: &History, sample: bool) -> View {
         apps: snap
             .apps
             .iter()
-            .take(6)
+            .take(if extra.battery.is_some() { 4 } else { 5 })
             .map(|a| {
                 let base = a.exe.strip_suffix(".exe").unwrap_or(&a.exe);
                 AppView {
@@ -129,6 +184,37 @@ pub fn build(snap: &Snapshot, hist: &History, sample: bool) -> View {
                 }
             })
             .collect(),
+        tiles: tiles(extra),
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn tiles(x: &Extra) -> Tiles {
+    let used_share = if x.disk_total == 0 {
+        0.0
+    } else {
+        x.disk_total.saturating_sub(x.disk_free) as f64 / x.disk_total as f64
+    };
+    Tiles {
+        gpu_big: x.gpu_pct.map_or_else(
+            || "Not reported".into(),
+            |g| format!("{}%", round_half_up(f64::from(g))),
+        ),
+        gpu_missing: x.gpu_pct.is_none(),
+        gpu_frac: x.gpu_pct.map_or(0.0, |g| (g / 100.0).clamp(0.0, 1.0)),
+        drive_big: format_bytes(x.disk_free),
+        drive_sub: format!(
+            "free \u{b7} {}/s",
+            format_bytes(x.disk_read_bps + x.disk_write_bps)
+        ),
+        drive_frac: used_share as f32,
+        net_big: format!("\u{2193} {}/s", format_bytes(x.net_down_bps)),
+        net_sub: format!("\u{2191} {}/s", format_bytes(x.net_up_bps)),
+        battery: x.battery.map(|(pct, plugged)| BatteryView {
+            big: format!("{pct}%"),
+            sub: if plugged { "Plugged in" } else { "On battery" }.into(),
+            frac: f32::from(pct.min(100)) / 100.0,
+        }),
     }
 }
 
@@ -268,16 +354,34 @@ mod tests {
     }
 
     #[test]
-    fn view_of_the_sample_has_six_rows_and_the_top_bar_is_full() {
+    fn view_of_the_sample_has_five_rows_and_the_top_bar_is_full() {
         let snap = Sample::default().read(true);
         let mut h = History::default();
         h.push(&snap);
-        let v = build(&snap, &h, true);
-        assert_eq!(v.apps.len(), 6);
+        let v = build(&snap, &Extra::from_snapshot(&snap, true), &h, true);
+        assert_eq!(v.apps.len(), 5);
         assert!((v.apps[0].frac - 1.0).abs() < f32::EPSILON);
         assert_eq!(v.apps[0].detail, "chrome.exe \u{b7} 24 processes");
         assert_eq!(v.apps[3].detail, "obs64.exe");
         assert_eq!(v.mem_sub, "of 32 GB \u{b7} 43%");
         assert_eq!(v.cpu_sub, "16 cores \u{b7} up 3d 4h");
+        assert_eq!(v.tiles.drive_big, "296 GB");
+        assert_eq!(v.tiles.net_big, "\u{2193} 1.7 MB/s");
+        assert_eq!(v.tiles.net_sub, "\u{2191} 286 KB/s");
+        assert_eq!(v.tiles.gpu_big, "13%");
+    }
+
+    #[test]
+    fn missing_gpu_says_so_and_battery_shows_when_present() {
+        let x = Extra {
+            battery: Some((86, true)),
+            ..Extra::default()
+        };
+        let t = tiles(&x);
+        assert_eq!(t.gpu_big, "Not reported");
+        assert!(t.gpu_missing && t.gpu_frac == 0.0);
+        let b = t.battery.unwrap();
+        assert_eq!((b.big.as_str(), b.sub.as_str()), ("86%", "Plugged in"));
+        assert_eq!(tiles(&Extra::default()).battery, None);
     }
 }
