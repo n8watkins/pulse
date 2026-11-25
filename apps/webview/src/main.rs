@@ -13,7 +13,7 @@
 
 use pulse_readings::{IconImage, Sample, Snapshot, Source};
 use serde::Serialize;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -34,6 +34,8 @@ const HISTORY: usize = 90;
 const SEED: usize = 60;
 /// Icon size asked of the reader; the page shows it at 24 px.
 const ICON_PX: u32 = 32;
+/// Attempts per icon path before giving up on it.
+const ICON_TRIES: u8 = 3;
 const TICK: Duration = Duration::from_secs(2);
 /// A toggle this soon after an automatic hide is the tray click that caused it.
 const REOPEN_GUARD_MS: u64 = 300;
@@ -361,8 +363,8 @@ fn record(cpu: &mut VecDeque<f32>, mem: &mut VecDeque<f32>, snap: &Snapshot) {
 fn reader(app: AppHandle, state: SharedState, mut source: Box<dyn Source>, wake: Receiver<()>) {
     let mut cpu = VecDeque::with_capacity(HISTORY + 1);
     let mut mem = VecDeque::with_capacity(HISTORY + 1);
-    // Paths whose icon was already tried (and sent when it exists).
-    let mut tried: HashSet<String> = HashSet::new();
+    // Per icon path: how many times it was tried (ICON_TRIES once sent).
+    let mut tried: HashMap<String, u8> = HashMap::new();
     if state.sample {
         // Sample data starts with a full history, as the reference page does.
         for _ in 0..SEED {
@@ -383,11 +385,18 @@ fn reader(app: AppHandle, state: SharedState, mut source: Box<dyn Source>, wake:
             // Each icon goes to the page once, before the snapshot that uses it.
             let mut fresh = serde_json::Map::new();
             for path in snap.apps.iter().filter_map(|a| a.path.as_ref()) {
-                if tried.insert(path.clone())
-                    && let Some(url) =
-                        pulse_readings::icon_rgba(path, ICON_PX).and_then(|img| png_data_url(&img))
-                {
-                    fresh.insert(path.clone(), url.into());
+                // A path that failed is tried again on later snapshots, up to
+                // ICON_TRIES times; one that worked is never read again.
+                let tries = tried.entry(path.clone()).or_insert(0);
+                if *tries >= ICON_TRIES {
+                    continue;
+                }
+                match pulse_readings::icon_rgba(path, ICON_PX).and_then(|img| png_data_url(&img)) {
+                    Some(url) => {
+                        *tries = ICON_TRIES;
+                        fresh.insert(path.clone(), url.into());
+                    }
+                    None => *tries += 1,
                 }
             }
             if !fresh.is_empty() {

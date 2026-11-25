@@ -57,6 +57,7 @@ button:focus-visible{outline:2px solid var(--mint);outline-offset:2px;border-rad
 .pulse .tile[hidden]{display:none}
 .pulse .k{font-size:13px;color:var(--mute);font-weight:500}
 .pulse .v{font:700 17px/1.2 var(--display);font-variant-numeric:tabular-nums;white-space:nowrap}
+.pulse .tri .v{font-size:15px;letter-spacing:-.01em}
 .pulse .s{font-size:13px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pulse .pbar{height:5px;border-radius:3px;background:var(--line);margin-top:7px;overflow:hidden}
 .pulse .pbar i{display:block;height:100%;width:0;background:var(--ink);border-radius:3px;transition:width .4s}

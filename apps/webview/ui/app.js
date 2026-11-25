@@ -82,6 +82,14 @@ function rows(apps) {
 }
 
 const icons = new Map(); // exe path -> PNG data URL, each sent once by the app
+// A rate with no decimal at 10 or above: "77 MB/s", "4.2 MB/s".
+const rate = (b) => {
+  const u = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  while (b >= 1000 && i < 3) { b /= 1024; i++; }
+  return (b >= 10 || i === 0 ? Math.round(b) : b.toFixed(1)) + ' ' + u[i] + '/s';
+};
+
 // The tile row: Graphics, Drive C:, Network, and Battery when the PC has one.
 function tiles(s) {
   const pct = (v) => Math.max(0, Math.min(100, v)).toFixed(1) + '%';
@@ -89,7 +97,7 @@ function tiles(s) {
   else { set('#gpuV', Math.round(s.gpu_pct) + '%'); $('#gpuB').style.width = pct(s.gpu_pct); }
   const used = s.disk_total ? (s.disk_total - s.disk_free) / s.disk_total * 100 : 0;
   set('#drvV', fb(s.disk_free));
-  set('#drvS', 'free · ' + fb(s.disk_read_bps + s.disk_write_bps) + '/s');
+  set('#drvS', rate(s.disk_read_bps + s.disk_write_bps));
   $('#drvB').style.width = pct(used);
   set('#netV', '↓ ' + fb(s.net_down_bps) + '/s');
   set('#netS', '↑ ' + fb(s.net_up_bps) + '/s');
