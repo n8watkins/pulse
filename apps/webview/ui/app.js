@@ -65,7 +65,7 @@ function rows(apps) {
       img.src = url; img.alt = ''; img.width = 24; img.height = 24;
       ic.classList.add('real'); ic.append(img);
     } else {
-      ic.style.background = hue(a.exe); ic.textContent = (a.name[0] || '?').toUpperCase();
+      ic.style.background = hue(a.exe.replace(/\.exe$/i, '')); ic.textContent = (a.name[0] || '?').toUpperCase();
     }
     const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = a.name;
     const val = document.createElement('span'); val.className = 'val'; val.textContent = fb(a.mem_bytes);
@@ -93,13 +93,13 @@ function render(p) {
   set('#memV', (s.mem_used / GB).toFixed(1) + ' GB');
   set('#memS', `of ${Math.round(s.mem_total / GB)} GB · ${Math.round(memPct)}%`);
   const hot = s.cpu_pct > 85 || memPct > 90;
-  set('#status', sample ? 'Sample data, not this PC' : hot ? 'Busy right now' : 'All good');
+  set('#status', sample ? 'Sample data, not this PC' : 'Running smoothly');
   $('#status').classList.toggle('hot', hot && !sample);
   rows(s.apps);
   spark($('#cpuC'), hist.cpu);
   spark($('#memC'), hist.mem);
   shownAt = performance.now();
-  set('#ago', 'Just now');
+  set('#ago', '2s ago');
 }
 
 // First frame with data painted: tell the app, once per show.
@@ -110,7 +110,8 @@ function reportPainted() {
 setInterval(() => {
   if (!shownAt) return;
   const n = Math.round((performance.now() - shownAt) / 1000);
-  set('#ago', n < 2 ? 'Just now' : n + 's ago');
+  // Snapshots come every 2 s, so a fresh one reads "2s ago" like the reference.
+  set('#ago', Math.max(2, n) + 's ago');
 }, 1000);
 
 $('#close').addEventListener('click', () => invoke('hide_panel'));

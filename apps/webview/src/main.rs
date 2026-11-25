@@ -30,6 +30,8 @@ const WIDTH: f64 = 380.0;
 const HEIGHT: f64 = 700.0;
 const MARGIN: f64 = 12.0;
 const HISTORY: usize = 90;
+/// Samples of history made up front with sample data.
+const SEED: usize = 60;
 /// Icon size asked of the reader; the page shows it at 24 px.
 const ICON_PX: u32 = 32;
 const TICK: Duration = Duration::from_secs(2);
@@ -277,12 +279,33 @@ fn png_data_url(img: &IconImage) -> Option<String> {
     ))
 }
 
+/// Appends a snapshot's processor and memory figures to the sparkline history.
+fn record(cpu: &mut VecDeque<f32>, mem: &mut VecDeque<f32>, snap: &Snapshot) {
+    let used = if snap.mem_total == 0 {
+        0.0
+    } else {
+        snap.mem_used as f64 / snap.mem_total as f64 * 100.0
+    };
+    cpu.push_back(snap.cpu_pct);
+    mem.push_back(used as f32);
+    while cpu.len() > HISTORY {
+        cpu.pop_front();
+        mem.pop_front();
+    }
+}
+
 /// The reader thread: one snapshot per tick, an extra one when woken by a show.
 fn reader(app: AppHandle, state: SharedState, mut source: Box<dyn Source>, wake: Receiver<()>) {
     let mut cpu = VecDeque::with_capacity(HISTORY + 1);
     let mut mem = VecDeque::with_capacity(HISTORY + 1);
     // Paths whose icon was already tried (and sent when it exists).
     let mut tried: HashSet<String> = HashSet::new();
+    if state.sample {
+        // Sample data starts with a full history, as the reference page does.
+        for _ in 0..SEED {
+            record(&mut cpu, &mut mem, &source.read(false));
+        }
+    }
     loop {
         let woken = match wake.recv_timeout(TICK) {
             Ok(()) => true,
@@ -291,17 +314,7 @@ fn reader(app: AppHandle, state: SharedState, mut source: Box<dyn Source>, wake:
         };
         let visible = state.visible.load(Ordering::SeqCst);
         let snap = source.read(visible);
-        let used = if snap.mem_total == 0 {
-            0.0
-        } else {
-            snap.mem_used as f64 / snap.mem_total as f64 * 100.0
-        };
-        cpu.push_back(snap.cpu_pct);
-        mem.push_back(used as f32);
-        while cpu.len() > HISTORY {
-            cpu.pop_front();
-            mem.pop_front();
-        }
+        record(&mut cpu, &mut mem, &snap);
         // Nothing reaches the page while it is hidden.
         if visible {
             // Each icon goes to the page once, before the snapshot that uses it.

@@ -28,3 +28,10 @@ Both shells follow the same environment hooks:
 Measure any shell that follows the hooks with `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\measure.ps1 -Exe <exe> -Out <folder>`.
 It sends no keys, makes no clicks, does not touch the clipboard and never takes focus.
 It writes `report.json`, `panel-light.png` and `panel-dark.png` to the folder.
+
+Lint and tests:
+
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` run natively in WSL.
+- `cargo clippy -p pulse-readings --all-targets --target x86_64-pc-windows-msvc -- -D warnings` checks the Windows reader from WSL.
+- The webview crate cannot be checked with `--target x86_64-pc-windows-msvc` from WSL: its build script (`tauri-winres`) needs `llvm-rc` and panics with `NotAttempted("llvm-rc")`.
+  Lint it with the Windows toolchain instead: `cargo.exe clippy --workspace --all-targets -- -D warnings` (with `CARGO_TARGET_DIR` set to a Windows folder), which also runs the Windows-only tests with `cargo.exe test -p pulse-readings`.
