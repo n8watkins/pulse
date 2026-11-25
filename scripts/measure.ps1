@@ -211,7 +211,12 @@ try {
     $vars = @{ PULSE_SHOW = "1"; PULSE_THEME = $theme }
     if ($mode -eq "sample") { $vars.PULSE_SAMPLE = "1" }
     $proc = Start-Shell $vars
-    $h = Wait-Until "the visible window" { $w = Find-Window $proc.Id $true; if ($w -ne [IntPtr]::Zero) { $w } } 30
+    try {
+      $h = Wait-Until "the visible window" { $w = Find-Window $proc.Id $true; if ($w -ne [IntPtr]::Zero) { $w } } 45
+    } catch {
+      Log ("windows of pid {0}: {1}" -f $proc.Id, (([W]::Windows([uint32]$proc.Id) | ForEach-Object { "[" + ($_ -join "|") + "]" }) -join " "))
+      throw
+    }
     $bmp = $null
     Wait-Until "the first frame" { $b = Capture $h; if (-not (Blank $b)) { $script:bmp = $b; $true } else { $b.Dispose(); $false } } 30 | Out-Null
     # Let the sparklines fill and the icons arrive, then take the picture and the memory.
