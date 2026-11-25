@@ -84,11 +84,17 @@ function Descendants([int]$root) {
 }
 
 $all_started = New-Object System.Collections.Generic.List[int]
+$runs = 0
 function Start-Shell([hashtable]$envVars) {
   foreach ($k in @("PULSE_SAMPLE", "PULSE_SHOW", "PULSE_THEME", "PULSE_SELFTEST", "PULSE_REPORT")) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
   foreach ($k in $envVars.Keys) { Set-Item "env:$k" $envVars[$k] }
+  # A fresh WebView2 profile folder per start (ignored by shells without a
+  # webview), so a run never waits on the previous run's dying processes.
+  $script:runs++
+  $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $out "profiles\run$($script:runs)"
   try { $p = Start-Process $exe -PassThru } finally {
     foreach ($k in $envVars.Keys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+    Remove-Item env:WEBVIEW2_USER_DATA_FOLDER -ErrorAction SilentlyContinue
   }
   $all_started.Add($p.Id); Add-Content $pidFile $p.Id
   return $p
@@ -100,6 +106,9 @@ function Stop-Shell($p) {
   [array]::Reverse($tree)
   foreach ($id in $tree) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
   try { Wait-Process -Id $p.Id -Timeout 10 -ErrorAction SilentlyContinue } catch {}
+  # Wait until the whole tree is gone before the next start.
+  $end = (Get-Date).AddSeconds(15)
+  while ((Get-Date) -lt $end -and ($tree | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })) { Start-Sleep -Milliseconds 200 }
 }
 
 # ----- memory: Task Manager's number, "Working Set - Private" -----
@@ -191,7 +200,11 @@ try {
     if ($mode -eq "sample") { $vars.PULSE_SAMPLE = "1" }
     Log "selftest ($mode)"
     $proc = Start-Shell $vars
-    Wait-Until "the self-test report" { Test-Path $file } 90 | Out-Null
+    try { Wait-Until "the self-test report" { Test-Path $file } 90 | Out-Null } catch {
+      Log ("windows of pid {0}: {1}" -f $proc.Id, (([W]::Windows([uint32]$proc.Id) | ForEach-Object { "[" + ($_ -join "|") + "]" }) -join " "))
+      Log ("alive: {0}, tree: {1}" -f (-not $proc.HasExited), ((Descendants $proc.Id) -join ","))
+      throw
+    }
     Start-Sleep -Milliseconds 300
     $j = Get-Content -Raw $file | ConvertFrom-Json
     $ok = @($j.open_ms | Where-Object { $_ -ne $null })
@@ -251,6 +264,9 @@ try {
   if ($proc) { Stop-Shell $proc }
   foreach ($id in $all_started) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
   if ($watch) { Stop-Process -Id $watch.Id -Force -ErrorAction SilentlyContinue }
+  Start-Sleep -Milliseconds 500
+  # The profile folders this run made.
+  Remove-Item (Join-Path $out "profiles") -Recurse -Force -ErrorAction SilentlyContinue
   $report.seconds = [int]((Get-Date) - $started).TotalSeconds
   $report | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $out "report.json")
 }
