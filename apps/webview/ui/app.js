@@ -55,7 +55,7 @@ function uptime(s) {
 
 function rows(apps) {
   const max = Math.max(1, ...apps.map((a) => a.mem_bytes));
-  const items = apps.slice(0, 6).map((a) => {
+  const items = apps.slice(0, 5).map((a) => {
     const li = document.createElement('li');
     const ic = document.createElement('span'); ic.className = 'ic';
     const url = a.path && icons.get(a.path);
@@ -82,6 +82,26 @@ function rows(apps) {
 }
 
 const icons = new Map(); // exe path -> PNG data URL, each sent once by the app
+// The tile row: Graphics, Drive C:, Network, and Battery when the PC has one.
+function tiles(s) {
+  const pct = (v) => Math.max(0, Math.min(100, v)).toFixed(1) + '%';
+  if (s.gpu_pct == null) { set('#gpuV', 'Not reported'); $('#gpuB').style.width = '0%'; }
+  else { set('#gpuV', Math.round(s.gpu_pct) + '%'); $('#gpuB').style.width = pct(s.gpu_pct); }
+  const used = s.disk_total ? (s.disk_total - s.disk_free) / s.disk_total * 100 : 0;
+  set('#drvV', fb(s.disk_free));
+  set('#drvS', 'free · ' + fb(s.disk_read_bps + s.disk_write_bps) + '/s');
+  $('#drvB').style.width = pct(used);
+  set('#netV', '↓ ' + fb(s.net_down_bps) + '/s');
+  set('#netS', '↑ ' + fb(s.net_up_bps) + '/s');
+  const b = s.battery;
+  $('#bat').hidden = !b;
+  if (b) {
+    set('#batV', b.pct + '%');
+    set('#batS', b.plugged ? 'Plugged in' : 'On battery');
+    $('#batB').style.width = pct(b.pct);
+  }
+}
+
 let sample = false, shownAt = 0, hist = { cpu: [], mem: [] };
 
 function render(p) {
@@ -96,10 +116,12 @@ function render(p) {
   set('#status', sample ? 'Sample data, not this PC' : 'Running smoothly');
   $('#status').classList.toggle('hot', hot && !sample);
   rows(s.apps);
+  tiles(s);
   spark($('#cpuC'), hist.cpu);
   spark($('#memC'), hist.mem);
   shownAt = performance.now();
   set('#ago', '2s ago');
+  startTicker();
 }
 
 // First frame with data painted: tell the app, once per show.
@@ -107,12 +129,16 @@ function reportPainted() {
   requestAnimationFrame(() => setTimeout(() => invoke('frame_painted'), 0));
 }
 
-setInterval(() => {
-  if (!shownAt) return;
-  const n = Math.round((performance.now() - shownAt) / 1000);
+// The age label ticks only while snapshots keep arriving: a hidden panel runs
+// no timer at all.
+let ticker = 0;
+function tick() {
+  const age = performance.now() - shownAt;
+  if (age > 6000) { clearInterval(ticker); ticker = 0; return; }
   // Snapshots come every 2 s, so a fresh one reads "2s ago" like the reference.
-  set('#ago', Math.max(2, n) + 's ago');
-}, 1000);
+  set('#ago', Math.max(2, Math.round(age / 1000)) + 's ago');
+}
+function startTicker() { if (!ticker) ticker = setInterval(tick, 1000); }
 
 $('#close').addEventListener('click', () => invoke('hide_panel'));
 addEventListener('keydown', (e) => { if (e.key === 'Escape') invoke('hide_panel'); });
