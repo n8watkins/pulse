@@ -11,9 +11,9 @@
 //! write the open times.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use pulse_readings::{Sample, Snapshot, Source};
+use pulse_readings::{IconImage, Sample, Snapshot, Source};
 use serde::Serialize;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -30,6 +30,8 @@ const WIDTH: f64 = 380.0;
 const HEIGHT: f64 = 700.0;
 const MARGIN: f64 = 12.0;
 const HISTORY: usize = 90;
+/// Icon size asked of the reader; the page shows it at 24 px.
+const ICON_PX: u32 = 32;
 const TICK: Duration = Duration::from_secs(2);
 /// A toggle this soon after an automatic hide is the tray click that caused it.
 const REOPEN_GUARD_MS: u64 = 300;
@@ -221,10 +223,28 @@ fn make_tool_window(win: &WebviewWindow) {
 #[cfg(not(windows))]
 fn make_tool_window(_win: &WebviewWindow) {}
 
+/// The icon as a PNG data URL for the page.
+fn png_data_url(img: &IconImage) -> Option<String> {
+    use base64::Engine;
+    let mut out = Vec::new();
+    let mut enc = png::Encoder::new(&mut out, img.width, img.height);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut w = enc.write_header().ok()?;
+    w.write_image_data(&img.rgba).ok()?;
+    w.finish().ok()?;
+    Some(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(out)
+    ))
+}
+
 /// The reader thread: one snapshot per tick, an extra one when woken by a show.
 fn reader(app: AppHandle, state: SharedState, mut source: Box<dyn Source>, wake: Receiver<()>) {
     let mut cpu = VecDeque::with_capacity(HISTORY + 1);
     let mut mem = VecDeque::with_capacity(HISTORY + 1);
+    // Paths whose icon was already tried (and sent when it exists).
+    let mut tried: HashSet<String> = HashSet::new();
     loop {
         let woken = match wake.recv_timeout(TICK) {
             Ok(()) => true,
@@ -246,6 +266,19 @@ fn reader(app: AppHandle, state: SharedState, mut source: Box<dyn Source>, wake:
         }
         // Nothing reaches the page while it is hidden.
         if visible {
+            // Each icon goes to the page once, before the snapshot that uses it.
+            let mut fresh = serde_json::Map::new();
+            for path in snap.apps.iter().filter_map(|a| a.path.as_ref()) {
+                if tried.insert(path.clone())
+                    && let Some(url) =
+                        pulse_readings::icon_rgba(path, ICON_PX).and_then(|img| png_data_url(&img))
+                {
+                    fresh.insert(path.clone(), url.into());
+                }
+            }
+            if !fresh.is_empty() {
+                let _ = app.emit_to(LABEL, "icons", serde_json::Value::Object(fresh));
+            }
             let payload = Payload {
                 snapshot: &snap,
                 cpu: &cpu,

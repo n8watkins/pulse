@@ -40,6 +40,8 @@ button:focus-visible{outline:2px solid var(--mint);outline-offset:2px;border-rad
 .pulse #list li{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:8px 2px;border-bottom:1px solid var(--line);font-size:14px}
 .pulse #list li:last-child{border-bottom:0}
 .pulse #list .ic{grid-row:span 2;width:28px;height:28px;border-radius:7px;display:grid;place-items:center;font:700 13px/1 var(--text);color:#fff}
+.pulse #list .ic.real{background:none}
+.pulse #list .ic img{display:block;width:24px;height:24px}
 .pulse #list .nm{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pulse #list .val{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}
 .pulse #list .sb{grid-column:2/-1;display:grid;grid-template-columns:minmax(0,1fr) 90px;gap:10px;align-items:center;font-size:13px;color:var(--mute)}

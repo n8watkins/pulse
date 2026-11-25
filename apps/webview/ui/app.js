@@ -58,7 +58,15 @@ function rows(apps) {
   const items = apps.slice(0, 6).map((a) => {
     const li = document.createElement('li');
     const ic = document.createElement('span'); ic.className = 'ic';
-    ic.style.background = hue(a.exe); ic.textContent = (a.name[0] || '?').toUpperCase();
+    const url = a.path && icons.get(a.path);
+    if (url) {
+      // The app's own icon, 24 px in the 28 px slot.
+      const img = document.createElement('img');
+      img.src = url; img.alt = ''; img.width = 24; img.height = 24;
+      ic.classList.add('real'); ic.append(img);
+    } else {
+      ic.style.background = hue(a.exe); ic.textContent = (a.name[0] || '?').toUpperCase();
+    }
     const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = a.name;
     const val = document.createElement('span'); val.className = 'val'; val.textContent = fb(a.mem_bytes);
     const sb = document.createElement('span'); sb.className = 'sb';
@@ -73,6 +81,7 @@ function rows(apps) {
   $('#list').replaceChildren(...items);
 }
 
+const icons = new Map(); // exe path -> PNG data URL, each sent once by the app
 let sample = false, shownAt = 0, hist = { cpu: [], mem: [] };
 
 function render(p) {
@@ -112,6 +121,9 @@ addEventListener('contextmenu', (e) => e.preventDefault());
   const cfg = await invoke('config');
   sample = cfg.sample;
   if (cfg.theme) document.documentElement.dataset.theme = cfg.theme;
+  await listen('icons', (e) => {
+    for (const [path, url] of Object.entries(e.payload)) icons.set(path, url);
+  });
   await listen('snapshot', (e) => {
     render(e.payload);
     if (e.payload.first) reportPainted();
