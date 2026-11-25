@@ -28,6 +28,8 @@ export struct AppItem {
     detail: string,
     value: string,
     frac: float,
+    icon: image,
+    has-icon: bool,
 }
 
 component Hero inherits Rectangle {
@@ -45,7 +47,7 @@ component Hero inherits Rectangle {
 
     Text {
         x: 12px;
-        y: 10px;
+        y: 9px;
         width: parent.width - 24px;
         height: 19px;
         text: root.label;
@@ -59,7 +61,7 @@ component Hero inherits Rectangle {
 
     Text {
         x: 12px;
-        y: 31px;
+        y: 30px;
         width: parent.width - 24px;
         height: 36px;
         text: root.big;
@@ -101,7 +103,7 @@ component Hero inherits Rectangle {
 
     Text {
         x: 12px;
-        y: 109px;
+        y: 107px;
         width: parent.width - 24px;
         height: 19px;
         text: root.sub;
@@ -119,9 +121,18 @@ component AppRow inherits Rectangle {
     height: 60px;
     width: 354px;
 
-    Rectangle {
+    if root.item.has-icon: Image {
+        x: 4px;
+        y: 18px;
+        width: 24px;
+        height: 24px;
+        source: root.item.icon;
+        image-fit: contain;
+    }
+
+    if !root.item.has-icon: Rectangle {
         x: 2px;
-        y: 15px;
+        y: 16px;
         width: 28px;
         height: 28px;
         border-radius: 7px;
@@ -179,7 +190,7 @@ component AppRow inherits Rectangle {
 
     Rectangle {
         x: root.width - 2px - 90px;
-        y: 37px;
+        y: 38px;
         width: 90px;
         height: 5px;
         border-radius: 3px;
@@ -297,7 +308,7 @@ export component PanelWindow inherits Window {
 
     Text {
         x: 32px;
-        y: 49px;
+        y: 48px;
         width: 335px;
         height: 19px;
         text: root.status;
@@ -391,7 +402,7 @@ export component PanelWindow inherits Window {
 
     for item[i] in root.apps: AppRow {
         x: 13px;
-        y: round(262.4 + i * 60.15) * 1px;
+        y: floor(262.4 + i * 60.15) * 1px;
         item: item;
         last: i == 5;
     }

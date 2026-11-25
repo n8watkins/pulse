@@ -53,6 +53,8 @@ pub struct AppView {
     pub value: String,
     /// Bar length, 0 to 1, scaled to the top row.
     pub frac: f32,
+    /// Executable path, for the real icon; `None` shows the coloured letter.
+    pub path: Option<String>,
 }
 
 /// Everything the panel shows, as plain data.
@@ -123,6 +125,7 @@ pub fn build(snap: &Snapshot, hist: &History, sample: bool) -> View {
                     },
                     value: format_bytes(a.mem_bytes),
                     frac: (a.mem_bytes as f64 / max) as f32,
+                    path: a.path.clone(),
                 }
             })
             .collect(),

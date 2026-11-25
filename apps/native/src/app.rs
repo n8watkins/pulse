@@ -2,7 +2,7 @@
 
 use crate::view::{self, History};
 use crate::win::{self, Hwnd};
-use pulse_readings::{Sample, Snapshot, Source};
+use pulse_readings::{IconImage, Sample, Snapshot, Source, icon_rgba};
 use slint::winit_030::winit::dpi::PhysicalPosition;
 use slint::winit_030::winit::event::{ElementState, WindowEvent};
 use slint::winit_030::winit::keyboard::{Key, NamedKey};
@@ -10,6 +10,7 @@ use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandl
 use slint::winit_030::{EventResult, WinitWindowAccessor};
 use slint::{CloseRequestResponse, ComponentHandle, Model, RenderingState, SharedString, VecModel};
 use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
@@ -61,6 +62,80 @@ enum ReaderCmd {
 
 type Measure = Arc<Mutex<Option<(Instant, Sender<f64>)>>>;
 
+/// Executable icons: `icon_rgba` runs once per path on a worker thread (it
+/// touches the shell and can be slow), the result is kept for the session.
+struct Icons {
+    /// Finished lookups, shared with the worker. `None` = no icon, keep the letter.
+    done: Arc<Mutex<HashMap<String, Option<IconImage>>>>,
+    /// Paths already handed to the worker.
+    asked: RefCell<HashSet<String>>,
+    /// Slint images built from `done`, on the UI thread.
+    images: RefCell<HashMap<String, slint::Image>>,
+    to_worker: Sender<String>,
+}
+
+impl Icons {
+    fn spawn() -> Self {
+        let done: Arc<Mutex<HashMap<String, Option<IconImage>>>> = Arc::default();
+        let (to_worker, rx) = mpsc::channel::<String>();
+        let shared = done.clone();
+        std::thread::spawn(move || {
+            while let Ok(path) = rx.recv() {
+                let img = icon_rgba(&path, 32);
+                shared
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(path, img);
+                let _ = slint::invoke_from_event_loop(|| {
+                    with_panel(|p| {
+                        if p.visible.get() {
+                            p.apply_latest();
+                        }
+                    });
+                });
+            }
+        });
+        Self {
+            done,
+            asked: RefCell::default(),
+            images: RefCell::default(),
+            to_worker,
+        }
+    }
+
+    /// The icon if it is ready; otherwise asks the worker once and returns `None`.
+    fn get(&self, path: &str) -> Option<slint::Image> {
+        if let Some(i) = self.images.borrow().get(path) {
+            return Some(i.clone());
+        }
+        let ready = self
+            .done
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(path)
+            .cloned();
+        match ready {
+            Some(Some(img)) => {
+                let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+                    &img.rgba, img.width, img.height,
+                );
+                let image = slint::Image::from_rgba8(buf);
+                self.images
+                    .borrow_mut()
+                    .insert(path.to_owned(), image.clone());
+                Some(image)
+            }
+            Some(None) => None,
+            None => {
+                if self.asked.borrow_mut().insert(path.to_owned()) {
+                    let _ = self.to_worker.send(path.to_owned());
+                }
+                None
+            }
+        }
+    }
+}
+
 struct Panel {
     ui: PanelWindow,
     model: Rc<VecModel<AppItem>>,
@@ -73,6 +148,7 @@ struct Panel {
     shown: Arc<AtomicBool>,
     reader: Sender<ReaderCmd>,
     measure: Measure,
+    icons: Icons,
 }
 
 thread_local! {
@@ -118,13 +194,18 @@ impl Panel {
         let rows: Vec<AppItem> = v
             .apps
             .into_iter()
-            .map(|a| AppItem {
-                letter: SharedString::from(a.letter),
-                color: slint::Color::from_rgb_u8(a.rgb[0], a.rgb[1], a.rgb[2]),
-                name: a.name.into(),
-                detail: a.detail.into(),
-                value: a.value.into(),
-                frac: a.frac,
+            .map(|a| {
+                let icon = a.path.as_deref().and_then(|p| self.icons.get(p));
+                AppItem {
+                    has_icon: icon.is_some(),
+                    icon: icon.unwrap_or_default(),
+                    letter: SharedString::from(a.letter),
+                    color: slint::Color::from_rgb_u8(a.rgb[0], a.rgb[1], a.rgb[2]),
+                    name: a.name.into(),
+                    detail: a.detail.into(),
+                    value: a.value.into(),
+                    frac: a.frac,
+                }
             })
             .collect();
         if self.model.row_count() == rows.len() {
@@ -343,6 +424,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         shown,
         reader: tx.clone(),
         measure: measure.clone(),
+        icons: Icons::spawn(),
     });
     PANEL.with(|p| *p.borrow_mut() = Some(panel.clone()));
 
