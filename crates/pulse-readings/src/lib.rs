@@ -7,6 +7,13 @@
 
 use serde::Serialize;
 
+#[cfg_attr(not(windows), allow(dead_code))]
+mod group;
+#[cfg(windows)]
+mod icon;
+#[cfg(windows)]
+mod win;
+
 /// One reading of the machine. Sizes are bytes.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Snapshot {
@@ -32,6 +39,32 @@ pub struct AppRow {
     pub processes: u32,
     /// Private working set summed over the group, as Task Manager shows it.
     pub mem_bytes: u64,
+    /// Full path of one process in the group; `None` when it cannot be opened
+    /// (protected processes) or there is no real process (sample data).
+    pub path: Option<String>,
+}
+
+/// An icon as straight (non-premultiplied) RGBA, top-down.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IconImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// The executable's own icon at `size` px (32 is what both panels ask for).
+/// `None` off Windows or on failure. Not cached: callers cache per path.
+#[must_use]
+pub fn icon_rgba(path: &str, size: u32) -> Option<IconImage> {
+    #[cfg(windows)]
+    {
+        icon::rgba(path, size)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (path, size);
+        None
+    }
 }
 
 /// A source of snapshots. `with_apps` is false while the panel is hidden, so
@@ -43,7 +76,14 @@ pub trait Source: Send {
 /// The reader for this machine: real figures on Windows, [`Sample`] elsewhere.
 #[must_use]
 pub fn system() -> Box<dyn Source> {
-    Box::new(Sample::default())
+    #[cfg(windows)]
+    {
+        Box::new(win::Windows::new())
+    }
+    #[cfg(not(windows))]
+    {
+        Box::new(Sample::default())
+    }
 }
 
 const GB: u64 = 1 << 30;
@@ -76,6 +116,7 @@ impl Source for Sample {
                 exe: exe.into(),
                 processes,
                 mem_bytes,
+                path: None,
             })
             .collect()
         } else {

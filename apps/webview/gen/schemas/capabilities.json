@@ -1,0 +1,1 @@
+{"main":{"identifier":"main","description":"The panel listens for snapshots and calls the app's own commands.","local":true,"windows":["main"],"permissions":["core:event:allow-listen","core:event:allow-unlisten"]}}
