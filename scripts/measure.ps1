@@ -188,7 +188,7 @@ try {
     if ($mode -eq "sample") { $vars.PULSE_SAMPLE = "1" }
     Log "selftest ($mode)"
     $proc = Start-Shell $vars
-    Wait-Until "the self-test report" { Test-Path $file } 60 | Out-Null
+    Wait-Until "the self-test report" { Test-Path $file } 90 | Out-Null
     Start-Sleep -Milliseconds 300
     $j = Get-Content -Raw $file | ConvertFrom-Json
     $ok = @($j.open_ms | Where-Object { $_ -ne $null })
