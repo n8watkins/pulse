@@ -320,6 +320,7 @@ fn spawn_reader(
         } else {
             pulse_readings::system()
         };
+        let stress = std::env::var_os("PULSE_STRESS").is_some();
         let mut hist = History::default();
         let mut apps = Vec::new();
         let mut force_apps = false;
@@ -339,7 +340,10 @@ fn spawn_reader(
             }
             force_apps = false;
             hist.push(&snap);
-            let extra = view::Extra::from_snapshot(&snap);
+            let mut extra = view::Extra::from_snapshot(&snap);
+            if stress {
+                extra = view::Extra::stress();
+            }
             *latest
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Latest {

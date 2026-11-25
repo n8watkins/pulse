@@ -109,6 +109,21 @@ pub struct Extra {
 }
 
 impl Extra {
+    /// Longest plausible figures, for checking that no tile text is cut off
+    /// (PULSE_STRESS=1, a development knob).
+    pub fn stress() -> Self {
+        Self {
+            gpu_pct: None,
+            disk_free: 999 * (1 << 30),
+            disk_total: 1000 * (1 << 30),
+            disk_read_bps: 600 * (1 << 20),
+            disk_write_bps: 399 * (1 << 20),
+            net_down_bps: 999 * 1024,
+            net_up_bps: 99 * (1 << 20) + (1 << 20) * 9 / 10,
+            battery: Some((100, false)),
+        }
+    }
+
     pub fn from_snapshot(s: &Snapshot) -> Self {
         Self {
             gpu_pct: s.gpu_pct,
@@ -200,8 +215,8 @@ fn tiles(x: &Extra) -> Tiles {
         gpu_frac: x.gpu_pct.map_or(0.0, |g| (g / 100.0).clamp(0.0, 1.0)),
         drive_big: format_bytes(x.disk_free),
         drive_sub: format!(
-            "free \u{b7} {}/s",
-            format_bytes(x.disk_read_bps + x.disk_write_bps)
+            "{}/s",
+            format_bytes_at(x.disk_read_bps + x.disk_write_bps, 10.0)
         ),
         drive_frac: used_share as f32,
         net_big: format!("\u{2193} {}/s", format_bytes(x.net_down_bps)),
@@ -234,6 +249,12 @@ pub fn uptime(secs: u64) -> String {
 /// The reference page's `fb`: 1024 steps, one decimal under 100.
 #[allow(clippy::cast_precision_loss)]
 pub fn format_bytes(bytes: u64) -> String {
+    format_bytes_at(bytes, 100.0)
+}
+
+/// Like `format_bytes`, with whole numbers from `whole_from` up (10 for rates).
+#[allow(clippy::cast_precision_loss)]
+fn format_bytes_at(bytes: u64, whole_from: f64) -> String {
     const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
     let mut b = bytes as f64;
     let mut i = 0;
@@ -241,7 +262,7 @@ pub fn format_bytes(bytes: u64) -> String {
         b /= 1024.0;
         i += 1;
     }
-    if b >= 100.0 || i == 0 {
+    if b >= whole_from || i == 0 {
         format!("{} {}", round_half_up(b), UNITS[i])
     } else {
         format!("{b:.1} {}", UNITS[i])
@@ -366,6 +387,13 @@ mod tests {
             v.tiles.net_big.starts_with("\u{2193} ") && v.tiles.net_sub.starts_with("\u{2191} ")
         );
         assert!(!v.tiles.gpu_missing);
+    }
+
+    #[test]
+    fn rates_drop_the_decimal_from_ten_up() {
+        assert_eq!(format_bytes_at(77 * (1 << 20), 10.0), "77 MB");
+        assert_eq!(format_bytes_at(4_400_000, 10.0), "4.2 MB");
+        assert_eq!(format_bytes_at(110 * (1 << 20), 10.0), "110 MB");
     }
 
     #[test]
