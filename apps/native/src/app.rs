@@ -409,7 +409,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     slint::BackendSelector::new()
         .backend_name("winit".into())
-        .renderer_name(std::env::var("PULSE_RENDERER").unwrap_or_else(|_| "skia".into()))
+        .renderer_name(std::env::var("PULSE_RENDERER").unwrap_or_else(|_| "skia-software".into()))
         .with_winit_window_attributes_hook(|a| {
             // Created hidden offscreen, never activated, fixed size: the real
             // position and visibility come from `Panel::show`.
