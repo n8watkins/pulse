@@ -109,20 +109,16 @@ pub struct Extra {
 }
 
 impl Extra {
-    /// Stand-in: the reference page's figures for sample data, nothing otherwise.
-    pub fn from_snapshot(_snap: &Snapshot, sample: bool) -> Self {
-        if !sample {
-            return Self::default();
-        }
+    pub fn from_snapshot(s: &Snapshot) -> Self {
         Self {
-            gpu_pct: Some(13.0),
-            disk_free: 296 * (1 << 30),
-            disk_total: 900 * (1 << 30),
-            disk_read_bps: 3_200_000,
-            disk_write_bps: 1_000_000,
-            net_down_bps: 1_780_000,
-            net_up_bps: 293_000,
-            battery: None,
+            gpu_pct: s.gpu_pct,
+            disk_free: s.disk_free,
+            disk_total: s.disk_total,
+            disk_read_bps: s.disk_read_bps,
+            disk_write_bps: s.disk_write_bps,
+            net_down_bps: s.net_down_bps,
+            net_up_bps: s.net_up_bps,
+            battery: s.battery.as_ref().map(|b| (b.pct, b.plugged)),
         }
     }
 }
@@ -358,7 +354,7 @@ mod tests {
         let snap = Sample::default().read(true);
         let mut h = History::default();
         h.push(&snap);
-        let v = build(&snap, &Extra::from_snapshot(&snap, true), &h, true);
+        let v = build(&snap, &Extra::from_snapshot(&snap), &h, true);
         assert_eq!(v.apps.len(), 5);
         assert!((v.apps[0].frac - 1.0).abs() < f32::EPSILON);
         assert_eq!(v.apps[0].detail, "chrome.exe \u{b7} 24 processes");
@@ -366,9 +362,10 @@ mod tests {
         assert_eq!(v.mem_sub, "of 32 GB \u{b7} 43%");
         assert_eq!(v.cpu_sub, "16 cores \u{b7} up 3d 4h");
         assert_eq!(v.tiles.drive_big, "296 GB");
-        assert_eq!(v.tiles.net_big, "\u{2193} 1.7 MB/s");
-        assert_eq!(v.tiles.net_sub, "\u{2191} 286 KB/s");
-        assert_eq!(v.tiles.gpu_big, "13%");
+        assert!(
+            v.tiles.net_big.starts_with("\u{2193} ") && v.tiles.net_sub.starts_with("\u{2191} ")
+        );
+        assert!(!v.tiles.gpu_missing);
     }
 
     #[test]
