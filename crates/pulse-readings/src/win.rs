@@ -301,6 +301,20 @@ mod tests {
     }
 
     #[test]
+    fn every_stand_in_has_an_icon() {
+        let mut checked = 0;
+        for (key, file) in STAND_INS {
+            let Some(path) = system32(file) else { continue };
+            let img =
+                crate::icon_rgba(&path, 32).unwrap_or_else(|| panic!("{key}: no icon from {path}"));
+            assert_eq!(img.rgba.len(), 32 * 32 * 4, "{key}");
+            assert!(img.rgba.chunks_exact(4).any(|p| p[3] > 0), "{key}: blank");
+            checked += 1;
+        }
+        assert!(checked > 0);
+    }
+
+    #[test]
     fn reads_plausible_figures() {
         let mut w = Windows::new();
         std::thread::sleep(std::time::Duration::from_millis(300));

@@ -11,10 +11,13 @@ use windows_sys::Win32::Graphics::Gdi::{
 use windows_sys::Win32::Storage::FileSystem::{
     GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
 };
+use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows_sys::Win32::System::Threading::{
     OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
-use windows_sys::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW};
+use windows_sys::Win32::UI::Shell::{
+    ExtractIconExW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
 
 fn wide(s: &str) -> Vec<u16> {
@@ -124,7 +127,34 @@ pub(crate) fn rgba(path: &str, size: u32) -> Option<IconImage> {
         return None;
     }
     let p = wide(path);
-    // SAFETY: zeroed plain-data structs; every GDI object made here is deleted.
+    // The shell is flaky on a thread that never initialised COM, and under
+    // load a first call can fail: initialise COM for the call and try again.
+    // SAFETY: balanced with the CoUninitialize below.
+    let com = unsafe { CoInitializeEx(core::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
+    let mut out = None;
+    for attempt in 0..3 {
+        out = rgba_once(&p, size);
+        if out.is_some() {
+            break;
+        }
+        if attempt < 2 {
+            std::thread::sleep(std::time::Duration::from_millis(40));
+        }
+    }
+    if com >= 0 {
+        // SAFETY: only when CoInitializeEx succeeded on this thread.
+        unsafe { CoUninitialize() };
+    }
+    out
+}
+
+/// The icon handle: the shell's (which is the generic application icon for a
+/// file with none), else the file's first icon resource.
+///
+/// # Safety
+/// `p` must be a NUL-terminated wide string.
+unsafe fn icon_handle(p: &[u16]) -> *mut c_void {
+    // SAFETY: per the contract above; zeroed plain data.
     unsafe {
         let mut fi: SHFILEINFOW = core::mem::zeroed();
         let r = SHGetFileInfoW(
@@ -134,11 +164,26 @@ pub(crate) fn rgba(path: &str, size: u32) -> Option<IconImage> {
             size_of::<SHFILEINFOW>() as u32,
             SHGFI_ICON | SHGFI_LARGEICON,
         );
-        if r == 0 || fi.hIcon.is_null() {
+        if r != 0 && !fi.hIcon.is_null() {
+            return fi.hIcon;
+        }
+        let mut large: *mut c_void = null_mut();
+        if ExtractIconExW(p.as_ptr(), 0, &mut large, null_mut(), 1) >= 1 && !large.is_null() {
+            return large;
+        }
+        null_mut()
+    }
+}
+
+fn rgba_once(p: &[u16], size: u32) -> Option<IconImage> {
+    // SAFETY: zeroed plain-data structs; every GDI object made here is deleted.
+    unsafe {
+        let hicon = icon_handle(p);
+        if hicon.is_null() {
             return None;
         }
         let mut ii: ICONINFO = core::mem::zeroed();
-        let got = GetIconInfo(fi.hIcon, &mut ii);
+        let got = GetIconInfo(hicon, &mut ii);
         let out = if got != 0 && !ii.hbmColor.is_null() {
             let mut b: BITMAP = core::mem::zeroed();
             GetObjectW(ii.hbmColor, size_of::<BITMAP>() as i32, (&raw mut b).cast());
@@ -175,7 +220,7 @@ pub(crate) fn rgba(path: &str, size: u32) -> Option<IconImage> {
                 DeleteObject(ii.hbmMask);
             }
         }
-        DestroyIcon(fi.hIcon);
+        DestroyIcon(hicon);
         out
     }
 }

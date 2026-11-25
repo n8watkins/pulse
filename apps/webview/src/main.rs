@@ -45,6 +45,8 @@ struct Shared {
     auto_hide_at: AtomicU64,
     keep_open_on_blur: bool,
     suspend: bool,
+    /// Low webview memory target and a host trim on hide; `PULSE_NOTRIM=1` turns it off.
+    trim: bool,
     wake: Mutex<Sender<()>>,
     /// When the last show was requested and its first frame has not been reported.
     pending_show: Mutex<Option<Instant>>,
@@ -175,6 +177,9 @@ fn show(app: &AppHandle, state: &SharedState, activate: bool) {
     if state.suspend {
         suspend_webview(&win, false);
     }
+    if state.trim {
+        memory_target(&win, false);
+    }
     if activate {
         let _ = win.show();
         let _ = win.set_focus();
@@ -197,8 +202,66 @@ fn hide(app: &AppHandle, state: &SharedState, automatic: bool) {
         if state.suspend {
             suspend_webview(&win, true);
         }
+        if state.trim {
+            trim_when_hidden(&win, state);
+        }
     }
 }
+
+/// Low memory target for the webview now, then the host's own working set
+/// once things have settled, if the panel is still hidden.
+fn trim_when_hidden(win: &WebviewWindow, state: &SharedState) {
+    memory_target(win, true);
+    let state = Arc::clone(state);
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(1500));
+        if !state.visible.load(Ordering::SeqCst) {
+            trim_host();
+        }
+    });
+}
+
+/// Hands this process's idle pages back to Windows.
+#[cfg(windows)]
+fn trim_host() {
+    use windows_sys::Win32::System::ProcessStatus::K32EmptyWorkingSet;
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    // SAFETY: the pseudo handle of the current process is always valid.
+    unsafe { K32EmptyWorkingSet(GetCurrentProcess()) };
+}
+
+#[cfg(not(windows))]
+fn trim_host() {}
+
+/// WebView2's memory usage target: low while hidden, normal while shown.
+#[cfg(windows)]
+fn memory_target(win: &WebviewWindow, low: bool) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+        ICoreWebView2_19,
+    };
+    use windows_core::Interface;
+    let _ = win.with_webview(move |wv| {
+        // SAFETY: the controller belongs to this live webview, called on its thread.
+        unsafe {
+            let Ok(core) = wv.controller().CoreWebView2() else {
+                return;
+            };
+            let Ok(core19) = core.cast::<ICoreWebView2_19>() else {
+                return;
+            };
+            let level = if low {
+                COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+            } else {
+                COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+            };
+            let _ = core19.SetMemoryUsageTargetLevel(level);
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn memory_target(_win: &WebviewWindow, _low: bool) {}
 
 /// Experiment, off unless `PULSE_SUSPEND=1` (not part of the shared hooks):
 /// WebView2's own suspend while hidden, resumed on show.
@@ -380,6 +443,7 @@ fn main() {
         auto_hide_at: AtomicU64::new(0),
         keep_open_on_blur: show_at_start,
         suspend: env_on("PULSE_SUSPEND"),
+        trim: !env_on("PULSE_NOTRIM"),
         wake: Mutex::new(wake_tx),
         pending_show: Mutex::new(None),
         painted: Mutex::new(None),
@@ -460,6 +524,18 @@ fn main() {
             if let Some(rx) = wake_rx.lock().ok().and_then(|mut r| r.take()) {
                 let (a, s) = (handle.clone(), Arc::clone(&state));
                 std::thread::spawn(move || reader(a, s, source, rx));
+            }
+            if state.trim && !show_at_start {
+                // Start-up touches far more memory than an idle panel keeps.
+                let (a, s) = (handle.clone(), Arc::clone(&state));
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(4));
+                    if !s.visible.load(Ordering::SeqCst)
+                        && let Some(win) = window(&a)
+                    {
+                        trim_when_hidden(&win, &s);
+                    }
+                });
             }
             if state.suspend && !show_at_start {
                 // Suspend the hidden page once it has loaded.

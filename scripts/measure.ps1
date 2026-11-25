@@ -7,6 +7,7 @@
 #   PULSE_SAMPLE=1                use the sample readings
 #   PULSE_SHOW=1                  show the panel at start without activating it
 #   PULSE_THEME=light|dark        force the theme
+#   PULSE_NOTRIM=1                do not trim memory on hide (the default trims)
 #   PULSE_SELFTEST=1 PULSE_REPORT=<path>
 #                                 open and close the panel 5 times, write
 #                                 {"shell":..., "open_ms":[...]} and keep running
@@ -23,7 +24,7 @@ param(
   [Parameter(Mandatory)] [string]$Out,
   [int]$IdleSeconds = 90,
   [int]$SettleSeconds = 20,
-  [int]$LimitSeconds = 900
+  [int]$LimitSeconds = 1800
 )
 $ErrorActionPreference = "Stop"
 $exe = (Resolve-Path $Exe).Path
@@ -86,7 +87,7 @@ function Descendants([int]$root) {
 $all_started = New-Object System.Collections.Generic.List[int]
 $runs = 0
 function Start-Shell([hashtable]$envVars) {
-  foreach ($k in @("PULSE_SAMPLE", "PULSE_SHOW", "PULSE_THEME", "PULSE_SELFTEST", "PULSE_REPORT")) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+  foreach ($k in @("PULSE_SAMPLE", "PULSE_SHOW", "PULSE_THEME", "PULSE_SELFTEST", "PULSE_REPORT", "PULSE_NOTRIM")) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
   foreach ($k in $envVars.Keys) { Set-Item "env:$k" $envVars[$k] }
   # A fresh WebView2 profile folder per start (ignored by shells without a
   # webview), so a run never waits on the previous run's dying processes.
@@ -120,16 +121,20 @@ function Memory([int]$root) {
     try { $samples = (Get-Counter -Counter "\Process V2(*)\Working Set - Private" -ErrorAction Stop).CounterSamples } catch { $lastErr = $_.Exception.Message; Start-Sleep -Milliseconds 1000 }
   }
   if (-not $samples) { throw "the Working Set - Private counter could not be read: $lastErr" }
-  $private = 0.0; $found = 0
+  $private = 0.0; $found = 0; $rows = @(); $host_ = 0.0
   foreach ($s in $samples) {
     $i = $s.InstanceName.LastIndexOf(":")
     if ($i -lt 0) { continue }
     $id = 0; if (-not [int]::TryParse($s.InstanceName.Substring($i + 1), [ref]$id)) { continue }
-    if (($tree -contains $id) -and $s.Status -eq 0) { $private += $s.CookedValue; $found++ }
+    if (($tree -contains $id) -and $s.Status -eq 0) {
+      $private += $s.CookedValue; $found++
+      if ($id -eq $root) { $host_ = $s.CookedValue }
+      $rows += [ordered]@{ pid = $id; name = $s.InstanceName.Substring(0, $i); privateWorkingSetMb = [math]::Round($s.CookedValue / 1MB, 1) }
+    }
   }
   $commit = 0.0
   foreach ($id in $tree) { $pr = Get-Process -Id $id -ErrorAction SilentlyContinue; if ($pr) { $commit += $pr.PrivateMemorySize64 } }
-  return [ordered]@{ privateWorkingSetMb = [math]::Round($private / 1MB, 1); commitMb = [math]::Round($commit / 1MB, 1); processes = $tree.Count; counted = $found }
+  return [ordered]@{ privateWorkingSetMb = [math]::Round($private / 1MB, 1); commitMb = [math]::Round($commit / 1MB, 1); processes = $tree.Count; counted = $found; hostPrivateWorkingSetMb = [math]::Round($host_ / 1MB, 1); childrenPrivateWorkingSetMb = [math]::Round(($private - $host_) / 1MB, 1); perProcess = $rows }
 }
 function Memory-Series([int]$root, [int]$count = 5, [int]$gap = 5) {
   $list = @()
@@ -183,21 +188,29 @@ try {
   $report.workArea = "$($area.X),$($area.Y) $($area.Width)x$($area.Height)"
 
   # (a) Hidden: the panel never shown, sample readings.
-  Log "hidden: start, wait $IdleSeconds s"
-  $proc = Start-Shell @{ PULSE_SAMPLE = "1" }
-  Pause-Bounded $IdleSeconds
-  if ($proc.HasExited) { throw "the exe exited while hidden (code $($proc.ExitCode))" }
-  $report.hidden = Memory-Series $proc.Id
-  $report.hidden.visibleWindows = @([W]::Windows([uint32]$proc.Id) | Where-Object { $_[2] -eq "1" }).Count
-  Log ("hidden: private working set {0} MB, commit {1} MB" -f $report.hidden.meanPrivateWorkingSetMb, $report.hidden.meanCommitMb)
-  Stop-Shell $proc; $proc = $null
+  # Trimmed (the default) and with PULSE_NOTRIM=1 (a shell that trims itself
+  # on hide stops doing so).
+  foreach ($trim in @("trim", "notrim")) {
+    Log "hidden ($trim): start, wait $IdleSeconds s"
+    $vars = @{ PULSE_SAMPLE = "1" }
+    if ($trim -eq "notrim") { $vars.PULSE_NOTRIM = "1" }
+    $proc = Start-Shell $vars
+    Pause-Bounded $IdleSeconds
+    if ($proc.HasExited) { throw "the exe exited while hidden (code $($proc.ExitCode))" }
+    $key = if ($trim -eq "trim") { "hidden" } else { "hiddenNoTrim" }
+    $report[$key] = Memory-Series $proc.Id
+    $report[$key].visibleWindows = @([W]::Windows([uint32]$proc.Id) | Where-Object { $_[2] -eq "1" }).Count
+    Log ("hidden ({0}): private working set {1} MB, commit {2} MB" -f $trim, $report[$key].meanPrivateWorkingSetMb, $report[$key].meanCommitMb)
+    Stop-Shell $proc; $proc = $null
+  }
 
-  # (b) Self-test: sample readings, then the real reader.
-  foreach ($mode in @("sample", "real")) {
+  # (b) Self-test: sample readings, the real reader, and sample without the trim.
+  foreach ($mode in @("sample", "real", "sample-notrim")) {
     $file = Join-Path $out "selftest-$mode.json"
     Remove-Item $file -ErrorAction SilentlyContinue
     $vars = @{ PULSE_SELFTEST = "1"; PULSE_REPORT = $file }
-    if ($mode -eq "sample") { $vars.PULSE_SAMPLE = "1" }
+    if ($mode -ne "real") { $vars.PULSE_SAMPLE = "1" }
+    if ($mode -eq "sample-notrim") { $vars.PULSE_NOTRIM = "1" }
     Log "selftest ($mode)"
     $proc = Start-Shell $vars
     try { Wait-Until "the self-test report" { Test-Path $file } 90 | Out-Null } catch {
