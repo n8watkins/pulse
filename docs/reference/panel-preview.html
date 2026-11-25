@@ -1,0 +1,340 @@
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Pulse Panel Options</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* LAYOUT: a fixed stage (a slice of desktop with the tray and the Pulse panel) beside a scrolling list of the three ways to build it. The page itself never scrolls. */
+:root{color-scheme:light dark;
+  --pg:light-dark(#eef1ef,#080a09);--card:light-dark(#ffffff,#121513);--pink:light-dark(#0d0f0e,#f1f4f2);--pmute:light-dark(#56605b,#9aa39f);--pline:light-dark(#dfe4e1,#262c29);
+  --wall:light-dark(#d5dfd9,#1b221e);--bar:light-dark(#f7f9f8,#101412);--pick:light-dark(#0f6f40,#b8f5d0);--pickbg:light-dark(#e3f8ec,#12231a);--warn:light-dark(#b23c0b,#ff9b6b);
+  --bg:light-dark(#ffffff,#0d0f0e);--ink:light-dark(#0d0f0e,#f1f4f2);--mute:light-dark(#5b625f,#98a19d);--line:light-dark(#e4e7e5,#232926);--soft:light-dark(#f2f4f3,#161a18);--heroBg:light-dark(#b8f5d0,#12231a);--heroInk:light-dark(#0d0f0e,#b8f5d0);--hot:light-dark(#c2410c,#ff9b6b);--mint:#b8f5d0;
+  --display:"Space Grotesk",Inter,system-ui,sans-serif;--text:Inter,system-ui,"Segoe UI",sans-serif}
+:root[data-theme=light]{color-scheme:light}
+:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+html,body{height:100%}
+body{margin:0;background:var(--pg);color:var(--pink);font:14px/1.45 var(--text);overflow:hidden;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:10px}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+button:focus-visible,a:focus-visible,.opt:focus-visible{outline:2px solid var(--pick);outline-offset:2px;border-radius:8px}
+a{color:inherit}
+.wrap{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr);gap:8px;max-width:1100px;margin:0 auto}
+.head h1{margin:0;font:700 18px/1.15 var(--display);text-wrap:balance}
+.head p{margin:2px 0 0;font-size:13px;color:var(--pmute)}
+.body{display:grid;grid-template-rows:minmax(0,48%) minmax(0,1fr);gap:10px}
+
+/* stage */
+.stage{position:relative;overflow:hidden;border-radius:14px;background:var(--wall);border:1px solid var(--pline)}
+.taskbar{position:absolute;left:0;right:0;bottom:0;height:44px;background:var(--bar);border-top:1px solid var(--pline);display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:0 10px;z-index:3}
+.taskbar .hint{margin-right:auto;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.taskbar .hint small{font-weight:400;color:var(--pmute);font-size:12px}
+.taskbar .clock,#tray{flex:none}
+.taskbar .clock{font-size:12px;line-height:1.2;text-align:right;color:var(--pmute);font-variant-numeric:tabular-nums}
+#tray{width:36px;height:36px;border-radius:8px;display:grid;place-items:center}
+#tray:hover{background:var(--pline)}
+#tray canvas{width:22px;height:22px;display:block}
+.read{position:absolute;left:10px;top:10px;z-index:4;background:var(--card);border:1px solid var(--pline);border-radius:999px;padding:4px 10px;font-size:12.5px;font-weight:600;max-width:calc(100% - 20px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.read small{font-weight:400;color:var(--pmute);font-size:12px}
+.holder{position:absolute;right:10px;top:10px;width:380px;height:700px;transform-origin:top right;transform:translateY(var(--dy,0px)) scale(var(--s,1));opacity:1;transition:opacity .12s,transform .12s;z-index:2}
+.holder[data-open="0"]{opacity:0;--dy:10px;pointer-events:none}
+.approx{position:absolute;left:10px;bottom:54px;z-index:4;background:var(--card);border:1px solid var(--pline);border-radius:8px;padding:5px 9px;font-size:12px;color:var(--pmute);max-width:min(240px,calc(100% - 20px))}
+
+/* options list */
+.opts{overflow-y:auto;scrollbar-width:thin;display:flex;flex-direction:column;gap:8px;padding-bottom:2px}
+.note{background:var(--card);border:1px solid var(--pline);border-radius:12px;padding:10px 12px;font-size:13px}
+.note h2{margin:0 0 4px;font:600 13px/1.3 var(--text)}
+.note p{margin:0 0 6px}
+.note p:last-child{margin:0}
+.note b{font-weight:600}
+.note .fix{color:var(--pmute)}
+.opt{background:var(--card);border:1px solid var(--pline);border-radius:12px;padding:10px 12px;cursor:pointer;display:grid;gap:6px}
+.opt[aria-pressed=true]{border-color:var(--pick);box-shadow:inset 0 0 0 1px var(--pick)}
+.ot{display:flex;align-items:center;gap:8px}
+.ot h3{margin:0;font:700 15px/1.2 var(--display);flex:1}
+.tag{font-size:11.5px;font-weight:600;background:var(--pickbg);color:var(--pick);border-radius:5px;padding:2px 6px;white-space:nowrap}
+.star{width:36px;height:36px;border-radius:8px;display:grid;place-items:center;color:var(--pmute);flex:none}
+.star:hover{background:var(--pg)}
+.star[aria-pressed=true]{color:var(--pick)}
+.star[aria-pressed=true] path{fill:currentColor}
+.opt .d{margin:0;font-size:13px;color:var(--pmute)}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;margin:0}
+.stats div{display:flex;flex-direction:column}
+.stats dt{font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--pmute)}
+.stats dd{margin:0;font-weight:600;font-size:13.5px;font-variant-numeric:tabular-nums}
+.stats dd small{font-weight:400;color:var(--pmute);font-size:12px}
+.catch{margin:0;font-size:13px}
+.catch b{font-weight:600}
+.pseg{display:flex;background:var(--pg);border-radius:8px;padding:2px;align-self:start;justify-self:start}
+.pseg button{font-size:13px;padding:5px 10px;border-radius:6px;color:var(--pmute);min-height:32px}
+.pseg [aria-pressed=true]{background:var(--card);color:var(--pink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.14)}
+.picks{background:var(--card);border:1px solid var(--pline);border-radius:12px;padding:10px 12px;display:grid;gap:8px}
+.picks p{margin:0;font-size:13px}
+.picks button{background:var(--pink);color:var(--pg);font-weight:600;border-radius:8px;padding:8px 14px;min-height:38px;justify-self:start}
+.picks textarea{width:100%;font:13px/1.4 var(--text);border:1px solid var(--pline);border-radius:8px;padding:8px;background:var(--pg);color:var(--pink);resize:none}
+
+@media (min-width:700px),(orientation:landscape){
+  .body{grid-template-rows:minmax(0,1fr);grid-template-columns:minmax(0,1fr) minmax(280px,400px)}
+}
+@media (orientation:landscape) and (max-height:480px){
+  body{padding-block:6px}
+  .head p{display:none}
+  .head h1{font-size:15px}
+  .body{grid-template-columns:minmax(0,1fr) minmax(250px,46%)}
+}
+
+/* the Pulse panel, as in the Pulse page */
+.pulse{position:relative;display:flex;flex-direction:column;width:380px;height:700px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.22);font:14px/1.45 var(--text)}
+.pulse.blank>*{visibility:hidden}
+.pulse .top{padding:12px 12px 8px 16px;display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:center}
+.pulse .brand{display:flex;align-items:center;gap:8px;font:700 17px/1 var(--display)}
+.pulse .brand canvas{width:22px;height:22px}
+.pulse .ctl{display:flex;gap:2px}
+.pulse .ib{width:34px;height:34px;display:grid;place-items:center;border-radius:8px;color:var(--mute)}
+.pulse #status{grid-column:1/-1;margin:0;font-size:13px;color:var(--mute);display:flex;align-items:center;gap:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pulse #status::before{content:"";flex:none;width:8px;height:8px;border-radius:50%;background:#2fbf71}
+.pulse #status.hot::before{background:var(--hot)}
+.pulse main{flex:1;overflow:hidden;padding:0 12px 12px}
+.pulse .duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.pulse .hero{background:var(--heroBg);color:var(--heroInk);border-radius:14px;padding:10px 12px 9px;display:flex;flex-direction:column;gap:2px}
+.pulse .hero.mem{background:var(--soft);color:var(--ink)}
+.pulse .lab{font-size:13px;font-weight:600;opacity:.75}
+.pulse .big{font:700 34px/1.05 var(--display);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.pulse .fig{position:relative;height:34px;margin-top:4px}
+.pulse .fig canvas{position:absolute;inset:0;width:100%;height:100%}
+.pulse .sub{font-size:13px;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pulse .tri{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
+.pulse .tile{background:var(--soft);border-radius:12px;padding:9px 10px 10px}
+.pulse .k{font-size:13px;color:var(--mute);font-weight:500}
+.pulse .v{font:700 17px/1.2 var(--display);font-variant-numeric:tabular-nums;white-space:nowrap}
+.pulse .s{font-size:13px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pulse .pbar{height:5px;border-radius:3px;background:var(--line);margin-top:7px;overflow:hidden}
+.pulse .pbar i{display:block;height:100%;width:0;background:var(--ink);border-radius:3px;transition:width .4s}
+.pulse .apps{margin-top:12px}
+.pulse .ah{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.pulse .ah h2{margin:0;font:600 14px/1 var(--text)}
+.pulse .seg{display:flex;background:var(--soft);border-radius:8px;padding:2px}
+.pulse .seg button{font-size:13px;padding:5px 10px;border-radius:6px;color:var(--mute);min-height:30px}
+.pulse .seg [aria-pressed=true]{background:var(--bg);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.pulse #list{list-style:none;margin:0;padding:0}
+.pulse #list li{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:8px 2px;border-bottom:1px solid var(--line);font-size:14px}
+.pulse #list li:last-child{border-bottom:0}
+.pulse #list .ic{grid-row:span 2;width:28px;height:28px;border-radius:7px;display:grid;place-items:center;font:700 13px/1 var(--text);color:#fff}
+.pulse #list .nm{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pulse #list .val{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}
+.pulse #list .sb{grid-column:2/-1;display:grid;grid-template-columns:minmax(0,1fr) 90px;gap:10px;align-items:center;font-size:13px;color:var(--mute)}
+.pulse #list .sb span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pulse #list .br{height:5px;background:var(--line);border-radius:3px;overflow:hidden}
+.pulse #list .br i{display:block;height:100%;background:var(--ink);border-radius:3px;transition:width .4s}
+.pulse #list li.sub{padding:5px 2px 5px 0;border-bottom:0;font-size:13px}
+.pulse #list li.sub .ic{grid-row:auto;width:20px;height:20px;border-radius:5px;font-size:11px;justify-self:end}
+.pulse #list li.sub .nm{font-weight:400}
+.pulse #list li.sub .val{font-weight:500;color:var(--mute)}
+.pulse #list li.wsl{border-bottom:0}
+.pulse .badge{font-size:11.5px;font-weight:600;border-radius:4px;padding:1px 5px;margin-left:6px;background:var(--mint);color:#0d0f0e}
+.pulse footer{padding:8px 16px 10px;border-top:1px solid var(--line);font-size:13px;color:var(--mute);display:flex;justify-content:space-between;gap:8px}
+.pulse kbd{font:600 12.5px var(--text);background:var(--soft);border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 5px;color:var(--ink)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header class="head">
+    <h1>Pulse panel: with or without the webview</h1>
+    <p>Tap a way to build it, then tap the tray icon to feel it open. Panel from the <a href="https://claude.ai/artifact/A313cyAmyqqiFD4em5KLcp">Pulse page</a> with sample figures, for the <a href="https://claude.ai/artifact/DUSS4Y88mEfs4N4NHgYRck">Pulse PRD</a>.</p>
+  </header>
+  <div class="body">
+    <section class="stage" id="stage" aria-label="Preview of the panel above the tray">
+      <div class="approx" id="approx" hidden>Drawn stand-in. A native panel would keep this layout; text sharpness and spacing would differ slightly.</div>
+      <div class="holder" id="holder" data-open="0">
+        <div class="pulse" id="pulse">
+          <div class="top">
+            <div class="brand"><canvas id="logo" width="44" height="44"></canvas>Pulse</div>
+            <div class="ctl">
+              <span class="ib"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8.5" stroke-dasharray="3 3.7"/></svg></span>
+              <button class="ib" id="close" aria-label="Hide the panel"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+            </div>
+            <p id="status">Sample data, not this PC</p>
+          </div>
+          <main>
+            <section class="duo">
+              <div class="hero"><div class="lab">Processor</div><div class="big" id="cpu">0%</div><div class="fig"><canvas id="cpuC"></canvas></div><div class="sub" id="cpuS">16 cores</div></div>
+              <div class="hero mem"><div class="lab">Memory</div><div class="big" id="memV">0 GB</div><div class="fig"><canvas id="memC"></canvas></div><div class="sub" id="memS">of 32 GB</div></div>
+            </section>
+            <section class="apps">
+              <div class="ah"><h2>Top apps</h2><div class="seg"><button data-s="m" aria-pressed="true">Memory</button><button data-s="c" aria-pressed="false">Processor</button></div></div>
+              <ul id="list"></ul>
+            </section>
+            <section class="tri">
+              <div class="tile"><div class="k">Graphics</div><div class="v" id="gpuV">0%</div><div class="s">3D engine</div><div class="pbar"><i id="gpuB"></i></div></div>
+              <div class="tile"><div class="k">Drive C:</div><div class="v">296 GB</div><div class="s">free</div><div class="pbar"><i style="width:67%"></i></div></div>
+              <div class="tile"><div class="k">Network</div><div class="v" id="netV">0</div><div class="s" id="netS">up 0</div></div>
+            </section>
+          </main>
+          <footer><span><kbd>Alt+Shift+P</kbd> opens and closes Pulse</span><span>2s ago</span></footer>
+        </div>
+      </div>
+      <div class="taskbar">
+        <span class="hint" id="read">Opening</span>
+        <button id="tray" aria-label="Tray icon: open or close the panel"><canvas id="trayC" width="44" height="44"></canvas></button>
+        <span class="clock">9:41 AM<br>11/25/2026</span>
+      </div>
+    </section>
+
+    <section class="opts" id="opts" aria-label="Ways to build the panel">
+      <article class="opt" data-v="keep" tabindex="0" role="button" aria-pressed="true">
+        <div class="ot"><h3>Webview, kept ready</h3><span class="tag">My pick</span><button class="star" data-star="keep" aria-pressed="false" aria-label="Star: keep this one"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.8z"/></svg></button></div>
+        <p class="d">The Pulse page runs inside the app. The window is hidden, never destroyed.</p>
+        <dl class="stats">
+          <div><dt>Hidden</dt><dd>about 21 MB <small>measured, Scribe</small></dd></div>
+          <div><dt>Open</dt><dd>80 to 120 MB <small>estimate</small></dd></div>
+          <div><dt>Opens in</dt><dd>under 0.1 s <small>estimate</small></dd></div>
+          <div><dt>Build work</dt><dd>Reuse the page as it is</dd></div>
+        </dl>
+        <p class="catch"><b>Catch:</b> the app must send nothing to the panel while it is hidden, or Windows stops trimming it.</p>
+      </article>
+
+      <article class="opt" data-v="idle" tabindex="0" role="button" aria-pressed="false">
+        <div class="ot"><h3>Webview, closed after idle</h3><button class="star" data-star="idle" aria-pressed="false" aria-label="Star: keep this one"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.8z"/></svg></button></div>
+        <p class="d">Same page, but the window is destroyed a few minutes after you close it and rebuilt on the next open.</p>
+        <div class="pseg" id="idleSeg"><button data-c="1" aria-pressed="true">First open after idle</button><button data-c="0" aria-pressed="false">Opened recently</button></div>
+        <dl class="stats">
+          <div><dt>Hidden</dt><dd>about 5 MB <small>measured, N8 Tray</small></dd></div>
+          <div><dt>Open</dt><dd>80 to 120 MB <small>estimate</small></dd></div>
+          <div><dt>Opens in</dt><dd>0.5 to 1 s after idle <small>estimate</small></dd></div>
+          <div><dt>Build work</dt><dd>The page, plus teardown and rebuild</dd></div>
+        </dl>
+        <p class="catch"><b>Catch:</b> the slow open lands when the PC already feels slow, to save about 16 MB.</p>
+      </article>
+
+      <article class="opt" data-v="native" tabindex="0" role="button" aria-pressed="false">
+        <div class="ot"><h3>No webview, drawn natively</h3><button class="star" data-star="native" aria-pressed="false" aria-label="Star: keep this one"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.8z"/></svg></button></div>
+        <p class="d">The panel is drawn by a Rust UI toolkit. No browser engine at all.</p>
+        <dl class="stats">
+          <div><dt>Hidden</dt><dd>about 5 MB <small>estimate, from N8 Tray</small></dd></div>
+          <div><dt>Open</dt><dd>20 to 40 MB <small>estimate</small></dd></div>
+          <div><dt>Opens in</dt><dd>under 0.05 s <small>estimate</small></dd></div>
+          <div><dt>Build work</dt><dd>Whole panel rebuilt by hand</dd></div>
+        </dl>
+        <p class="catch"><b>Catch:</b> the list, settings screen, shortcut recorder, light and dark themes and bar motion are all rewritten, and every later design change costs more. The Pulse page can't be reused.</p>
+      </article>
+
+      <div class="note">
+        <h2>What changed since my first answer</h2>
+        <p><b>I said:</b> a hidden webview would break the 60 MB budget.</p>
+        <p><b>What is true:</b> it does not. I measured your own tray apps on this PC, by the same number Task Manager shows. Scribe, with its webview hidden, uses <b>21 MB</b>. N8 Tray, with no window open, uses <b>5 MB</b>.</p>
+        <p><b>Why I was wrong:</b> Windows trims a hidden webview. It still reserves about 250 MB on paper (commit), but that is not the Memory column and not what the PRD budget counts.</p>
+        <p class="fix"><b>So:</b> dropping the webview saves about 16 MB while hidden and maybe 60 to 80 MB while open, and costs a hand-built panel. I would keep the webview.</p>
+      </div>
+
+      <div class="picks">
+        <p id="pickLine">Star what you want to keep. Unstarred ones are dropped.</p>
+        <button id="copy">Copy my picks</button>
+        <textarea id="copyOut" rows="3" readonly hidden aria-label="Your picks, to copy"></textarea>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+{
+const $ = s => document.querySelector(s), GB = 1073741824;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fb = b => { const u = ['B', 'KB', 'MB', 'GB']; let i = 0; while (b >= 1000 && i < 3) { b /= 1024; i++; } return (b >= 100 || i === 0 ? Math.round(b) : b.toFixed(1)) + ' ' + u[i]; };
+const hue = n => { let h = 0; for (const c of n) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${h} 45% 45%)`; };
+const store = { get(k, d) { try { const v = localStorage.getItem('pulseopts.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem('pulseopts.' + k, JSON.stringify(v)); } catch {} } };
+
+/* icons, drawn the way the Pulse page draws them */
+(() => { const x = $('#logo').getContext('2d'); x.scale(44 / 256, 44 / 256); x.fillStyle = '#0d0f0e'; x.beginPath(); x.roundRect(16, 16, 224, 224, 52); x.fill(); x.strokeStyle = '#b8f5d0'; x.lineWidth = 18; x.lineCap = 'round'; x.lineJoin = 'round'; x.beginPath(); x.moveTo(50, 140); x.lineTo(92, 140); x.lineTo(112, 88); x.lineTo(140, 182); x.lineTo(160, 120); x.lineTo(174, 140); x.lineTo(206, 140); x.stroke(); })();
+function trayIcon(n) {
+  const x = $('#trayC').getContext('2d'); x.setTransform(44 / 64, 0, 0, 44 / 64, 0, 0); x.clearRect(0, 0, 64, 64);
+  x.fillStyle = '#0d0f0e'; x.beginPath(); x.roundRect(2, 2, 60, 60, 14); x.fill();
+  [n.cpu / 100, (n.memTotal - n.memAvail) / n.memTotal].forEach((f, i) => { const X = 13 + i * 24, h = Math.max(5, 42 * Math.min(1, f)); x.fillStyle = 'rgba(184,245,208,.22)'; x.fillRect(X, 11, 15, 42); x.fillStyle = i ? '#ffffff' : '#b8f5d0'; x.fillRect(X, 53 - h, 15, h); });
+}
+
+/* sample panel data */
+const SA = [['chrome', 'Google Chrome', 6.1, 2.1, 24], ['Code', 'Visual Studio Code', 3.4, 1.3, 11], ['Discord', 'Discord', 1.8, .62, 6], ['obs64', 'OBS Studio', 1.5, .41, 1], ['Spotify', 'Spotify', .8, .33, 5], ['vmmemWSL', 'WSL (Linux)', 1.2, 3.4, 1]];
+const WSLP = [['Claude Code', 640, 3, 1], ['Codex CLI', 236, 2, 1]];
+let tk = 0, hist = [], now = null, sortBy = 'm';
+function fake() {
+  tk++; const r = (a, b) => a + Math.random() * (b - a), w = Math.max(.35, 1 + .7 * Math.sin(tk / 7));
+  const ps = SA.map(([n, d, c, m, k]) => ({ n, d, c: +(c * w * r(.7, 1.3)).toFixed(1), m: m * GB * r(.97, 1.03), k }));
+  return { cpu: Math.max(3, Math.min(96, ps.reduce((a, p) => a + p.c, 0) + r(2, 6))), memTotal: 32 * GB, memAvail: (17.4 - Math.sin(tk / 15)) * GB, ni: r(3e4, 2.5e6) * w, no: r(1e4, 3e5), gpu: r(4, 22) * w, ps };
+}
+function spark(c, v) {
+  const r = c.getBoundingClientRect(), s = +getComputedStyle($('#holder')).getPropertyValue('--s') || 1, d = devicePixelRatio || 1, W = Math.max(1, r.width / s), H = Math.max(1, r.height / s);
+  c.width = Math.round(W * d); c.height = Math.round(H * d); const x = c.getContext('2d'); x.scale(d, d);
+  const L = 90, st = W / (L - 1), o = L - v.length, col = getComputedStyle(c).color; x.beginPath();
+  v.forEach((y, i) => { const X = (o + i) * st, Y = H - 2 - Math.min(1, y / 100) * (H - 5); i ? x.lineTo(X, Y) : x.moveTo(X, Y); });
+  x.strokeStyle = col; x.lineWidth = 2; x.lineJoin = 'round'; x.stroke(); x.lineTo((L - 1) * st, H); x.lineTo(o * st, H); x.closePath(); x.globalAlpha = .16; x.fillStyle = col; x.fill();
+}
+const set = (id, t) => { const e = $(id); if (e.textContent !== t) e.textContent = t; };
+function list() {
+  const val = p => sortBy === 'c' ? p.c : p.m, arr = [...now.ps].sort((a, b) => val(b) - val(a)), max = Math.max(sortBy === 'c' ? 5 : 1, ...arr.map(val));
+  arr.sort((a, b) => (a.n === 'vmmemWSL') - (b.n === 'vmmemWSL') || val(b) - val(a));
+  $('#list').innerHTML = [...arr.filter(p => p.n !== 'vmmemWSL').slice(0, 3), ...arr.filter(p => p.n === 'vmmemWSL')].map(p => {
+    const w = p.n === 'vmmemWSL';
+    const head = `<li class="${w ? 'wsl' : ''}"><span class="ic" style="background:${hue(p.n)}">${esc(p.d[0])}</span><span class="nm">${esc(p.d)}</span><span class="val">${sortBy === 'c' ? p.c.toFixed(1) + '%' : fb(p.m)}</span><span class="sb"><span>${w ? 'Linux virtual machine · inside:' : esc(p.n) + '.exe' + (p.k > 1 ? ' · ' + p.k + ' processes' : '')}</span><span class="br"><i style="width:${(val(p) / max * 100).toFixed(1)}%"></i></span></span></li>`;
+    return w ? head + WSLP.map(([n, m, k, ag]) => `<li class="sub"><span class="ic" style="background:${hue(n)}">${esc(n[0])}</span><span class="nm">${esc(n)}${ag ? '<span class="badge">agent</span>' : ''} <span style="color:var(--mute)">×${k}</span></span><span class="val">${m} MB</span></li>`).join('') : head;
+  }).join('');
+}
+function draw() { if (!hist.length) return; spark($('#cpuC'), hist.map(h => h.cpu)); spark($('#memC'), hist.map(h => (h.memTotal - h.memAvail) / h.memTotal * 100)); }
+function render(n) {
+  now = n; hist.push(n); if (hist.length > 90) hist.shift();
+  const used = n.memTotal - n.memAvail;
+  set('#cpu', Math.round(n.cpu) + '%'); set('#cpuS', '16 cores · up 3d 4h');
+  set('#memV', (used / GB).toFixed(1) + ' GB'); set('#memS', 'of 32 GB · ' + Math.round(used / n.memTotal * 100) + '%');
+  set('#gpuV', Math.round(n.gpu) + '%'); $('#gpuB').style.width = Math.min(100, n.gpu) + '%';
+  set('#netV', '↓ ' + fb(n.ni) + '/s'); set('#netS', '↑ ' + fb(n.no) + '/s');
+  list(); draw(); trayIcon(n);
+}
+for (const b of document.querySelectorAll('.pulse .seg button')) b.onclick = () => { sortBy = b.dataset.s; for (const o of document.querySelectorAll('.pulse .seg button')) o.setAttribute('aria-pressed', o === b); list(); };
+
+/* stage: fit the panel to the stage width, at real size when there is room */
+function fit() {
+  const st = $('#stage'), h = $('#holder'), W = st.clientWidth, H = st.clientHeight, s = Math.min(1, (W - 20) / 380), free = H - 44 - 10 - 700 * s;
+  h.style.setProperty('--s', s.toFixed(4)); h.style.top = Math.max(10, free) + 'px'; draw();
+}
+new ResizeObserver(fit).observe($('#stage'));
+
+/* the three ways, and how each one opens. Delays are stand-ins for the estimates on each row. */
+const WAYS = { keep: { name: 'Webview, kept ready', ms: () => 60 }, idle: { name: 'Webview, closed after idle', ms: () => cold ? 750 : 60 }, native: { name: 'No webview, drawn natively', ms: () => 30 } };
+let way = 'keep', cold = true, isOpen = false, timers = [];
+const clear = () => { timers.forEach(clearTimeout); timers = []; };
+function close() { clear(); isOpen = false; $('#holder').dataset.open = '0'; $('#pulse').classList.remove('blank'); $('#read').innerHTML = 'Hidden <small>tap the tray icon to open</small>'; }
+function open() {
+  clear(); isOpen = true; const ms = WAYS[way].ms(), h = $('#holder'), p = $('#pulse');
+  $('#read').innerHTML = 'Opening';
+  const done = () => { p.classList.remove('blank'); h.dataset.open = '1'; draw(); $('#read').innerHTML = 'Opened in about ' + (ms >= 500 ? (ms / 1000).toFixed(2).replace(/0$/, '') + ' s' : ms + ' ms') + ' <small>simulated</small>'; };
+  if (ms >= 500) { timers.push(setTimeout(() => { p.classList.add('blank'); h.dataset.open = '1'; }, 320)); timers.push(setTimeout(done, ms)); }
+  else timers.push(setTimeout(done, ms));
+}
+$('#tray').onclick = () => isOpen ? close() : open();
+$('#close').onclick = close;
+function choose(v, replay) {
+  way = v; for (const o of document.querySelectorAll('.opt')) o.setAttribute('aria-pressed', o.dataset.v === v);
+  $('#approx').hidden = v !== 'native';
+  if (replay) { close(); timers.push(setTimeout(open, 260)); }
+}
+for (const o of document.querySelectorAll('.opt')) {
+  o.onclick = e => { if (e.target.closest('.star,.pseg')) return; choose(o.dataset.v, true); };
+  o.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === o) { e.preventDefault(); choose(o.dataset.v, true); } };
+}
+for (const b of document.querySelectorAll('#idleSeg button')) b.onclick = () => { cold = b.dataset.c === '1'; for (const o of document.querySelectorAll('#idleSeg button')) o.setAttribute('aria-pressed', o === b); choose('idle', true); };
+
+/* stars and the copied summary */
+let stars = store.get('stars', {});
+function picks() {
+  const keep = Object.keys(WAYS).filter(k => stars[k]).map(k => WAYS[k].name), drop = Object.keys(WAYS).filter(k => !stars[k]).map(k => WAYS[k].name);
+  for (const b of document.querySelectorAll('.star')) b.setAttribute('aria-pressed', !!stars[b.dataset.star]);
+  $('#pickLine').textContent = keep.length ? 'Keeping: ' + keep.join(', ') + '. Dropping the rest.' : 'Star what you want to keep. Unstarred ones are dropped.';
+  return 'Pulse panel, how to build it. Starred = keep, unstarred = drop.\nKeep: ' + (keep.join('; ') || 'nothing starred yet') + '\nDrop: ' + (drop.join('; ') || 'nothing');
+}
+for (const b of document.querySelectorAll('.star')) b.onclick = () => { stars[b.dataset.star] = !stars[b.dataset.star]; store.set('stars', stars); picks(); $('#copyOut').hidden = true; $('#copy').textContent = 'Copy my picks'; };
+$('#copy').onclick = () => {
+  const t = picks(), out = $('#copyOut'), show = () => { out.value = t; out.hidden = false; out.focus(); out.select(); $('#copy').textContent = 'Select and copy the text below'; };
+  try { navigator.clipboard.writeText(t).then(() => { $('#copy').textContent = 'Copied'; }, show); } catch { show(); }
+};
+
+for (let i = 0; i < 60; i++) { hist.push(fake()); }
+render(fake()); picks(); fit(); choose('keep', false); isOpen = true; $('#holder').dataset.open = '1'; $('#read').innerHTML = 'Opened in about 60 ms <small>simulated</small>';
+setInterval(() => { if (!document.hidden) render(fake()); }, 2000);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
+}
+</script>
