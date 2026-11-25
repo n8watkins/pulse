@@ -8,7 +8,7 @@ use slint::winit_030::winit::event::{ElementState, WindowEvent};
 use slint::winit_030::winit::keyboard::{Key, NamedKey};
 use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::winit_030::{EventResult, WinitWindowAccessor};
-use slint::{CloseRequestResponse, ComponentHandle, Model, RenderingState, SharedString, VecModel};
+use slint::{CloseRequestResponse, ComponentHandle, Model, SharedString, VecModel};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -149,6 +149,7 @@ struct Panel {
     reader: Sender<ReaderCmd>,
     measure: Measure,
     icons: Icons,
+    trim: bool,
 }
 
 thread_local! {
@@ -244,6 +245,21 @@ impl Panel {
         let _ = self.reader.send(ReaderCmd::Wake(false));
     }
 
+    /// Called as a redraw starts. The first one after an armed `show` ends the
+    /// open measurement; the timer runs once the draw and present have returned.
+    fn frame_drawn(&self) {
+        let m = self
+            .measure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some((t0, tx)) = m {
+            slint::Timer::single_shot(Duration::ZERO, move || {
+                let _ = tx.send(t0.elapsed().as_secs_f64() * 1000.0);
+            });
+        }
+    }
+
     fn hide(&self, from_blur: bool) {
         let Some(h) = self.hwnd.get() else { return };
         if !self.visible.get() {
@@ -255,6 +271,9 @@ impl Panel {
             self.last_blur_hide.set(Some(Instant::now()));
         }
         win::hide(h);
+        if self.trim {
+            win::trim_working_set();
+        }
     }
 
     fn toggle(&self) {
@@ -390,7 +409,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     slint::BackendSelector::new()
         .backend_name("winit".into())
-        .renderer_name("skia".into())
+        .renderer_name(std::env::var("PULSE_RENDERER").unwrap_or_else(|_| "skia".into()))
         .with_winit_window_attributes_hook(|a| {
             // Created hidden offscreen, never activated, fixed size: the real
             // position and visibility come from `Panel::show`.
@@ -425,6 +444,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         reader: tx.clone(),
         measure: measure.clone(),
         icons: Icons::spawn(),
+        trim: std::env::var_os("PULSE_NOTRIM").is_none(),
     });
     PANEL.with(|p| *p.borrow_mut() = Some(panel.clone()));
 
@@ -491,19 +511,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 win::style_tool_window(h);
                 win::no_system_corners(h);
                 p.hwnd.set(Some(h));
-                let measure = p.measure.clone();
-                let _ = p.ui.window().set_rendering_notifier(move |state, _| {
-                    if matches!(state, RenderingState::AfterRendering) {
-                        let m = measure
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .take();
-                        if let Some((t0, tx)) = m {
-                            let _ = tx.send(t0.elapsed().as_secs_f64() * 1000.0);
-                        }
-                    }
-                });
                 p.ui.window().on_winit_window_event(|_, ev| match ev {
+                    WindowEvent::RedrawRequested => {
+                        with_panel(|p| p.frame_drawn());
+                        EventResult::Propagate
+                    }
                     WindowEvent::Focused(false) => {
                         with_panel(|p| {
                             if p.blur_hides {
@@ -527,6 +539,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 });
                 if start_shown {
                     p.show(false, None);
+                } else if p.trim {
+                    win::trim_working_set();
                 }
                 if let Some(report) = selftest.clone() {
                     spawn_selftest(report, selftest_tx.clone());

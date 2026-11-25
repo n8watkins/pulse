@@ -111,3 +111,12 @@ pub fn place(h: Hwnd) {
         SetWindowPos(h.raw(), HWND_TOPMOST, x, y, w, height, SWP_NOACTIVATE);
     }
 }
+
+/// Hands the process's idle pages back to Windows (the same trim Windows
+/// applies to a hidden webview), so a hidden panel counts for almost nothing.
+pub fn trim_working_set() {
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, SetProcessWorkingSetSize};
+    unsafe {
+        SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX);
+    }
+}
