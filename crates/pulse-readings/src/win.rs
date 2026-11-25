@@ -4,7 +4,7 @@
 //! uptime from `GetTickCount64`, and the apps from one
 //! `NtQuerySystemInformation(SystemProcessInformation)` call per read.
 
-use crate::{AppRow, Snapshot, Source, group, icon};
+use crate::{AppRow, Snapshot, Source, group, icon, perf};
 use std::collections::HashMap;
 use windows_sys::Win32::Foundation::FILETIME;
 use windows_sys::Win32::System::SystemInformation::{
@@ -76,6 +76,7 @@ pub struct Windows {
     buf: Vec<u64>,
     /// Per lowercase exe name: the path found and the friendly name from its version info.
     known: HashMap<String, (String, Option<String>)>,
+    extras: perf::Extras,
 }
 
 impl Windows {
@@ -92,6 +93,7 @@ impl Windows {
             cores,
             buf: vec![0; (1 << 20) / 8],
             known: HashMap::new(),
+            extras: perf::Extras::new(),
         };
         w.cpu_pct();
         w
@@ -261,6 +263,7 @@ impl Source for Windows {
         } else {
             Vec::new()
         };
+        let x = self.extras.read();
         Snapshot {
             cpu_pct,
             cores,
@@ -268,6 +271,14 @@ impl Source for Windows {
             mem_used,
             mem_total,
             apps,
+            gpu_pct: x.gpu_pct,
+            disk_free: x.disk_free,
+            disk_total: x.disk_total,
+            disk_read_bps: x.disk_read_bps,
+            disk_write_bps: x.disk_write_bps,
+            net_down_bps: x.net_down_bps,
+            net_up_bps: x.net_up_bps,
+            battery: x.battery,
         }
     }
 }
@@ -300,5 +311,11 @@ mod tests {
         assert!(!s.apps.is_empty() && s.apps.len() <= group::TOP);
         assert!(s.apps.windows(2).all(|p| p[0].mem_bytes >= p[1].mem_bytes));
         assert!(w.read(false).apps.is_empty());
+        // Drive, graphics and network are read on every call.
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let s = w.read(false);
+        assert!(s.disk_total > 0 && s.disk_free <= s.disk_total);
+        assert!(s.gpu_pct.is_none_or(|g| (0.0..=100.0).contains(&g)));
+        assert!(s.battery.is_none_or(|b| b.pct <= 100));
     }
 }

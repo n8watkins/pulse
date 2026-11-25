@@ -12,6 +12,8 @@ mod group;
 #[cfg(windows)]
 mod icon;
 #[cfg(windows)]
+mod perf;
+#[cfg(windows)]
 mod win;
 
 /// One reading of the machine. Sizes are bytes.
@@ -27,6 +29,28 @@ pub struct Snapshot {
     pub mem_total: u64,
     /// Top apps by memory, largest first. Empty when read with `with_apps` false.
     pub apps: Vec<AppRow>,
+    /// 3D engine use, 0 to 100. `None` when the PC does not report it (never 0).
+    pub gpu_pct: Option<f32>,
+    /// Drive C:, bytes.
+    pub disk_free: u64,
+    pub disk_total: u64,
+    /// Drive activity, bytes per second.
+    pub disk_read_bps: u64,
+    pub disk_write_bps: u64,
+    /// Network over real adapters (Ethernet and Wi-Fi), bytes per second.
+    pub net_down_bps: u64,
+    pub net_up_bps: u64,
+    /// `None` when the PC has no battery.
+    pub battery: Option<Battery>,
+}
+
+/// The battery of a laptop.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Battery {
+    /// Charge, 0 to 100.
+    pub pct: u8,
+    /// Whether the charger is connected.
+    pub plugged: bool,
 }
 
 /// Processes grouped by executable name.
@@ -103,6 +127,8 @@ impl Source for Sample {
         self.tick += 1;
         let t = f64::from(self.tick);
         let wave = (t / 7.0).sin();
+        // The reference page's activity factor, scaled to 0..1.
+        let busy = ((1.0 + 0.7 * wave).max(0.35) - 0.35) / 1.35;
         let apps = if with_apps {
             [
                 ("Google Chrome", "chrome.exe", 24, 2100 * MB),
@@ -132,6 +158,14 @@ impl Source for Sample {
             mem_used: (13.8 * GB as f64 + 0.4 * GB as f64 * (t / 15.0).sin()) as u64,
             mem_total: 32 * GB,
             apps,
+            gpu_pct: Some((4.0 + 18.0 * busy) as f32),
+            disk_free: 296 * GB,
+            disk_total: 953 * GB,
+            disk_read_bps: (0.2 * MB as f64 + 3.0 * MB as f64 * busy) as u64,
+            disk_write_bps: (0.1 * MB as f64 + 1.2 * MB as f64 * busy) as u64,
+            net_down_bps: (3.0e4 + (2.5e6 - 3.0e4) * busy) as u64,
+            net_up_bps: (1.0e4 + (3.0e5 - 1.0e4) * busy) as u64,
+            battery: None,
         }
     }
 }
