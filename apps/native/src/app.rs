@@ -207,6 +207,12 @@ fn spawn_reader(
         let mut hist = History::default();
         let mut apps = Vec::new();
         let mut force_apps = false;
+        if sample {
+            // Like the reference page, which starts with 60 samples of history.
+            for _ in 0..60 {
+                hist.push(&src.read(false));
+            }
+        }
         loop {
             let visible = shown.load(Ordering::Relaxed);
             let mut snap = src.read(visible || force_apps);
