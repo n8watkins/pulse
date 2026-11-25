@@ -4,7 +4,8 @@
 //! uptime from `GetTickCount64`, and the apps from one
 //! `NtQuerySystemInformation(SystemProcessInformation)` call per read.
 
-use crate::{Snapshot, Source, group};
+use crate::{AppRow, Snapshot, Source, group, icon};
+use std::collections::HashMap;
 use windows_sys::Win32::Foundation::FILETIME;
 use windows_sys::Win32::System::SystemInformation::{
     GetSystemInfo, GetTickCount64, GlobalMemoryStatusEx, MEMORYSTATUSEX, SYSTEM_INFO,
@@ -29,7 +30,8 @@ const OFF_NEXT: usize = 0;
 const OFF_PRIVATE_WS: usize = 8;
 const OFF_NAME_LEN: usize = 56;
 const OFF_NAME_PTR: usize = 64;
-const MIN_ENTRY: usize = 80;
+const OFF_PID: usize = 80;
+const MIN_ENTRY: usize = 88;
 
 /// Shortest span (100 ns units, per core) a processor figure is taken over: 250 ms.
 const MIN_SPAN: u64 = 2_500_000;
@@ -40,6 +42,8 @@ pub struct Windows {
     cores: u32,
     /// u64 storage so the buffer is 8-byte aligned.
     buf: Vec<u64>,
+    /// Per lowercase exe name: the path found and the friendly name from its version info.
+    known: HashMap<String, (String, Option<String>)>,
 }
 
 impl Windows {
@@ -55,6 +59,7 @@ impl Windows {
             pct: 0.0,
             cores,
             buf: vec![0; (1 << 20) / 8],
+            known: HashMap::new(),
         };
         w.cpu_pct();
         w
@@ -93,8 +98,29 @@ impl Windows {
         pct
     }
 
+    /// Adds the path of one process and the file's own description as the name
+    /// (the built-in names win), cached per exe name once found.
+    fn resolve(&mut self, mut row: AppRow, pid: u32) -> AppRow {
+        let key = row.exe.to_ascii_lowercase();
+        if !self.known.contains_key(&key)
+            && let Some(path) = icon::process_path(pid)
+        {
+            let desc = icon::file_description(&path);
+            self.known.insert(key.clone(), (path, desc));
+        }
+        if let Some((path, desc)) = self.known.get(&key) {
+            row.path = Some(path.clone());
+            if let Some(d) = desc
+                && !group::is_builtin(&row.exe)
+            {
+                row.name.clone_from(d);
+            }
+        }
+        row
+    }
+
     /// One call for every process; returns (image name, private working set).
-    fn processes(&mut self) -> Vec<(String, u64)> {
+    fn processes(&mut self) -> Vec<(String, u64, u32)> {
         let mut returned = 0u32;
         for _ in 0..4 {
             let bytes = self.buf.len() * 8;
@@ -133,7 +159,7 @@ fn u64_at(b: &[u8], o: usize) -> Option<u64> {
 
 /// Walks the linked entries in `buf`; `base` is the address `buf` starts at,
 /// which the name pointers are relative to.
-fn parse(buf: &[u8], base: usize) -> Vec<(String, u64)> {
+fn parse(buf: &[u8], base: usize) -> Vec<(String, u64, u32)> {
     let mut out = Vec::new();
     let mut at = 0usize;
     while at + MIN_ENTRY <= buf.len() {
@@ -154,7 +180,8 @@ fn parse(buf: &[u8], base: usize) -> Vec<(String, u64)> {
                 String::from_utf16_lossy(&units)
             })
             .unwrap_or_default();
-        out.push((name, private));
+        let pid = u64_at(buf, at + OFF_PID).unwrap_or(0) as u32;
+        out.push((name, private, pid));
         if next == 0 {
             break;
         }
@@ -183,7 +210,10 @@ impl Source for Windows {
         // SAFETY: no arguments.
         let uptime_s = unsafe { GetTickCount64() } / 1000;
         let apps = if with_apps {
-            group::top_apps(self.processes())
+            let rows = group::top_apps(self.processes());
+            rows.into_iter()
+                .map(|(row, pid)| self.resolve(row, pid))
+                .collect()
         } else {
             Vec::new()
         };
@@ -201,6 +231,19 @@ impl Source for Windows {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn icons_and_names_come_from_the_exe() {
+        let path = r"C:\Windows\explorer.exe";
+        let img = crate::icon_rgba(path, 32).expect("explorer has an icon");
+        assert_eq!((img.width, img.height), (32, 32));
+        assert_eq!(img.rgba.len(), 32 * 32 * 4);
+        assert!(img.rgba.chunks_exact(4).any(|p| p[3] > 0));
+        assert_eq!(
+            icon::file_description(path).as_deref(),
+            Some("Windows Explorer")
+        );
+    }
 
     #[test]
     fn reads_plausible_figures() {
