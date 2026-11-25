@@ -63,30 +63,52 @@ enum ReaderCmd {
 
 type Measure = Arc<Mutex<Option<(Instant, Sender<f64>)>>>;
 
-/// Executable icons: `icon_rgba` runs once per path on a worker thread (it
-/// touches the shell and can be slow), the result is kept for the session.
+/// Executable icons: `icon_rgba` runs on a worker thread (it touches the shell
+/// and can be slow). A found icon is kept for the session; a failed lookup is
+/// retried on later reader ticks, up to `ICON_TRIES` times, before the letter stays.
 struct Icons {
-    /// Finished lookups, shared with the worker. `None` = no icon, keep the letter.
-    done: Arc<Mutex<HashMap<String, Option<IconImage>>>>,
-    /// Paths already handed to the worker.
-    asked: RefCell<HashSet<String>>,
+    /// Lookups the worker has finished, shared with it.
+    done: Arc<Mutex<HashMap<String, IconSlot>>>,
+    /// Paths with a request in flight.
+    pending: RefCell<HashSet<String>>,
     /// Slint images built from `done`, on the UI thread.
     images: RefCell<HashMap<String, slint::Image>>,
     to_worker: Sender<String>,
 }
 
+struct IconSlot {
+    /// `None` = the lookup failed.
+    img: Option<IconImage>,
+    tries: u8,
+    at: Instant,
+}
+
+const ICON_TRIES: u8 = 3;
+/// Failed lookups wait for a later tick (the reader ticks every 2 s).
+const ICON_RETRY_AFTER: Duration = Duration::from_millis(1500);
+
 impl Icons {
     fn spawn() -> Self {
-        let done: Arc<Mutex<HashMap<String, Option<IconImage>>>> = Arc::default();
+        let done: Arc<Mutex<HashMap<String, IconSlot>>> = Arc::default();
         let (to_worker, rx) = mpsc::channel::<String>();
         let shared = done.clone();
         std::thread::spawn(move || {
             while let Ok(path) = rx.recv() {
                 let img = icon_rgba(&path, 32);
-                shared
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .insert(path, img);
+                {
+                    let mut map = shared
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let tries = map.get(&path).map_or(0, |s| s.tries) + 1;
+                    map.insert(
+                        path,
+                        IconSlot {
+                            img,
+                            tries,
+                            at: Instant::now(),
+                        },
+                    );
+                }
                 let _ = slint::invoke_from_event_loop(|| {
                     with_panel(|p| {
                         if p.visible.get() {
@@ -98,13 +120,20 @@ impl Icons {
         });
         Self {
             done,
-            asked: RefCell::default(),
+            pending: RefCell::default(),
             images: RefCell::default(),
             to_worker,
         }
     }
 
-    /// The icon if it is ready; otherwise asks the worker once and returns `None`.
+    fn request(&self, path: &str) {
+        if self.pending.borrow_mut().insert(path.to_owned()) {
+            let _ = self.to_worker.send(path.to_owned());
+        }
+    }
+
+    /// The icon if it is ready; otherwise asks the worker (again, if an earlier
+    /// try failed and there are tries left) and returns `None`.
     fn get(&self, path: &str) -> Option<slint::Image> {
         if let Some(i) = self.images.borrow().get(path) {
             return Some(i.clone());
@@ -114,9 +143,9 @@ impl Icons {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(path)
-            .cloned();
+            .map(|s| (s.img.clone(), s.tries, s.at));
         match ready {
-            Some(Some(img)) => {
+            Some((Some(img), ..)) => {
                 let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
                     &img.rgba, img.width, img.height,
                 );
@@ -126,11 +155,15 @@ impl Icons {
                     .insert(path.to_owned(), image.clone());
                 Some(image)
             }
-            Some(None) => None,
-            None => {
-                if self.asked.borrow_mut().insert(path.to_owned()) {
-                    let _ = self.to_worker.send(path.to_owned());
+            Some((None, tries, at)) => {
+                if tries < ICON_TRIES && at.elapsed() >= ICON_RETRY_AFTER {
+                    self.pending.borrow_mut().remove(path);
+                    self.request(path);
                 }
+                None
+            }
+            None => {
+                self.request(path);
                 None
             }
         }
