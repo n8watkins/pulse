@@ -1,0 +1,650 @@
+// The Pulse panel (top part), drawn to match the `.pulse` rules in
+// docs/reference/panel-preview.html. Sizes are CSS px, which are Slint logical px.
+import { Palette } from "std-widgets.slint";
+
+import "../fonts/Inter-400.ttf";
+import "../fonts/Inter-500.ttf";
+import "../fonts/Inter-600.ttf";
+import "../fonts/SpaceGrotesk-700.ttf";
+
+export global Theme {
+    // 0 follows Windows, 1 light, 2 dark (PULSE_THEME).
+    in property <int> force: 0;
+    out property <bool> dark: force == 2 || (force == 0 && Palette.color-scheme == ColorScheme.dark);
+    out property <color> bg: dark ? #0d0f0e : #ffffff;
+    out property <color> ink: dark ? #f1f4f2 : #0d0f0e;
+    out property <color> mute: dark ? #98a19d : #5b625f;
+    out property <color> line: dark ? #232926 : #e4e7e5;
+    out property <color> soft: dark ? #161a18 : #f2f4f3;
+    out property <color> hero-bg: dark ? #12231a : #b8f5d0;
+    out property <color> hero-ink: dark ? #b8f5d0 : #0d0f0e;
+    out property <color> dot: #2fbf71;
+}
+
+export struct AppItem {
+    letter: string,
+    color: color,
+    name: string,
+    detail: string,
+    value: string,
+    frac: float,
+    icon: image,
+    has-icon: bool,
+}
+
+component Hero inherits Rectangle {
+    in property <string> label;
+    in property <string> big;
+    in property <string> sub;
+    in property <string> line;
+    in property <string> fill;
+    in property <color> ink;
+    in property <color> tile-bg;
+    background: tile-bg;
+    border-radius: 14px;
+    height: 136px;
+    width: 173px;
+
+    Text {
+        x: 12px;
+        y: 9px;
+        width: parent.width - 24px;
+        height: 19px;
+        text: root.label;
+        font-family: "Inter";
+        font-size: 13px;
+        font-weight: 600;
+        color: root.ink.with-alpha(0.75);
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Text {
+        x: 12px;
+        y: 30px;
+        width: parent.width - 24px;
+        height: 36px;
+        text: root.big;
+        font-family: "Space Grotesk";
+        font-size: 34px;
+        font-weight: 700;
+        letter-spacing: -0.68px;
+        color: root.ink;
+        vertical-alignment: center;
+    }
+
+    Path {
+        x: 12px;
+        y: 73px;
+        width: 149px;
+        height: 34px;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 149;
+        viewbox-height: 34;
+        commands: root.fill;
+        fill: root.ink.with-alpha(0.16);
+    }
+
+    Path {
+        x: 12px;
+        y: 73px;
+        width: 149px;
+        height: 34px;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 149;
+        viewbox-height: 34;
+        commands: root.line;
+        stroke: root.ink;
+        stroke-width: 2px;
+        stroke-line-join: round;
+    }
+
+    Text {
+        x: 12px;
+        y: 107px;
+        width: parent.width - 24px;
+        height: 19px;
+        text: root.sub;
+        font-family: "Inter";
+        font-size: 13px;
+        color: root.ink.with-alpha(0.75);
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+component Tile inherits Rectangle {
+    in property <string> k;
+    in property <string> v;
+    in property <string> s;
+    in property <bool> bar: true;
+    in property <float> frac;
+    // No reading: the value text is smaller so "Not reported" fits.
+    in property <bool> small-v: false;
+    height: 85px;
+    border-radius: 12px;
+    background: Theme.soft;
+
+    Text {
+        x: 10px;
+        y: 9px;
+        width: parent.width - 20px;
+        height: 19px;
+        text: root.k;
+        font-family: "Inter";
+        font-size: 13px;
+        font-weight: 500;
+        color: Theme.mute;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Text {
+        x: 10px;
+        y: 28px;
+        width: parent.width - 20px;
+        height: 20px;
+        text: root.v;
+        font-family: "Space Grotesk";
+        font-size: root.small-v ? 13px : 17px;
+        font-weight: 700;
+        color: Theme.ink;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Text {
+        x: 10px;
+        y: 48px;
+        width: parent.width - 20px;
+        height: 19px;
+        text: root.s;
+        font-family: "Inter";
+        font-size: 13px;
+        color: Theme.mute;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    if root.bar: Rectangle {
+        x: 10px;
+        y: 72px;
+        width: parent.width - 20px;
+        height: 5px;
+        border-radius: 3px;
+        background: Theme.line;
+        clip: true;
+        Rectangle {
+            x: 0;
+            width: parent.width * root.frac;
+            height: parent.height;
+            border-radius: 3px;
+            background: Theme.ink;
+            animate width {
+                duration: 400ms;
+                easing: cubic-bezier(0.25, 0.1, 0.25, 1);
+            }
+        }
+    }
+}
+
+component AppRow inherits Rectangle {
+    in property <AppItem> item;
+    in property <bool> last;
+    height: 60px;
+    width: 354px;
+
+    if root.item.has-icon: Image {
+        x: 4px;
+        y: 18px;
+        width: 24px;
+        height: 24px;
+        source: root.item.icon;
+        image-fit: contain;
+    }
+
+    if !root.item.has-icon: Rectangle {
+        x: 2px;
+        y: 16px;
+        width: 28px;
+        height: 28px;
+        border-radius: 7px;
+        background: root.item.color;
+        Text {
+            text: root.item.letter;
+            font-family: "Inter";
+            font-size: 13px;
+            font-weight: 700;
+            color: #ffffff;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    Text {
+        x: 40px;
+        y: 8px;
+        width: root.width - 40px - 2px - val.preferred-width - 10px;
+        height: 20px;
+        text: root.item.name;
+        font-family: "Inter";
+        font-size: 14px;
+        font-weight: 500;
+        color: Theme.ink;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    val := Text {
+        x: root.width - 2px - self.preferred-width;
+        y: 8px;
+        height: 20px;
+        text: root.item.value;
+        font-family: "Inter";
+        font-size: 14px;
+        font-weight: 600;
+        color: Theme.ink;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+
+    Text {
+        x: 40px;
+        y: 32px;
+        width: root.width - 40px - 2px - 90px - 10px;
+        height: 19px;
+        text: root.item.detail;
+        font-family: "Inter";
+        font-size: 13px;
+        color: Theme.mute;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Rectangle {
+        x: root.width - 2px - 90px;
+        y: 38px;
+        width: 90px;
+        height: 5px;
+        border-radius: 3px;
+        background: Theme.line;
+        clip: true;
+        Rectangle {
+            x: 0;
+            width: parent.width * root.item.frac;
+            height: parent.height;
+            border-radius: 3px;
+            background: Theme.ink;
+            animate width {
+                duration: 400ms;
+                easing: cubic-bezier(0.25, 0.1, 0.25, 1);
+            }
+        }
+    }
+
+    Rectangle {
+        y: 59px;
+        height: root.last ? 0px : 1px;
+        background: Theme.line;
+    }
+}
+
+export component PanelWindow inherits Window {
+    in property <string> status: "";
+    in property <string> cpu-big: "0%";
+    in property <string> cpu-sub: "";
+    in property <string> cpu-line: "";
+    in property <string> cpu-fill: "";
+    in property <string> mem-big: "0 GB";
+    in property <string> mem-sub: "";
+    in property <string> mem-line: "";
+    in property <string> mem-fill: "";
+    in property <[AppItem]> apps;
+    in property <string> gpu-big: "";
+    in property <bool> gpu-missing: false;
+    in property <float> gpu-frac;
+    in property <string> drive-big: "";
+    in property <string> drive-sub: "";
+    in property <float> drive-frac;
+    in property <string> net-big: "";
+    in property <string> net-sub: "";
+    in property <bool> has-battery: false;
+    in property <string> bat-big: "";
+    in property <string> bat-sub: "";
+    in property <float> bat-frac;
+    callback close-clicked;
+
+    title: "Pulse";
+    width: 380px;
+    height: 700px;
+    no-frame: true;
+    always-on-top: true;
+    background: transparent;
+    default-font-family: "Inter";
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: Theme.bg;
+        border-radius: 14px;
+        border-width: 1px;
+        border-color: Theme.line;
+    }
+
+    // top: logo, name, buttons, status
+    Image {
+        x: 17px;
+        y: 19px;
+        width: 22px;
+        height: 22px;
+        source: @image-url("logo.svg");
+    }
+
+    Text {
+        x: 47px;
+        y: 21.5px;
+        height: 17px;
+        text: "Pulse";
+        font-family: "Space Grotesk";
+        font-size: 17px;
+        font-weight: 700;
+        color: Theme.ink;
+        vertical-alignment: center;
+    }
+
+    Image {
+        x: 305px;
+        y: 21px;
+        width: 18px;
+        height: 18px;
+        source: @image-url("settings.svg");
+        colorize: Theme.mute;
+    }
+
+    Rectangle {
+        x: 333px;
+        y: 13px;
+        width: 34px;
+        height: 34px;
+        border-radius: 8px;
+        background: close-touch.has-hover ? Theme.soft : transparent;
+        Image {
+            width: 18px;
+            height: 18px;
+            source: @image-url("close.svg");
+            colorize: Theme.mute;
+        }
+
+        close-touch := TouchArea {
+            clicked => {
+                root.close-clicked();
+            }
+        }
+    }
+
+    Rectangle {
+        x: 17px;
+        y: 54px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: Theme.dot;
+    }
+
+    Text {
+        x: 32px;
+        y: 48px;
+        width: 335px;
+        height: 19px;
+        text: root.status;
+        font-family: "Inter";
+        font-size: 13px;
+        color: Theme.mute;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // tiles
+    Hero {
+        x: 13px;
+        y: 76px;
+        label: "Processor";
+        big: root.cpu-big;
+        sub: root.cpu-sub;
+        line: root.cpu-line;
+        fill: root.cpu-fill;
+        ink: Theme.hero-ink;
+        tile-bg: Theme.hero-bg;
+    }
+
+    Hero {
+        x: 194px;
+        y: 76px;
+        label: "Memory";
+        big: root.mem-big;
+        sub: root.mem-sub;
+        line: root.mem-line;
+        fill: root.mem-fill;
+        ink: Theme.ink;
+        tile-bg: Theme.soft;
+    }
+
+    // top apps header
+    Text {
+        x: 13px;
+        y: 234px;
+        height: 14px;
+        text: "Top apps";
+        font-family: "Inter";
+        font-size: 14px;
+        font-weight: 600;
+        color: Theme.ink;
+        vertical-alignment: center;
+    }
+
+    Rectangle {
+        x: root.width - 13px - self.width;
+        y: 224px;
+        width: seg-row.preferred-width + 4px;
+        height: 34px;
+        background: Theme.soft;
+        border-radius: 8px;
+        seg-row := HorizontalLayout {
+            x: 2px;
+            y: 2px;
+            height: 30px;
+            Rectangle {
+                width: mem-label.preferred-width + 20px;
+                background: Theme.bg;
+                border-radius: 6px;
+                drop-shadow-blur: 2px;
+                drop-shadow-offset-y: 1px;
+                drop-shadow-color: #0000001f;
+                mem-label := Text {
+                    text: "Memory";
+                    font-family: "Inter";
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: Theme.ink;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            Rectangle {
+                width: cpu-label.preferred-width + 20px;
+                cpu-label := Text {
+                    text: "Processor";
+                    font-family: "Inter";
+                    font-size: 13px;
+                    color: Theme.mute;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    for item[i] in root.apps: AppRow {
+        x: 13px;
+        y: floor(262.4 + i * 60.15) * 1px;
+        item: item;
+        last: i == root.apps.length - 1;
+    }
+
+    // bottom row of tiles
+    Tile {
+        x: 13px;
+        y: root.has-battery ? 512px : 572px;
+        width: 112.67px;
+        k: "Graphics";
+        v: root.gpu-big;
+        s: root.gpu-missing ? "" : "3D engine";
+        small-v: root.gpu-missing;
+        bar: !root.gpu-missing;
+        frac: root.gpu-frac;
+    }
+
+    Tile {
+        x: 133.67px;
+        y: root.has-battery ? 512px : 572px;
+        width: 112.67px;
+        k: "Drive C: free";
+        v: root.drive-big;
+        s: root.drive-sub;
+        frac: root.drive-frac;
+    }
+
+    Tile {
+        x: 254.33px;
+        y: root.has-battery ? 512px : 572px;
+        width: 112.67px;
+        k: "Network";
+        v: root.net-big;
+        s: root.net-sub;
+        bar: false;
+    }
+
+    if root.has-battery: Rectangle {
+        x: 13px;
+        y: 605px;
+        width: 354px;
+        height: 50px;
+        border-radius: 12px;
+        background: Theme.soft;
+        Text {
+            x: 10px;
+            y: 6px;
+            height: 19px;
+            text: "Battery";
+            font-family: "Inter";
+            font-size: 13px;
+            font-weight: 500;
+            color: Theme.mute;
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: 10px;
+            y: 26px;
+            height: 20px;
+            text: root.bat-big;
+            font-family: "Space Grotesk";
+            font-size: 17px;
+            font-weight: 700;
+            color: Theme.ink;
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: 76px;
+            y: 28px;
+            width: 140px;
+            height: 19px;
+            text: root.bat-sub;
+            font-family: "Inter";
+            font-size: 13px;
+            color: Theme.mute;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Rectangle {
+            x: parent.width - 10px - 110px;
+            y: 22.5px;
+            width: 110px;
+            height: 5px;
+            border-radius: 3px;
+            background: Theme.line;
+            clip: true;
+            Rectangle {
+                x: 0;
+                width: parent.width * root.bat-frac;
+                height: parent.height;
+                border-radius: 3px;
+                background: Theme.ink;
+                animate width {
+                    duration: 400ms;
+                    easing: cubic-bezier(0.25, 0.1, 0.25, 1);
+                }
+            }
+        }
+    }
+
+    // footer
+    Rectangle {
+        x: 1px;
+        y: root.height - 39px;
+        width: root.width - 2px;
+        height: 1px;
+        background: Theme.line;
+    }
+
+    Rectangle {
+        x: 17px;
+        y: root.height - 29px;
+        width: kbd-text.preferred-width + 12px;
+        height: 18px;
+        background: Theme.soft;
+        border-radius: 5px;
+        border-width: 1px;
+        border-color: Theme.line;
+        kbd-text := Text {
+            y: 1px;
+            height: 15px;
+            text: "Alt+Shift+P";
+            font-family: "Inter";
+            font-size: 12.5px;
+            font-weight: 600;
+            color: Theme.ink;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    Text {
+        x: 17px + kbd-text.preferred-width + 12px + 4px;
+        y: root.height - 30px;
+        height: 19px;
+        text: "opens and closes Pulse";
+        font-family: "Inter";
+        font-size: 13px;
+        color: Theme.mute;
+        vertical-alignment: center;
+    }
+
+    Text {
+        x: 265px;
+        y: root.height - 30px;
+        width: 100px;
+        height: 19px;
+        text: "2s ago";
+        font-family: "Inter";
+        font-size: 13px;
+        color: Theme.mute;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+}
