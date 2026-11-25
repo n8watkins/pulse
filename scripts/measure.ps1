@@ -24,7 +24,7 @@ param(
   [Parameter(Mandatory)] [string]$Out,
   [int]$IdleSeconds = 90,
   [int]$SettleSeconds = 20,
-  [int]$LimitSeconds = 900
+  [int]$LimitSeconds = 1800
 )
 $ErrorActionPreference = "Stop"
 $exe = (Resolve-Path $Exe).Path
