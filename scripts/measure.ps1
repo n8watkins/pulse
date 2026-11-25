@@ -107,10 +107,10 @@ function Memory([int]$root) {
   $tree = Descendants $root
   # A process that exits during the sweep makes the whole read fail: read again.
   $samples = $null
-  for ($try = 0; $try -lt 5 -and -not $samples; $try++) {
-    try { $samples = (Get-Counter -Counter "\Process V2(*)\Working Set - Private" -ErrorAction Stop).CounterSamples } catch { Start-Sleep -Milliseconds 300 }
+  for ($try = 0; $try -lt 10 -and -not $samples; $try++) {
+    try { $samples = (Get-Counter -Counter "\Process V2(*)\Working Set - Private" -ErrorAction Stop).CounterSamples } catch { $lastErr = $_.Exception.Message; Start-Sleep -Milliseconds 1000 }
   }
-  if (-not $samples) { throw "the Working Set - Private counter could not be read" }
+  if (-not $samples) { throw "the Working Set - Private counter could not be read: $lastErr" }
   $private = 0.0; $found = 0
   foreach ($s in $samples) {
     $i = $s.InstanceName.LastIndexOf(":")
@@ -124,7 +124,10 @@ function Memory([int]$root) {
 }
 function Memory-Series([int]$root, [int]$count = 5, [int]$gap = 5) {
   $list = @()
-  for ($i = 0; $i -lt $count; $i++) { if ($i -gt 0) { Pause-Bounded $gap }; $list += , (Memory $root) }
+  for ($i = 0; $i -lt $count; $i++) { if ($i -gt 0) { Pause-Bounded $gap }; 
+    try { $list += , (Memory $root) } catch { $report.errors += "memory sample skipped: $($_.Exception.Message)" }
+  }
+  if (-not $list.Count) { throw "no memory sample could be taken" }
   $avg = { param($k) [math]::Round((($list | ForEach-Object { $_[$k] } | Measure-Object -Average).Average), 1) }
   return [ordered]@{ samples = $list; meanPrivateWorkingSetMb = (& $avg "privateWorkingSetMb"); meanCommitMb = (& $avg "commitMb") }
 }
