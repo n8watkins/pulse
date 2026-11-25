@@ -7,6 +7,11 @@
 
 use serde::Serialize;
 
+#[cfg_attr(not(windows), allow(dead_code))]
+mod group;
+#[cfg(windows)]
+mod win;
+
 /// One reading of the machine. Sizes are bytes.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Snapshot {
@@ -43,7 +48,14 @@ pub trait Source: Send {
 /// The reader for this machine: real figures on Windows, [`Sample`] elsewhere.
 #[must_use]
 pub fn system() -> Box<dyn Source> {
-    Box::new(Sample::default())
+    #[cfg(windows)]
+    {
+        Box::new(win::Windows::new())
+    }
+    #[cfg(not(windows))]
+    {
+        Box::new(Sample::default())
+    }
 }
 
 const GB: u64 = 1 << 30;
