@@ -36,6 +36,38 @@ const MIN_ENTRY: usize = 88;
 /// Shortest span (100 ns units, per core) a processor figure is taken over: 250 ms.
 const MIN_SPAN: u64 = 2_500_000;
 
+/// Icon sources for rows that have no real file or whose own file has no
+/// useful icon. Keys are lowercase image names without `.exe`; values are
+/// files under `%SystemRoot%\System32` whose icon reads well at 24 px.
+const STAND_INS: &[(&str, &str)] = &[
+    // The penguin.
+    ("vmmemwsl", "wsl.exe"),
+    ("vmmem", "wsl.exe"),
+    // The Windows Security shield.
+    ("msmpeng", "SecurityHealthSystray.exe"),
+    // The services icon, for the shared service hosts.
+    ("svchost", "services.exe"),
+    // The memory rows: Task Manager's icon.
+    ("memory compression", "taskmgr.exe"),
+    ("system", "taskmgr.exe"),
+    ("registry", "taskmgr.exe"),
+    ("secure system", "taskmgr.exe"),
+];
+
+fn system32(file: &str) -> Option<String> {
+    let root = std::env::var("SystemRoot").ok()?;
+    let p = std::path::Path::new(&root).join("System32").join(file);
+    p.is_file().then(|| p.to_string_lossy().into_owned())
+}
+
+/// The stand-in icon file for an image name, when there is one on this PC.
+fn stand_in(image: &str) -> Option<String> {
+    let lower = image.to_ascii_lowercase();
+    let stem = lower.strip_suffix(".exe").unwrap_or(&lower);
+    let (_, file) = STAND_INS.iter().find(|(k, _)| *k == stem)?;
+    system32(file)
+}
+
 pub struct Windows {
     last: Option<(u64, u64)>,
     pct: f32,
@@ -103,24 +135,21 @@ impl Windows {
     fn resolve(&mut self, mut row: AppRow, pids: &[u32]) -> AppRow {
         let key = row.exe.to_ascii_lowercase();
         if !self.known.contains_key(&key) {
-            // Protected processes cannot be opened: try the group's others,
-            // then the same name in System32 (svchost, dwm).
-            let path = pids
-                .iter()
-                .find_map(|&p| icon::process_path(p))
-                .or_else(|| {
-                    let root = std::env::var("SystemRoot").ok()?;
-                    let file = if row.exe.contains('.') {
-                        row.exe.clone()
-                    } else {
-                        format!("{}.exe", row.exe)
-                    };
-                    let p = std::path::Path::new(&root).join("System32").join(file);
-                    p.is_file().then(|| p.to_string_lossy().into_owned())
-                });
-            if let Some(path) = path {
+            // 1. The built-in stand-ins, for rows with no real file or whose
+            //    own file has no useful icon. They never rename the row.
+            // 2. The group's own processes (protected ones cannot be opened,
+            //    so try several).
+            // 3. The same name in System32 (svchost, dwm, csrss).
+            let found = stand_in(&row.exe).map(|p| (p, None)).or_else(|| {
+                let path = pids
+                    .iter()
+                    .find_map(|&p| icon::process_path(p))
+                    .or_else(|| system32(&row.exe))?;
                 let desc = icon::file_description(&path);
-                self.known.insert(key.clone(), (path, desc));
+                Some((path, desc))
+            });
+            if let Some(found) = found {
+                self.known.insert(key.clone(), found);
             }
         }
         if let Some((path, desc)) = self.known.get(&key) {
