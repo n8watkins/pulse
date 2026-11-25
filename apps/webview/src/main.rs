@@ -42,6 +42,7 @@ struct Shared {
     /// Milliseconds since `start` of the last hide caused by losing focus, plus one.
     auto_hide_at: AtomicU64,
     keep_open_on_blur: bool,
+    suspend: bool,
     wake: Mutex<Sender<()>>,
     /// When the last show was requested and its first frame has not been reported.
     pending_show: Mutex<Option<Instant>>,
@@ -169,6 +170,9 @@ fn show(app: &AppHandle, state: &SharedState, activate: bool) {
     }
     place(app, &win);
     state.visible.store(true, Ordering::SeqCst);
+    if state.suspend {
+        suspend_webview(&win, false);
+    }
     if activate {
         let _ = win.show();
         let _ = win.set_focus();
@@ -188,8 +192,42 @@ fn hide(app: &AppHandle, state: &SharedState, automatic: bool) {
     }
     if let Some(win) = window(app) {
         let _ = win.hide();
+        if state.suspend {
+            suspend_webview(&win, true);
+        }
     }
 }
+
+/// Experiment, off unless `PULSE_SUSPEND=1` (not part of the shared hooks):
+/// WebView2's own suspend while hidden, resumed on show.
+#[cfg(windows)]
+fn suspend_webview(win: &WebviewWindow, suspend: bool) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
+    use windows_core::Interface;
+    let _ = win.with_webview(move |wv| {
+        // SAFETY: the controller belongs to this live webview, called on its thread.
+        unsafe {
+            let controller = wv.controller();
+            let _ = controller.SetIsVisible(!suspend);
+            let Ok(core) = controller.CoreWebView2() else {
+                return;
+            };
+            let Ok(core3) = core.cast::<ICoreWebView2_3>() else {
+                return;
+            };
+            if suspend {
+                let handler =
+                    webview2_com::TrySuspendCompletedHandler::create(Box::new(|_, _| Ok(())));
+                let _ = core3.TrySuspend(&handler);
+            } else {
+                let _ = core3.Resume();
+            }
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn suspend_webview(_win: &WebviewWindow, _suspend: bool) {}
 
 fn toggle(app: &AppHandle, state: &SharedState) {
     if state.visible.load(Ordering::SeqCst) {
@@ -328,6 +366,7 @@ fn main() {
         visible: AtomicBool::new(false),
         auto_hide_at: AtomicU64::new(0),
         keep_open_on_blur: show_at_start,
+        suspend: env_on("PULSE_SUSPEND"),
         wake: Mutex::new(wake_tx),
         pending_show: Mutex::new(None),
         painted: Mutex::new(None),
@@ -382,10 +421,8 @@ fn main() {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
-                    "open" => {
-                        if !on_menu.visible.load(Ordering::SeqCst) {
-                            show(app, &on_menu, true);
-                        }
+                    "open" if !on_menu.visible.load(Ordering::SeqCst) => {
+                        show(app, &on_menu, true);
                     }
                     "exit" => app.exit(0),
                     _ => {}
@@ -410,6 +447,18 @@ fn main() {
             if let Some(rx) = wake_rx.lock().ok().and_then(|mut r| r.take()) {
                 let (a, s) = (handle.clone(), Arc::clone(&state));
                 std::thread::spawn(move || reader(a, s, source, rx));
+            }
+            if state.suspend && !show_at_start {
+                // Suspend the hidden page once it has loaded.
+                let (a, s) = (handle.clone(), Arc::clone(&state));
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(1500));
+                    if !s.visible.load(Ordering::SeqCst)
+                        && let Some(win) = window(&a)
+                    {
+                        suspend_webview(&win, true);
+                    }
+                });
             }
             if let Some(report) = selftest_report {
                 let (a, s) = (handle.clone(), Arc::clone(&state));

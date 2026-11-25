@@ -100,13 +100,28 @@ impl Windows {
 
     /// Adds the path of one process and the file's own description as the name
     /// (the built-in names win), cached per exe name once found.
-    fn resolve(&mut self, mut row: AppRow, pid: u32) -> AppRow {
+    fn resolve(&mut self, mut row: AppRow, pids: &[u32]) -> AppRow {
         let key = row.exe.to_ascii_lowercase();
-        if !self.known.contains_key(&key)
-            && let Some(path) = icon::process_path(pid)
-        {
-            let desc = icon::file_description(&path);
-            self.known.insert(key.clone(), (path, desc));
+        if !self.known.contains_key(&key) {
+            // Protected processes cannot be opened: try the group's others,
+            // then the same name in System32 (svchost, dwm).
+            let path = pids
+                .iter()
+                .find_map(|&p| icon::process_path(p))
+                .or_else(|| {
+                    let root = std::env::var("SystemRoot").ok()?;
+                    let file = if row.exe.contains('.') {
+                        row.exe.clone()
+                    } else {
+                        format!("{}.exe", row.exe)
+                    };
+                    let p = std::path::Path::new(&root).join("System32").join(file);
+                    p.is_file().then(|| p.to_string_lossy().into_owned())
+                });
+            if let Some(path) = path {
+                let desc = icon::file_description(&path);
+                self.known.insert(key.clone(), (path, desc));
+            }
         }
         if let Some((path, desc)) = self.known.get(&key) {
             row.path = Some(path.clone());
@@ -212,7 +227,7 @@ impl Source for Windows {
         let apps = if with_apps {
             let rows = group::top_apps(self.processes());
             rows.into_iter()
-                .map(|(row, pid)| self.resolve(row, pid))
+                .map(|(row, pids)| self.resolve(row, &pids))
                 .collect()
         } else {
             Vec::new()
