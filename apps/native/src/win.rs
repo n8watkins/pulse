@@ -18,7 +18,6 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 /// Logical size of the panel and its distance from the work-area edges.
 pub const PANEL_W: f32 = 380.0;
-pub const PANEL_H: f32 = 700.0;
 pub const MARGIN: f32 = 12.0;
 
 #[derive(Clone, Copy)]
@@ -83,10 +82,8 @@ pub fn hide(h: Hwnd) {
     }
 }
 
-/// Puts the panel bottom-right of the work area of the monitor under the
-/// cursor, 12 px from the edges, at that monitor's scale. Height is clamped
-/// to the work area.
-pub fn place(h: Hwnd) {
+/// The work area of the monitor under the cursor, and that monitor's scale.
+fn work_area(h: Hwnd) -> Option<(RECT, f32)> {
     unsafe {
         let mut p = POINT { x: 0, y: 0 };
         GetCursorPos(&raw mut p);
@@ -94,18 +91,43 @@ pub fn place(h: Hwnd) {
         let mut info: MONITORINFO = std::mem::zeroed();
         info.cbSize = size_of::<MONITORINFO>() as u32;
         if GetMonitorInfoW(mon, &raw mut info) == 0 {
-            return;
+            return None;
         }
-        let work: RECT = info.rcWork;
         let (mut dx, mut dy) = (96u32, 96u32);
         if GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &raw mut dx, &raw mut dy) != 0 {
             dx = GetDpiForWindow(h.raw()).max(96);
         }
-        let scale = dx as f32 / 96.0;
+        Some((info.rcWork, dx as f32 / 96.0))
+    }
+}
+
+/// Logical height the panel can use on the monitor under the cursor (work
+/// area minus the margins). `PULSE_WORK_H` (logical px) overrides it, to
+/// check a short display without changing the real one.
+pub fn avail_height(h: Hwnd) -> f32 {
+    if let Some(v) = std::env::var("PULSE_WORK_H")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+    {
+        return v - 2.0 * MARGIN;
+    }
+    work_area(h).map_or(f32::MAX, |(work, scale)| {
+        (work.bottom - work.top) as f32 / scale - 2.0 * MARGIN
+    })
+}
+
+/// Puts the panel, `height` logical px tall, bottom-right of the work area of
+/// the monitor under the cursor, 12 px from the edges, at that monitor's scale.
+/// Height is clamped to the work area.
+pub fn place(h: Hwnd, height: f32) {
+    unsafe {
+        let Some((work, scale)) = work_area(h) else {
+            return;
+        };
         let margin = (MARGIN * scale).round() as i32;
         let w = (PANEL_W * scale).round() as i32;
         let max_h = (work.bottom - work.top) - 2 * margin;
-        let height = ((PANEL_H * scale).round() as i32).min(max_h);
+        let height = ((height * scale).round() as i32).min(max_h);
         let x = work.right - w - margin;
         let y = work.bottom - height - margin;
         SetWindowPos(h.raw(), HWND_TOPMOST, x, y, w, height, SWP_NOACTIVATE);

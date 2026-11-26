@@ -93,6 +93,8 @@ impl Icons {
         let (to_worker, rx) = mpsc::channel::<String>();
         let shared = done.clone();
         std::thread::spawn(move || {
+            // COM once for the worker's life: `icon_rgba` then only re-enters it.
+            let _com = pulse_readings::IconThread::init();
             while let Ok(path) = rx.recv() {
                 let img = icon_rgba(&path, 32);
                 {
@@ -184,6 +186,9 @@ struct Panel {
     measure: Measure,
     icons: Icons,
     trim: bool,
+    /// Logical height the panel may use on the monitor it opens on.
+    avail_h: Cell<f32>,
+    layout: Cell<view::Layout>,
 }
 
 thread_local! {
@@ -214,9 +219,18 @@ impl Panel {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(l) = guard.as_ref() else { return };
-        let v = view::build(&l.snap, &l.extra, &l.hist, self.sample);
+        let lay = view::fit(self.avail_h.get(), l.extra.battery.is_some());
+        let v = view::build(&l.snap, &l.extra, &l.hist, self.sample, lay.rows);
         drop(guard);
         let ui = &self.ui;
+        ui.set_shrink(lay.shrink);
+        if lay != self.layout.replace(lay)
+            && self.visible.get()
+            && let Some(h) = self.hwnd.get()
+        {
+            // The battery strip came or went: the height changed with it.
+            win::place(h, lay.height());
+        }
         ui.set_status(v.status.into());
         ui.set_cpu_big(v.cpu_big.into());
         ui.set_cpu_sub(v.cpu_sub.into());
@@ -275,8 +289,9 @@ impl Panel {
         let t0 = Instant::now();
         self.visible.set(true);
         self.shown.store(true, Ordering::Relaxed);
+        self.avail_h.set(win::avail_height(h));
         self.apply_latest();
-        win::place(h);
+        win::place(h, self.layout.get().height());
         if let Some(tx) = measure {
             *self
                 .measure
@@ -290,7 +305,7 @@ impl Panel {
         }
         // Moving between monitors of different scale can resize the window
         // behind our back; place it once more now that it is shown.
-        win::place(h);
+        win::place(h, self.layout.get().height());
         let _ = self.reader.send(ReaderCmd::Wake(false));
     }
 
@@ -500,6 +515,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         measure: measure.clone(),
         icons: Icons::spawn(),
         trim: std::env::var_os("PULSE_NOTRIM").is_none(),
+        avail_h: Cell::new(f32::MAX),
+        layout: Cell::new(view::fit(f32::MAX, false)),
     });
     PANEL.with(|p| *p.borrow_mut() = Some(panel.clone()));
 

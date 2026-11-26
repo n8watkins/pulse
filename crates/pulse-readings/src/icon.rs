@@ -16,7 +16,7 @@ use windows_sys::Win32::System::Threading::{
     OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows_sys::Win32::UI::Shell::{
-    ExtractIconExW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW,
+    ExtractIconExW, SHDefExtractIconW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
 
@@ -121,41 +121,72 @@ unsafe fn bgra(bmp: *mut c_void, w: i32, h: i32) -> Option<Vec<u8>> {
     }
 }
 
+/// Initialises COM (single-threaded apartment) on this thread; true when the
+/// call must be balanced with [`com_uninit`].
+pub(crate) fn com_init() -> bool {
+    // SAFETY: balanced by `com_uninit` when this returns true.
+    unsafe { CoInitializeEx(core::ptr::null(), COINIT_APARTMENTTHREADED as u32) >= 0 }
+}
+
+pub(crate) fn com_uninit() {
+    // SAFETY: only called after a successful `com_init` on this thread.
+    unsafe { CoUninitialize() };
+}
+
+/// How one attempt at an icon ended.
+enum Once {
+    Done(IconImage),
+    /// The shell failed this time (load, a busy shell); a retry may work.
+    Transient,
+    /// Nothing will ever come of this path (no file, no colour bitmap).
+    Never,
+}
+
 /// The icon of an executable as straight RGBA, resized to `size` x `size`.
 pub(crate) fn rgba(path: &str, size: u32) -> Option<IconImage> {
-    if size == 0 {
+    if size == 0 || !std::path::Path::new(path).is_file() {
         return None;
     }
     let p = wide(path);
     // The shell is flaky on a thread that never initialised COM, and under
-    // load a first call can fail: initialise COM for the call and try again.
-    // SAFETY: balanced with the CoUninitialize below.
-    let com = unsafe { CoInitializeEx(core::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
+    // load a first call can fail: initialise COM for the call (a cheap no-op
+    // on a thread that did so already) and retry the transient failure.
+    let com = com_init();
     let mut out = None;
     for attempt in 0..3 {
-        out = rgba_once(&p, size);
-        if out.is_some() {
-            break;
+        match rgba_once(&p, size) {
+            Once::Done(img) => {
+                out = Some(img);
+                break;
+            }
+            Once::Never => break,
+            Once::Transient => {}
         }
         if attempt < 2 {
             std::thread::sleep(std::time::Duration::from_millis(40));
         }
     }
-    if com >= 0 {
-        // SAFETY: only when CoInitializeEx succeeded on this thread.
-        unsafe { CoUninitialize() };
+    if com {
+        com_uninit();
     }
     out
 }
 
-/// The icon handle: the shell's (which is the generic application icon for a
-/// file with none), else the file's first icon resource.
+/// The icon handle at `size` px: the file's first icon resource asked for at
+/// exactly that size, else the shell's (which is the generic application icon
+/// for a file with none), else the first resource at its own size.
 ///
 /// # Safety
 /// `p` must be a NUL-terminated wide string.
-unsafe fn icon_handle(p: &[u16]) -> *mut c_void {
+unsafe fn icon_handle(p: &[u16], size: u32) -> *mut c_void {
     // SAFETY: per the contract above; zeroed plain data.
     unsafe {
+        let mut exact: *mut c_void = null_mut();
+        if SHDefExtractIconW(p.as_ptr(), 0, 0, &mut exact, null_mut(), size) >= 0
+            && !exact.is_null()
+        {
+            return exact;
+        }
         let mut fi: SHFILEINFOW = core::mem::zeroed();
         let r = SHGetFileInfoW(
             p.as_ptr(),
@@ -175,20 +206,27 @@ unsafe fn icon_handle(p: &[u16]) -> *mut c_void {
     }
 }
 
-fn rgba_once(p: &[u16], size: u32) -> Option<IconImage> {
+fn rgba_once(p: &[u16], size: u32) -> Once {
     // SAFETY: zeroed plain-data structs; every GDI object made here is deleted.
     unsafe {
-        let hicon = icon_handle(p);
+        let hicon = icon_handle(p, size);
         if hicon.is_null() {
-            return None;
+            return Once::Transient;
         }
         let mut ii: ICONINFO = core::mem::zeroed();
         let got = GetIconInfo(hicon, &mut ii);
-        let out = if got != 0 && !ii.hbmColor.is_null() {
+        let out = if got == 0 {
+            Once::Transient
+        } else if ii.hbmColor.is_null() {
+            // A monochrome icon: there is no colour bitmap to read.
+            Once::Never
+        } else {
             let mut b: BITMAP = core::mem::zeroed();
             GetObjectW(ii.hbmColor, size_of::<BITMAP>() as i32, (&raw mut b).cast());
             let (w, h) = (b.bmWidth, b.bmHeight);
-            if w > 0 && h > 0 {
+            if w <= 0 || h <= 0 {
+                Once::Never
+            } else {
                 let mut px = bgra(ii.hbmColor, w, h);
                 if let Some(px) = px.as_mut()
                     && px.chunks_exact(4).all(|c| c[3] == 0)
@@ -205,12 +243,14 @@ fn rgba_once(p: &[u16], size: u32) -> Option<IconImage> {
                         c[3] = if opaque { 255 } else { 0 };
                     }
                 }
-                px.map(|px| resize(&px, w as u32, h as u32, size))
-            } else {
-                None
+                px.map_or(Once::Transient, |px| {
+                    Once::Done(IconImage {
+                        width: size,
+                        height: size,
+                        rgba: crate::scale::bgra_to_rgba(&px, w as u32, h as u32, size),
+                    })
+                })
             }
-        } else {
-            None
         };
         if got != 0 {
             if !ii.hbmColor.is_null() {
@@ -222,22 +262,5 @@ fn rgba_once(p: &[u16], size: u32) -> Option<IconImage> {
         }
         DestroyIcon(hicon);
         out
-    }
-}
-
-/// BGRA at (w, h) to straight RGBA at (size, size), nearest neighbour.
-fn resize(bgra: &[u8], w: u32, h: u32, size: u32) -> IconImage {
-    let mut rgba = Vec::with_capacity((size * size * 4) as usize);
-    for y in 0..size {
-        for x in 0..size {
-            let (sx, sy) = (x * w / size, y * h / size);
-            let i = ((sy * w + sx) * 4) as usize;
-            rgba.extend_from_slice(&[bgra[i + 2], bgra[i + 1], bgra[i], bgra[i + 3]]);
-        }
-    }
-    IconImage {
-        width: size,
-        height: size,
-        rgba,
     }
 }
