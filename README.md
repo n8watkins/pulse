@@ -52,6 +52,9 @@ Which rows are shown (the Linux list never grows past 6 rows, so many sessions d
 3. With more than 4, the first 3 are rows and all the others fold into one line: "Claude Code · 9 idle" with their memory or processor summed ("9 idle agents" when they are not all one agent, "more" in place of "idle" when one of them is busy; the dot is green then).
 4. The programs fill the rows left of the 6.
 
+In the compact view, the closed WSL row reads "N programs · N agents": the programs are the processes of the Linux programs that are not coding agents, the agents are the sessions (one each, however many helper processes it has), so the two never overlap.
+Opened, the same session rows, folding and order apply, in the compact row style.
+
 Two sessions of the same agent in the same folder show how long each has run ("2h 10m", "14m"), small, after the name.
 Long folder names end in an ellipsis.
 Without a readable folder, the row shows the agent alone.
