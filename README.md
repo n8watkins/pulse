@@ -60,7 +60,7 @@ The version is the workspace version in the root `Cargo.toml`; the exe, its vers
    It uses the `makensis.exe` of the NSIS that Tauri downloaded (`%LOCALAPPDATA%\tauri\NSIS`), or one on PATH, or `-Makensis <path>`.
    `-TestName "Pulse Test"` builds an installer that uses that name for the folder, shortcut, uninstall entry, Run-key value and settings folder, so it never touches a real Pulse install.
 
-The installer is per-user (no administrator rights): it installs to `%LOCALAPPDATA%\Programs\Pulse`, adds a Start menu shortcut and an Add/Remove Programs entry under HKCU, and asks a running Pulse from that folder to close first (matched by full path, so a copy running from another folder is left alone).
+The installer is per-user (no administrator rights): it installs to `%LOCALAPPDATA%\Programs\Pulse`, adds a Start menu shortcut and an Add/Remove Programs entry under HKCU, and closes a running Pulse from that folder first: it runs the installed `Pulse.exe --quit` (only when that exe is version 0.1.0 or later; waits up to 10 s, and ends that one launched process if it is still there), then, as a last resort only, ends any process still running from that exact folder (matched by full path, so a copy running from another folder is left alone).
 Silent install: `/S` (starts Pulse at the end unless `/NORUN` is given).
 Uninstall keeps the settings in `%APPDATA%\Pulse` unless you answer yes (a silent uninstall always keeps them).
 "Start with Windows" is owned by the app; the uninstaller only removes its Run value when it points into the install folder.
