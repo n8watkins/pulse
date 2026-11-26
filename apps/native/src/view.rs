@@ -2,8 +2,9 @@
 //! No toolkit types here, so it is plain code and unit tested on any machine.
 
 use crate::marks::{self, Mark};
+use crate::sessions::{self, Line};
 use pulse_platform::Sort;
-use pulse_readings::{AppRow, Snapshot, Wsl, WslProc};
+use pulse_readings::{AppRow, Snapshot, Wsl, WslProc, WslSession};
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
@@ -113,6 +114,15 @@ pub enum RowKind {
     Reading,
 }
 
+/// The dot before a Linux row: a coding-agent session is busy or idle.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Dot {
+    #[default]
+    None,
+    Idle,
+    Busy,
+}
+
 /// One row of "Top apps", ready to draw.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppView {
@@ -135,6 +145,11 @@ pub struct AppView {
     pub group_end: bool,
     /// Sub rows: the product mark that replaces the letter, when one is known.
     pub mark: Option<Mark>,
+    /// Session rows: busy or idle (a folded line is busy when one of them is).
+    pub dot: Dot,
+    /// Session rows that look like another one (same agent, same folder): how
+    /// long the session has run, small, to tell them apart. Else empty.
+    pub age: String,
 }
 
 /// Everything the panel shows, as plain data.
@@ -266,10 +281,10 @@ pub fn stress_snapshot(snap: &mut Snapshot) {
         mem_bytes: 5 * (1 << 30),
         cpu_pct: 8.0,
         procs: vec![
-            wsl_proc(&first_label(), true, 12, 900, 3.0),
+            wsl_proc(&first_label(), false, 12, 900, 3.0),
             wsl_proc(
-                "Claude Code with an extremely long label indeed",
-                true,
+                "Program with an extremely long label indeed",
+                false,
                 123,
                 800,
                 2.0,
@@ -282,10 +297,55 @@ pub fn stress_snapshot(snap: &mut Snapshot) {
                 1.0,
             ),
             wsl_proc("rust-analyzer", false, 1, 300, 0.5),
-            wsl_proc("Claude Code", true, 3, 250, 0.4),
             wsl_proc("chrome-headless-shell", false, 4, 200, 0.3),
         ],
+        sessions: stress_sessions(),
     });
+}
+
+/// Fourteen sessions: two busy, two in the same folder, one with a very long
+/// folder name, one in the home folder, one without a readable folder, and
+/// plenty of idle ones to fold.
+fn stress_sessions() -> Vec<WslSession> {
+    let make = |label: &str, folder: Option<&str>, mem_mb: u64, cpu: f32, busy: bool, run: u64| {
+        WslSession {
+            label: label.into(),
+            folder: folder.map(Into::into),
+            mem_bytes: mem_mb * (1 << 20),
+            cpu_pct: cpu,
+            busy,
+            run_secs: Some(run),
+            pid: 0,
+        }
+    };
+    let mut v = vec![
+        make("Claude Code", Some("pulse"), 640, 2.4, true, 2 * 3_600),
+        make("Claude Code", Some("pulse"), 410, 0.0, false, 14 * 60),
+        make(
+            "Claude Code",
+            Some("a-project-folder-with-an-extremely-long-name-for-the-stress-run"),
+            380,
+            1.1,
+            true,
+            50 * 3_600,
+        ),
+        make("Codex CLI", Some("~"), 300, 0.0, false, 90),
+        make("Gemini CLI", None, 250, 0.0, false, 5 * 60),
+    ];
+    for i in 0..9 {
+        v.push(make(
+            "Claude Code",
+            Some("shop-site"),
+            200 - i * 5,
+            0.0,
+            false,
+            (i + 1) * 600,
+        ));
+    }
+    for (i, x) in v.iter_mut().enumerate() {
+        x.pid = 100 + u32::try_from(i).unwrap_or(0);
+    }
+    v
 }
 
 /// The first Linux label of the stress rows. `PULSE_STRESS_LEN=<n>` cuts or
@@ -448,6 +508,8 @@ fn app_view(a: &AppRow, sort: Sort, wsl: Option<&Wsl>, max: f64) -> AppView {
         count: String::new(),
         group_end: false,
         mark: None,
+        dot: Dot::None,
+        age: String::new(),
     }
 }
 
@@ -478,6 +540,8 @@ fn reading_row() -> AppView {
         count: String::new(),
         group_end: false,
         mark: None,
+        dot: Dot::None,
+        age: String::new(),
     }
 }
 
@@ -487,11 +551,15 @@ const SUB_ROWS: usize = 6;
 /// Share of the machine the Linux processor bars are scaled against at least.
 const SUB_CPU_BAR_FLOOR: f64 = 1.0;
 
-/// The Linux rows for the chosen sort: the first [`SUB_ROWS`] programs by
-/// memory, or by processor (memory breaks ties), with the same value as the
-/// app rows above them.
+/// The Linux rows for the chosen sort, [`SUB_ROWS`] at most: first the
+/// coding-agent sessions (see [`sessions`]: one row each, busy ones first, the
+/// rest of many folded into one line), then the programs by memory, or by
+/// processor (memory breaks ties), with the same value as the app rows above
+/// them.
 #[allow(clippy::cast_precision_loss)]
 fn sub_rows(w: &Wsl, sort: Sort) -> Vec<AppView> {
+    let lines = sessions::plan(&w.sessions, sort);
+    let lookalikes = sessions::needs_age(&w.sessions);
     let mut procs: Vec<&WslProc> = w.procs.iter().collect();
     match sort {
         Sort::Memory => procs.sort_by(|a, b| {
@@ -506,46 +574,110 @@ fn sub_rows(w: &Wsl, sort: Sort) -> Vec<AppView> {
                 .then_with(|| a.label.cmp(&b.label))
         }),
     }
-    procs.truncate(SUB_ROWS);
-    let amount = |p: &WslProc| match sort {
-        Sort::Memory => p.mem_bytes as f64,
-        Sort::Processor => f64::from(p.cpu_pct),
+    procs.truncate(SUB_ROWS.saturating_sub(lines.len()));
+    let amount = |bytes: u64, cpu: f32| match sort {
+        Sort::Memory => bytes as f64,
+        Sort::Processor => f64::from(cpu),
     };
-    let top = procs.iter().map(|p| amount(p)).fold(
-        if sort == Sort::Memory {
-            1.0
-        } else {
-            SUB_CPU_BAR_FLOOR
-        },
-        f64::max,
-    );
-    procs
-        .into_iter()
-        .map(|p| {
-            let mark = marks::for_label(&p.label);
+    let text = |bytes: u64, cpu: f32| match sort {
+        Sort::Memory => format_bytes(bytes),
+        Sort::Processor => cpu_text(cpu),
+    };
+    let line_amount = |l: &Line<'_>| match l {
+        Line::One(x) => amount(x.mem_bytes, x.cpu_pct),
+        Line::Fold(f) => amount(f.mem_bytes, f.cpu_pct),
+    };
+    let top = lines
+        .iter()
+        .map(line_amount)
+        .chain(procs.iter().map(|p| amount(p.mem_bytes, p.cpu_pct)))
+        .fold(
+            if sort == Sort::Memory {
+                1.0
+            } else {
+                SUB_CPU_BAR_FLOOR
+            },
+            f64::max,
+        );
+    let tile = |label: &str| {
+        let mark = marks::for_label(label);
+        let rgb = mark.map_or_else(|| hsl_rgb(hue(label), 0.45, 0.45), |m| m.rgb);
+        (
+            mark,
+            rgb,
+            label.chars().next().map(String::from).unwrap_or_default(),
+        )
+    };
+    let mut rows: Vec<AppView> = lines
+        .iter()
+        .map(|l| {
+            let (name, label, dot, age, value, a) = match l {
+                Line::One(x) => (
+                    match &x.folder {
+                        Some(f) => format!("{} \u{b7} {f}", x.label),
+                        None => x.label.clone(),
+                    },
+                    x.label.as_str(),
+                    if x.busy { Dot::Busy } else { Dot::Idle },
+                    x.run_secs
+                        .filter(|_| lookalikes.contains(&x.pid))
+                        .map(sessions::age)
+                        .unwrap_or_default(),
+                    text(x.mem_bytes, x.cpu_pct),
+                    line_amount(l),
+                ),
+                Line::Fold(f) => (
+                    f.title(),
+                    f.lead.as_str(),
+                    if f.any_busy { Dot::Busy } else { Dot::Idle },
+                    String::new(),
+                    text(f.mem_bytes, f.cpu_pct),
+                    line_amount(l),
+                ),
+            };
+            let (mark, rgb, letter) = tile(label);
             AppView {
                 kind: RowKind::Sub,
-                letter: p.label.chars().next().map(String::from).unwrap_or_default(),
-                rgb: mark.map_or_else(|| hsl_rgb(hue(&p.label), 0.45, 0.45), |m| m.rgb),
-                name: p.label.clone(),
+                letter,
+                rgb,
+                name,
                 detail: String::new(),
-                value: match sort {
-                    Sort::Memory => format_bytes(p.mem_bytes),
-                    Sort::Processor => cpu_text(p.cpu_pct),
-                },
-                frac: (amount(p) / top).clamp(0.0, 1.0) as f32,
+                value,
+                frac: (a / top).clamp(0.0, 1.0) as f32,
                 path: None,
-                agent: p.agent,
-                count: if p.count > 1 {
-                    format!("\u{d7}{}", p.count)
-                } else {
-                    String::new()
-                },
+                agent: false,
+                count: String::new(),
                 group_end: false,
                 mark,
+                dot,
+                age,
             }
         })
-        .collect()
+        .collect();
+    rows.extend(procs.into_iter().map(|p| {
+        let (mark, rgb, letter) = tile(&p.label);
+        AppView {
+            kind: RowKind::Sub,
+            letter,
+            rgb,
+            name: p.label.clone(),
+            detail: String::new(),
+            value: text(p.mem_bytes, p.cpu_pct),
+            frac: (amount(p.mem_bytes, p.cpu_pct) / top).clamp(0.0, 1.0) as f32,
+            path: None,
+            agent: p.agent,
+            count: if p.count > 1 {
+                format!("\u{d7}{}", p.count)
+            } else {
+                String::new()
+            },
+            group_end: false,
+            mark,
+            dot: Dot::None,
+            age: String::new(),
+        }
+    }));
+    rows
 }
 
 /// The "Top apps" rows for the chosen sort: the apps, the WSL row when WSL
@@ -905,8 +1037,7 @@ mod tests {
             now,
         );
         // 6 apps, the WSL row (biggest, so first), then its Linux rows.
-        let wsl = snap.wsl.as_ref().unwrap();
-        assert_eq!(v.apps.len(), 6 + 1 + wsl.procs.len());
+        assert_eq!(v.apps.len(), 6 + 1 + SUB_ROWS);
         assert_eq!(v.apps[0].kind, RowKind::Wsl);
         assert!((v.apps[0].frac - 1.0).abs() < f32::EPSILON);
         let chrome = v.apps.iter().find(|a| a.name == "Google Chrome").unwrap();
@@ -960,9 +1091,12 @@ mod tests {
         assert_eq!(w.detail, "Linux virtual machine \u{b7} inside:");
         assert!(w.path.as_deref().is_some_and(|p| p.ends_with("wsl.exe")));
         let subs: Vec<_> = rows.iter().filter(|r| r.kind == RowKind::Sub).collect();
-        assert_eq!(subs.len(), snap.wsl.as_ref().unwrap().procs.len());
-        assert!(subs[0].agent && subs[0].count == "\u{d7}3");
-        assert!(!subs[1].agent && subs[1].count == "\u{d7}6");
+        // Sessions first (3 rows and a fold), then the biggest programs.
+        assert_eq!(subs.len(), SUB_ROWS);
+        assert!(subs[..4].iter().all(|r| r.dot != Dot::None && !r.agent));
+        assert!(subs[4..].iter().all(|r| r.dot == Dot::None && !r.agent));
+        assert_eq!(subs[4].name, "VS Code server");
+        assert_eq!(subs[4].count, "\u{d7}6");
         assert_eq!(rows.iter().filter(|r| r.group_end).count(), 1);
         // Sub rows come right after the WSL row, the last one closes the group.
         let at = rows.iter().position(|r| r.kind == RowKind::Wsl).unwrap();
@@ -999,7 +1133,7 @@ mod tests {
         snap.wsl = Some(Wsl {
             mem_bytes: 1 << 30,
             cpu_pct: 0.5,
-            procs: Vec::new(),
+            ..Wsl::default()
         });
         let rows = app_rows(&snap, Sort::Memory);
         let w = rows.iter().find(|r| r.kind == RowKind::Wsl).unwrap();
@@ -1014,12 +1148,13 @@ mod tests {
     #[test]
     fn linux_rows_follow_the_sort_like_every_other_row() {
         let mut snap = sample();
+        snap.wsl.as_mut().unwrap().sessions.clear();
         // The sample's figures move with its clock: pin them.
         for p in &mut snap.wsl.as_mut().unwrap().procs {
             p.cpu_pct = match p.label.as_str() {
                 "next-server (v16.4.6)" => 0.9,
                 "chrome-headless-shell" => 0.6,
-                "Claude Code" => 0.4,
+                "VS Code server" => 0.4,
                 _ => 0.05,
             };
         }
@@ -1064,12 +1199,13 @@ mod tests {
     fn linux_processor_ties_fall_back_to_memory_and_bars_have_a_floor() {
         let mut snap = sample();
         let w = snap.wsl.as_mut().unwrap();
+        w.sessions.clear();
         for p in &mut w.procs {
             p.cpu_pct = 0.0;
         }
         let rows = app_rows(&snap, Sort::Processor);
         let c = subs(&rows);
-        assert_eq!(c[0].name, "Claude Code");
+        assert_eq!(c[0].name, "VS Code server");
         assert!(c.iter().all(|r| r.value == "0.0%" && r.frac == 0.0));
         // A busy 2% program fills the bar by itself; 0.5% against it is a quarter.
         let w = snap.wsl.as_mut().unwrap();
@@ -1085,6 +1221,7 @@ mod tests {
     fn only_six_linux_rows_are_shown_in_either_sort() {
         let mut snap = sample();
         let w = snap.wsl.as_mut().unwrap();
+        w.sessions.clear();
         for i in 0..4u8 {
             w.procs.push(WslProc {
                 label: format!("tool{i}"),
@@ -1112,6 +1249,7 @@ mod tests {
     #[test]
     fn linux_rows_get_their_mark_or_keep_the_letter() {
         let mut snap = sample();
+        snap.wsl.as_mut().unwrap().sessions.clear();
         snap.wsl.as_mut().unwrap().procs = [
             "Claude Code",
             "VS Code server",
@@ -1522,5 +1660,142 @@ mod tests {
     fn the_footer_has_a_short_fallback_sentence() {
         assert_eq!(FOOT_SHORT, "toggles Pulse");
         assert!(FOOT_SHORT.len() < FOOT_LONG.len());
+    }
+
+    fn session(
+        label: &str,
+        folder: Option<&str>,
+        mem_mb: u64,
+        cpu: f32,
+        busy: bool,
+        pid: u32,
+    ) -> WslSession {
+        WslSession {
+            label: label.into(),
+            folder: folder.map(Into::into),
+            mem_bytes: mem_mb << 20,
+            cpu_pct: cpu,
+            busy,
+            run_secs: Some(u64::from(pid) * 60),
+            pid,
+        }
+    }
+
+    fn with_sessions(sessions: Vec<WslSession>) -> Snapshot {
+        let mut snap = sample();
+        snap.wsl.as_mut().unwrap().sessions = sessions;
+        snap
+    }
+
+    #[test]
+    fn a_session_row_is_the_agent_its_folder_a_dot_and_the_value_of_the_sort() {
+        let snap = with_sessions(vec![
+            session("Claude Code", Some("pulse"), 640, 2.6, true, 1),
+            session("Codex CLI", None, 236, 0.0, false, 2),
+        ]);
+        let mem = app_rows(&snap, Sort::Memory);
+        let m = subs(&mem);
+        assert_eq!(m[0].name, "Claude Code \u{b7} pulse");
+        assert_eq!((m[0].dot, m[0].value.as_str()), (Dot::Busy, "640 MB"));
+        assert_eq!(m[0].mark.map(|x| x.slug), Some("claude"));
+        assert!(!m[0].agent && m[0].count.is_empty());
+        // No readable folder: the agent's name alone.
+        assert_eq!(m[1].name, "Codex CLI");
+        assert_eq!((m[1].dot, m[1].value.as_str()), (Dot::Idle, "236 MB"));
+        // Programs follow the sessions, with no dot.
+        assert!(m[2..].iter().all(|r| r.dot == Dot::None));
+        assert_eq!(m.len(), SUB_ROWS);
+        let cpu = app_rows(&snap, Sort::Processor);
+        let c = subs(&cpu);
+        assert_eq!(c[0].value, "2.6%");
+        assert_eq!(c[1].value, "0.0%");
+        assert_eq!(c[0].dot, Dot::Busy);
+    }
+
+    #[test]
+    fn sessions_that_look_alike_show_how_long_they_run() {
+        let snap = with_sessions(vec![
+            session("Claude Code", Some("pulse"), 640, 0.0, false, 130),
+            session("Claude Code", Some("pulse"), 400, 0.0, false, 14),
+            session("Claude Code", Some("shop-site"), 300, 0.0, false, 5),
+        ]);
+        let rows = app_rows(&snap, Sort::Memory);
+        let m = subs(&rows);
+        assert_eq!(
+            m.iter().take(3).map(|r| r.age.as_str()).collect::<Vec<_>>(),
+            ["2h 10m", "14m", ""]
+        );
+    }
+
+    #[test]
+    fn many_sessions_fold_and_leave_room_for_the_programs() {
+        let many: Vec<WslSession> = (0..14)
+            .map(|i| {
+                session(
+                    "Claude Code",
+                    Some("shop-site"),
+                    100 + u64::from(i),
+                    0.0,
+                    false,
+                    10 + i,
+                )
+            })
+            .collect();
+        let snap = with_sessions(many);
+        for sort in [Sort::Memory, Sort::Processor] {
+            let rows = app_rows(&snap, sort);
+            let m = subs(&rows);
+            assert_eq!(m.len(), SUB_ROWS, "{sort:?}");
+            // Three sessions, the fold, then two programs.
+            assert!(
+                m[..3]
+                    .iter()
+                    .all(|r| r.name == "Claude Code \u{b7} shop-site")
+            );
+            assert_eq!(m[3].name, "Claude Code \u{b7} 11 idle");
+            assert_eq!(m[3].dot, Dot::Idle);
+            assert!(m[3].age.is_empty());
+            assert!(m[4..].iter().all(|r| r.dot == Dot::None));
+        }
+        let mem = app_rows(&snap, Sort::Memory);
+        // 100..=113 MB: the fold holds the 11 smallest, 100 to 110 MB.
+        assert_eq!(
+            subs(&mem)[3].value,
+            format_bytes((100..=110u64).sum::<u64>() << 20)
+        );
+        // The group still closes after the last row.
+        assert!(
+            mem.iter()
+                .rev()
+                .find(|r| r.kind == RowKind::Sub)
+                .unwrap()
+                .group_end
+        );
+    }
+
+    #[test]
+    fn a_busy_fold_has_a_busy_dot_and_the_stress_data_fits() {
+        let mut snap = sample();
+        stress_snapshot(&mut snap);
+        let w = snap.wsl.as_ref().unwrap();
+        assert_eq!(w.agent_count(), 14);
+        for sort in [Sort::Memory, Sort::Processor] {
+            let rows = app_rows(&snap, sort);
+            let m = subs(&rows);
+            assert_eq!(m.len(), SUB_ROWS);
+            assert_eq!(m.iter().filter(|r| r.dot != Dot::None).count(), 4);
+            // Busy sessions lead.
+            assert_eq!(m[0].dot, Dot::Busy);
+            assert_eq!(m[1].dot, Dot::Busy);
+            assert_eq!(m[2].dot, Dot::Idle);
+        }
+    }
+
+    #[test]
+    fn no_sessions_leave_the_programs_alone() {
+        let snap = with_sessions(Vec::new());
+        let rows = app_rows(&snap, Sort::Memory);
+        assert!(subs(&rows).iter().all(|r| r.dot == Dot::None));
+        assert_eq!(subs(&rows).len(), SUB_ROWS);
     }
 }

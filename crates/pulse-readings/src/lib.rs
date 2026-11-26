@@ -305,25 +305,31 @@ impl Source for Sample {
             // Two sessions share a folder (told apart by run time), one
             // agent is not Claude Code, and the idle ones fold into one line.
             sessions: [
-                ("Claude Code", "pulse", 420, 0.9, true, 2 * 3_600 + 10 * 60, 411),
+                (
+                    "Claude Code",
+                    "pulse",
+                    420,
+                    0.9,
+                    true,
+                    2 * 3_600 + 10 * 60,
+                    411,
+                ),
                 ("Claude Code", "pulse", 260, 0.0, false, 14 * 60, 412),
                 ("Claude Code", "shop-site", 310, 0.0, false, 5 * 3_600, 413),
                 ("Codex CLI", "api-server", 236, 0.5, true, 36 * 60, 414),
                 ("Gemini CLI", "docs", 180, 0.0, false, 3_600 + 5 * 60, 415),
             ]
             .into_iter()
-            .map(
-                |(label, folder, mem, cpu, busy, run, pid)| WslSession {
-                    label: label.into(),
-                    folder: Some(folder.into()),
-                    mem_bytes: mem * MB,
-                    #[allow(clippy::cast_possible_truncation)]
-                    cpu_pct: (cpu * factor) as f32,
-                    busy,
-                    run_secs: Some(run),
-                    pid,
-                },
-            )
+            .map(|(label, folder, mem, cpu, busy, run, pid)| WslSession {
+                label: label.into(),
+                folder: Some(folder.into()),
+                mem_bytes: mem * MB,
+                #[allow(clippy::cast_possible_truncation)]
+                cpu_pct: (cpu * factor) as f32,
+                busy,
+                run_secs: Some(run),
+                pid,
+            })
             .collect(),
         });
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]

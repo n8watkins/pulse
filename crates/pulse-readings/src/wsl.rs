@@ -600,20 +600,19 @@ struct Row {
 /// ignored.
 #[allow(clippy::cast_possible_truncation)]
 pub(crate) fn build(r: &Reading<'_>) -> (Vec<WslProc>, Vec<WslSession>) {
-    let rows: Vec<Row> = r
-        .ps
-        .lines()
-        .filter_map(|line| {
-            let row = parse_line(line)?;
-            let (label, agent) = label(&row.comm, row.args)?;
-            Some(Row {
-                pid: row.pid,
-                rss_kib: row.rss_kib,
-                label,
-                agent,
+    let rows: Vec<Row> =
+        r.ps.lines()
+            .filter_map(|line| {
+                let row = parse_line(line)?;
+                let (label, agent) = label(&row.comm, row.args)?;
+                Some(Row {
+                    pid: row.pid,
+                    rss_kib: row.rss_kib,
+                    label,
+                    agent,
+                })
             })
-        })
-        .collect();
+            .collect();
     let by_pid: HashMap<u32, usize> = rows.iter().enumerate().map(|(i, x)| (x.pid, i)).collect();
     let cpu_of = |pid: u32| r.cpu.get(&pid).copied().unwrap_or(0.0);
 
@@ -625,7 +624,10 @@ pub(crate) fn build(r: &Reading<'_>) -> (Vec<WslProc>, Vec<WslSession>) {
         let mut root = i;
         // A short walk: a chain of helpers is never long.
         for _ in 0..8 {
-            let parent = r.stats.get(&rows[root].pid).and_then(|s| by_pid.get(&s.ppid));
+            let parent = r
+                .stats
+                .get(&rows[root].pid)
+                .and_then(|s| by_pid.get(&s.ppid));
             match parent {
                 Some(&p) if rows[p].agent && rows[p].label == row.label => root = p,
                 _ => break,
@@ -671,10 +673,7 @@ pub(crate) fn build(r: &Reading<'_>) -> (Vec<WslProc>, Vec<WslSession>) {
             });
             WslSession {
                 label: root_row.label.clone(),
-                folder: r
-                    .cwds
-                    .get(&root)
-                    .and_then(|cwd| folder_name(cwd, r.home)),
+                folder: r.cwds.get(&root).and_then(|cwd| folder_name(cwd, r.home)),
                 mem_bytes,
                 cpu_pct,
                 busy: busy_next(was, cores_used),
@@ -721,7 +720,7 @@ pub(crate) fn build(r: &Reading<'_>) -> (Vec<WslProc>, Vec<WslSession>) {
 }
 
 #[cfg(windows)]
-pub(crate) use runner::{Found, Query};
+pub(crate) use runner::Query;
 
 /// The Windows side: spawn `wsl.exe` without a window, off the reading thread.
 #[cfg(windows)]
@@ -839,7 +838,12 @@ mod runner {
         let cores = std::thread::available_parallelism().map_or(1, usize::from);
         let (shares, was_busy) = match prev {
             Some((was, before, busy)) => (
-                cpu_shares(&before, &now_ticks, at.duration_since(was).as_secs_f64(), cores),
+                cpu_shares(
+                    &before,
+                    &now_ticks,
+                    at.duration_since(was).as_secs_f64(),
+                    cores,
+                ),
                 busy,
             ),
             None => (HashMap::new(), HashMap::new()),
@@ -1020,7 +1024,10 @@ mod tests {
         );
         let p = split_output(&text);
         assert!(p.ps.ends_with("3 4 b b\n") && p.ps.starts_with("1 2 sh"));
-        assert_eq!((p.stat, p.meta, p.cwd), ("10 (a) S\n", "H=/h\n1.0 1.0\n", "x\n"));
+        assert_eq!(
+            (p.stat, p.meta, p.cwd),
+            ("10 (a) S\n", "H=/h\n1.0 1.0\n", "x\n")
+        );
     }
 
     #[test]
@@ -1070,7 +1077,10 @@ lrwxrwxrwx 1 u u 0 Nov 25 10:00 /proc/self/cwd -> /x
             folder_name("/home/u/projects/pulse", home).as_deref(),
             Some("pulse")
         );
-        assert_eq!(folder_name("/home/u/projects/pulse/", home).as_deref(), Some("pulse"));
+        assert_eq!(
+            folder_name("/home/u/projects/pulse/", home).as_deref(),
+            Some("pulse")
+        );
         assert_eq!(folder_name("/home/u", home).as_deref(), Some("~"));
         assert_eq!(folder_name("/home/u/", home).as_deref(), Some("~"));
         assert_eq!(folder_name("/", home), None);
@@ -1320,7 +1330,13 @@ lrwxrwxrwx 1 u u 0 Nov 25 10:00 /proc/self/cwd -> /x
         w.add(1, 0, "init", "/init", 10);
         // Session A: a root and its spare helper.
         w.add(11, 1, "2.1.332", CLAUDE, 400_000)
-            .add(12, 11, "2.1.332", "claude bg-spare --bg-spare /tmp/x.sock", 50_000)
+            .add(
+                12,
+                11,
+                "2.1.332",
+                "claude bg-spare --bg-spare /tmp/x.sock",
+                50_000,
+            )
             .cwd(11, "/home/u/projects/pulse");
         // A dev server the agent started: its own row, not in the session.
         w.add(20, 11, "MainThread", "node /srv/app/dev-server.js", 300_000);
@@ -1367,7 +1383,13 @@ lrwxrwxrwx 1 u u 0 Nov 25 10:00 /proc/self/cwd -> /x
             .add(31, 11, "bash", "bash -c claude", 10)
             .add(32, 31, "2.1.332", CLAUDE, 100)
             // A script wrapper with its native binary under it: one session.
-            .add(41, 1, "MainThread", "node /x/node_modules/@openai/codex/bin/codex.js", 80)
+            .add(
+                41,
+                1,
+                "MainThread",
+                "node /x/node_modules/@openai/codex/bin/codex.js",
+                80,
+            )
             .add(42, 41, "codex", "/x/codex/vendor/codex exec", 120);
         let (_, sessions) = w.build();
         let by = |pid| sessions.iter().find(|s| s.pid == pid);
@@ -1492,7 +1514,8 @@ lrwxrwxrwx 1 u u 0 Nov 25 10:00 /proc/self/cwd -> /x
     #[test]
     fn a_session_without_a_readable_folder_has_none() {
         let mut w = World::new();
-        w.add(11, 1, "2.1.332", CLAUDE, 10).add(13, 1, "2.1.332", CLAUDE, 10);
+        w.add(11, 1, "2.1.332", CLAUDE, 10)
+            .add(13, 1, "2.1.332", CLAUDE, 10);
         w.cwd(13, "/home/u");
         let (_, sessions) = w.build();
         assert_eq!(sessions.iter().find(|s| s.pid == 11).unwrap().folder, None);

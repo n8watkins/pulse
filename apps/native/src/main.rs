@@ -9,6 +9,7 @@ mod app;
 mod logic;
 mod marks;
 mod record;
+mod sessions;
 mod tray;
 mod view;
 #[cfg(windows)]
