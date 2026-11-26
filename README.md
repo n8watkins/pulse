@@ -37,8 +37,9 @@ What a session is:
 
 Busy and idle:
 
-- A session is busy when it and everything it started (all descendants, except other agents' sessions) used at least 3 percent of one processor core since the last query, and stays busy until that falls under 1 percent of a core.
-- The gap between 3 and 1 percent is the hysteresis that keeps the dot from flickering.
+- A session is busy when it and everything it started (all descendants, except other agents' sessions) used at least 10 percent of one processor core since the last query, and stays busy until that falls under 4 percent of a core.
+A waiting session with its helper servers measured 0 to 6 percent of a core on the owner's PC, a working one far more.
+- The gap between 10 and 4 percent is the hysteresis that keeps the dot from flickering.
   The first query after WSL starts has nothing to compare with, so all sessions read idle for one round.
 
 Which rows are shown (the Linux list never grows past 6 rows, so many sessions do not push the rest out):

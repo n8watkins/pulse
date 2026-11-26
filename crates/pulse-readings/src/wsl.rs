@@ -543,11 +543,13 @@ fn label(comm: &str, args: &str) -> Option<(String, bool)> {
 }
 
 /// A session turns busy when it and everything it started use at least this
-/// share of one processor core (0.03 = 3 percent of a core)...
-const BUSY_ON: f32 = 0.03;
+/// share of one processor core (0.10 = 10 percent of a core). Measured on a
+/// PC with many waiting Claude Code sessions: a waiting one, with its helper
+/// servers, uses 0 to 6 percent of a core, a working one far more...
+const BUSY_ON: f32 = 0.10;
 /// ...and stays busy until that falls under this share. The gap between the
 /// two keeps the dot from flickering on a session near the line.
-const BUSY_OFF: f32 = 0.01;
+const BUSY_OFF: f32 = 0.04;
 
 /// Whether a session is busy now: `was` is the previous answer, `cores_used`
 /// the processor it and everything it started used since the last query, in
@@ -1446,24 +1448,24 @@ lrwxrwxrwx 1 u u 0 Nov 25 10:00 /proc/self/cwd -> /x
 
     #[test]
     fn busy_has_a_threshold_and_a_hysteresis() {
-        // Idle turns busy at 3 percent of a core, not before.
+        // Idle turns busy at 10 percent of a core, not before.
         assert!(!busy_next(false, 0.0));
-        assert!(!busy_next(false, 0.029));
-        assert!(busy_next(false, 0.03));
+        assert!(!busy_next(false, 0.099));
+        assert!(busy_next(false, 0.10));
         assert!(busy_next(false, 1.5));
-        // Busy stays busy down to 1 percent of a core.
-        assert!(busy_next(true, 0.03));
-        assert!(busy_next(true, 0.011));
-        assert!(busy_next(true, 0.01));
-        assert!(!busy_next(true, 0.009));
+        // Busy stays busy down to 4 percent of a core.
+        assert!(busy_next(true, 0.10));
+        assert!(busy_next(true, 0.041));
+        assert!(busy_next(true, 0.04));
+        assert!(!busy_next(true, 0.039));
         assert!(!busy_next(true, 0.0));
         // Between the two, the answer is the previous one: no flicker.
-        for u in [0.012_f32, 0.02, 0.029] {
+        for u in [0.042_f32, 0.07, 0.099] {
             assert!(busy_next(true, u));
             assert!(!busy_next(false, u));
         }
         // A noisy series around the line changes the state once, not each tick.
-        let series = [0.05, 0.02, 0.04, 0.015, 0.025, 0.012, 0.03, 0.005, 0.02];
+        let series = [0.15, 0.07, 0.12, 0.05, 0.08, 0.045, 0.1, 0.02, 0.07];
         let mut state = false;
         let mut flips = 0;
         for u in series {
@@ -1471,7 +1473,7 @@ lrwxrwxrwx 1 u u 0 Nov 25 10:00 /proc/self/cwd -> /x
             flips += i32::from(next != state);
             state = next;
         }
-        assert_eq!(flips, 2, "on at 0.05, off at 0.005, nothing in between");
+        assert_eq!(flips, 2, "on at 0.15, off at 0.02, nothing in between");
         assert!(!state);
     }
 
@@ -1479,8 +1481,8 @@ lrwxrwxrwx 1 u u 0 Nov 25 10:00 /proc/self/cwd -> /x
     fn busy_follows_the_last_query_through_the_session_id() {
         let mut w = World::new();
         w.add(11, 1, "2.1.332", CLAUDE, 10);
-        // 2 percent of a core: busy only because it was busy before.
-        w.cpu(11, 0.2);
+        // 6 percent of a core: busy only because it was busy before.
+        w.cpu(11, 0.6);
         assert!(!w.build().1[0].busy);
         w.was_busy.insert(11, true);
         assert!(w.build().1[0].busy);
