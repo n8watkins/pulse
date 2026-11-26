@@ -8,7 +8,9 @@ use windows_sys::Win32::Graphics::Dwm::{
 use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
 };
-use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
+use windows_sys::Win32::UI::HiDpi::{
+    GetDpiForMonitor, GetDpiForSystem, GetDpiForWindow, MDT_EFFECTIVE_DPI,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GWL_EXSTYLE, GetCursorPos, GetWindowLongPtrW, HWND_TOPMOST, SW_HIDE, SW_SHOW,
     SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
@@ -132,6 +134,11 @@ pub fn place(h: Hwnd, height: f32) {
         let y = work.bottom - height - margin;
         SetWindowPos(h.raw(), HWND_TOPMOST, x, y, w, height, SWP_NOACTIVATE);
     }
+}
+
+/// The system DPI, which sets the tray icon's size.
+pub fn system_dpi() -> u32 {
+    unsafe { GetDpiForSystem() }
 }
 
 /// Hands the process's idle pages back to Windows (the same trim Windows

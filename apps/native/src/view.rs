@@ -27,7 +27,8 @@ pub const MIN_ROWS: usize = 2;
 /// How the panel fits a work area that may be shorter than [`PANEL_H`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Layout {
-    /// "Top apps" rows shown.
+    /// "Top apps" rows that fit at full size (the list scrolls beyond them).
+    #[allow(dead_code)]
     pub rows: usize,
     /// Logical px removed from the panel height (the tiles and footer move up
     /// by the same amount).
@@ -327,7 +328,11 @@ fn app_view(a: &AppRow, sort: Sort, wsl: Option<&Wsl>, max: f64) -> AppView {
         },
         value,
         frac: (amount / max).clamp(0.0, 1.0) as f32,
-        path: if wsl_row { Some(wsl_icon()) } else { a.path.clone() },
+        path: if wsl_row {
+            Some(wsl_icon())
+        } else {
+            a.path.clone()
+        },
         agent: false,
         count: String::new(),
         group_end: false,
@@ -359,10 +364,14 @@ pub fn app_rows(snap: &Snapshot, sort: Sort) -> Vec<AppView> {
         Sort::Memory => a.mem_bytes as f64,
         Sort::Processor => f64::from(a.cpu_pct),
     };
-    let max = apps
-        .iter()
-        .map(&amount)
-        .fold(if sort == Sort::Memory { 1.0 } else { CPU_BAR_FLOOR }, f64::max);
+    let max = apps.iter().map(&amount).fold(
+        if sort == Sort::Memory {
+            1.0
+        } else {
+            CPU_BAR_FLOOR
+        },
+        f64::max,
+    );
     let extra = match wsl {
         Some(_) if !apps.iter().any(is_wsl) => wsl.map(|w| AppRow {
             name: "WSL (Linux)".into(),
@@ -380,7 +389,13 @@ pub fn app_rows(snap: &Snapshot, sort: Sort) -> Vec<AppView> {
         let is_wsl_row = row.kind == RowKind::Wsl;
         rows.push(row);
         if let (true, Some(w)) = (is_wsl_row, wsl) {
-            let top = w.procs.iter().map(|p| p.mem_bytes).max().unwrap_or(1).max(1);
+            let top = w
+                .procs
+                .iter()
+                .map(|p| p.mem_bytes)
+                .max()
+                .unwrap_or(1)
+                .max(1);
             for p in &w.procs {
                 rows.push(AppView {
                     kind: RowKind::Sub,
@@ -701,7 +716,11 @@ mod tests {
     fn no_wsl_means_no_wsl_rows_and_a_bare_vm_has_no_inside_label() {
         let mut snap = sample();
         snap.wsl = None;
-        assert!(app_rows(&snap, Sort::Memory).iter().all(|r| r.kind == RowKind::App));
+        assert!(
+            app_rows(&snap, Sort::Memory)
+                .iter()
+                .all(|r| r.kind == RowKind::App)
+        );
         snap.wsl = Some(Wsl {
             mem_bytes: 1 << 30,
             cpu_pct: 0.5,
@@ -733,7 +752,10 @@ mod tests {
         let st = status(&s, false);
         assert_eq!(
             st.text,
-            format!("Processor is busy \u{b7} {} uses the most", s.apps_by_cpu[0].name)
+            format!(
+                "Processor is busy \u{b7} {} uses the most",
+                s.apps_by_cpu[0].name
+            )
         );
         assert!(st.warn);
         s.cpu_pct = 84.9;
@@ -747,9 +769,24 @@ mod tests {
     fn a_week_of_uptime_asks_for_a_restart() {
         let mut snap = sample();
         snap.uptime_s = 7 * 86_400 - 1;
-        assert!(!build(&snap, &Extra::default(), &History::default(), false, Sort::Memory).cpu_restart);
+        assert!(
+            !build(
+                &snap,
+                &Extra::default(),
+                &History::default(),
+                false,
+                Sort::Memory
+            )
+            .cpu_restart
+        );
         snap.uptime_s = 7 * 86_400;
-        let v = build(&snap, &Extra::default(), &History::default(), false, Sort::Memory);
+        let v = build(
+            &snap,
+            &Extra::default(),
+            &History::default(),
+            false,
+            Sort::Memory,
+        );
         assert!(v.cpu_restart);
         assert_eq!(v.cpu_sub, "16 cores \u{b7} up 7d 0h");
     }
@@ -763,7 +800,10 @@ mod tests {
         s.gpu_pct = Some(13.0);
         s.net_down_bps = 1_800_000;
         s.net_up_bps = 286 * 1024;
-        s.battery = Some(pulse_readings::Battery { pct: 80, plugged: true });
+        s.battery = Some(pulse_readings::Battery {
+            pct: 80,
+            plugged: true,
+        });
         let t = tooltip(&s);
         let lines: Vec<&str> = t.lines().collect();
         assert_eq!(lines.len(), 4);
@@ -772,7 +812,10 @@ mod tests {
         assert_eq!(lines[2], "Net \u{2193} 1.7 MB/s  \u{2191} 286 KB/s");
         assert_eq!(lines[3], "Battery 80% (plugged in)");
         s.gpu_pct = None;
-        s.battery = Some(pulse_readings::Battery { pct: 40, plugged: false });
+        s.battery = Some(pulse_readings::Battery {
+            pct: 40,
+            plugged: false,
+        });
         let t = tooltip(&s);
         assert_eq!(t.lines().count(), 3);
         assert!(t.ends_with("Battery 40% (on battery)"));

@@ -91,7 +91,9 @@ mod tests {
     #[test]
     fn two_modifiers_and_a_letter_are_tried() {
         let step = step(ALT_SHIFT, Pressed::Main(Key::Letter('Q')));
-        let Step::Try(c) = step else { panic!("{step:?}") };
+        let Step::Try(c) = step else {
+            panic!("{step:?}")
+        };
         assert_eq!(c.to_string(), "Alt+Shift+Q");
         let all = Mods {
             ctrl: true,
@@ -160,7 +162,10 @@ mod tests {
     #[test]
     fn messages_match_the_spec() {
         let c = Combo::parse("Alt+Shift+P").unwrap();
-        assert_eq!(in_use(c), "Another app already uses Alt+Shift+P. Try another.");
+        assert_eq!(
+            in_use(c),
+            "Another app already uses Alt+Shift+P. Try another."
+        );
         assert!(HOLD_TWO.starts_with("Hold two of Ctrl, Alt and Shift, then press a key."));
         assert!(RECORDING.contains("Esc cancels"));
     }

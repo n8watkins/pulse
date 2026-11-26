@@ -146,8 +146,14 @@ mod tests {
             Key::new(16, 0.5, 0.4, false, false)
         );
         // A warning or a theme change redraws.
-        assert_ne!(Key::new(16, 0.2, 0.4, false, false), Key::new(16, 0.2, 0.4, true, false));
-        assert_ne!(Key::new(16, 0.2, 0.4, false, false), Key::new(16, 0.2, 0.4, false, true));
+        assert_ne!(
+            Key::new(16, 0.2, 0.4, false, false),
+            Key::new(16, 0.2, 0.4, true, false)
+        );
+        assert_ne!(
+            Key::new(16, 0.2, 0.4, false, false),
+            Key::new(16, 0.2, 0.4, false, true)
+        );
     }
 
     #[test]
