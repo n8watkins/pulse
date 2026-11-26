@@ -1059,7 +1059,14 @@ fn spawn_reader(
                 };
                 let body = alert::body(&apps)
                     .unwrap_or_else(|| "Close a few programs to free some.".to_owned());
-                notice::show(&alert::title(pct), &body);
+                let sent = notice::show(&alert::title(pct), &body);
+                if forced_pct.is_some() {
+                    // PULSE_MEM_PCT runs leave a line next to the settings file,
+                    // so a test can tell the shell took the notice.
+                    let line = format!("{} {}\n", if sent { "sent" } else { "refused" }, body);
+                    let path = pulse_platform::settings_path().with_file_name("alert.log");
+                    let _ = std::fs::write(path, line);
+                }
             }
             if no_apps {
                 // A development knob: shows the "Reading apps" row.

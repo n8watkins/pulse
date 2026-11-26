@@ -131,6 +131,7 @@ Environment hooks, for tests and screenshots:
 - `PULSE_MEM_PCT=<0 to 100>` replaces the memory percent the low memory alert sees and shortens its waits (3 s of holding, nothing in the first 4 s, 20 s between notifications), so the alert can be triggered on purpose.
   The alert still has to be on in Settings (it is by default) and the level at or below the forced percent.
   It counts as a test run, so it never touches the Run key.
+  A notification it sends is also logged as one line (`sent ...` or `refused ...`) in `alert.log` next to `settings.json`, since a toast can be hidden by Do Not Disturb or a full-screen app.
 - `PULSE_SETTINGS_DIR=<folder>` keeps `settings.json` in that folder instead of `%APPDATA%\Pulse` (test runs use it).
 - `PULSE_INSTANCE_NAME=<name>` gives a test run its own single-instance name, so it never pokes the real panel.
 - `PULSE_AUTOSTART_NAME=<name>` names the Run-key value a test run would write.
