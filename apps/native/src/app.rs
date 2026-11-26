@@ -1,7 +1,9 @@
 //! The tray app: window life cycle, tray icon and menu, settings, shortcut,
 //! reader thread and test hooks.
 
+use crate::alert::{self, Alert, Rules};
 use crate::logic::{self, ClickAction, Pending, PendingAction, Throttle, Toggle};
+use crate::notice;
 use crate::record::{self, Mods, Pressed, Step};
 use crate::tray;
 use crate::view::{self, Dot, Fold, History, RowKind};
@@ -53,6 +55,9 @@ struct Config {
     /// PULSE_DEMO_SHORTCUT=recording|keys|taken|failed|invalid: show that state of the
     /// shortcut field without any key press (for screenshots).
     demo_shortcut: Option<String>,
+    /// PULSE_MEM_PCT=0..100: the memory percent the low memory alert sees, in
+    /// place of the real one, and shorter waits (for trying the alert).
+    mem_pct: Option<u8>,
     /// Any of PULSE_SAMPLE, PULSE_SHOW, PULSE_SELFTEST, PULSE_SETTINGS_DIR or
     /// PULSE_INSTANCE_NAME is set: a test run, which never touches the Run key.
     test_run: bool,
@@ -84,7 +89,11 @@ impl Config {
             demo_shortcut: std::env::var("PULSE_DEMO_SHORTCUT")
                 .ok()
                 .filter(|v| !v.is_empty()),
+            mem_pct: std::env::var("PULSE_MEM_PCT")
+                .ok()
+                .and_then(|v| alert::parse_forced_pct(&v)),
             test_run: set("PULSE_SAMPLE")
+                || set("PULSE_MEM_PCT")
                 || set("PULSE_SHOW")
                 || set("PULSE_SELFTEST")
                 || set("PULSE_SETTINGS_DIR")
@@ -249,6 +258,8 @@ struct Panel {
     ago: slint::Timer,
     /// Seconds between readings while hidden, read by the reader thread.
     refresh: Arc<AtomicU8>,
+    /// The low memory alert's level for the reader thread; 0 is off.
+    alert_level: Arc<AtomicU8>,
     tray: RefCell<Option<TrayState>>,
     /// At mouse-down on the tray icon: the panel counted as open.
     click_was_open: Cell<bool>,
@@ -545,6 +556,12 @@ impl Panel {
         ui.set_compact(s.view == PanelView::Compact);
         ui.set_keep_open(s.keep_open);
         ui.set_refresh(refresh_index(s.hidden_refresh_s));
+        ui.set_low_mem(s.low_mem_alert);
+        ui.set_low_mem_level(alert::index_of(s.low_mem_level));
+        self.alert_level.store(
+            if s.low_mem_alert { s.low_mem_level } else { 0 },
+            Ordering::Relaxed,
+        );
         let shown = if self.hotkey_ok.get() { &s.hotkey } else { "" };
         let (cap, foot) = view::footer_hint(shown);
         ui.set_cap(cap.into());
@@ -682,6 +699,18 @@ impl Panel {
             .unwrap_or(2);
         self.settings.borrow_mut().hidden_refresh_s = secs;
         self.refresh.store(secs, Ordering::Relaxed);
+        self.save();
+        self.sync_settings_ui();
+    }
+
+    fn set_low_mem(&self, on: bool) {
+        self.settings.borrow_mut().low_mem_alert = on;
+        self.save();
+        self.sync_settings_ui();
+    }
+
+    fn set_low_mem_level(&self, i: i32) {
+        self.settings.borrow_mut().low_mem_level = alert::level_at(i);
         self.save();
         self.sync_settings_ui();
     }
@@ -961,6 +990,8 @@ fn spawn_reader(
     latest: Arc<Mutex<Option<Latest>>>,
     shown: Arc<AtomicBool>,
     refresh: Arc<AtomicU8>,
+    alert_level: Arc<AtomicU8>,
+    forced_pct: Option<u8>,
     rx: mpsc::Receiver<ReaderCmd>,
 ) {
     std::thread::spawn(move || {
@@ -976,6 +1007,12 @@ fn spawn_reader(
             .ok()
             .and_then(|v| logic::parse_battery(&v));
         let mut hist = History::default();
+        let rules = if forced_pct.is_some() {
+            Rules::TEST
+        } else {
+            Rules::NORMAL
+        };
+        let mut low_mem = Alert::new(Instant::now());
         // Rows from the last scan, kept for readings taken while hidden.
         let mut rows: CachedRows = Default::default();
         let mut force_apps = false;
@@ -1005,6 +1042,24 @@ fn spawn_reader(
                     snap.wsl.clone(),
                 );
                 apps_at = Instant::now();
+            }
+            let pct = forced_pct.unwrap_or_else(|| alert::percent(snap.mem_used, snap.mem_total));
+            if low_mem.observe(
+                Instant::now(),
+                pct,
+                alert_level.load(Ordering::Relaxed),
+                &rules,
+            ) {
+                // The one extra per-process scan the alert asks for, taken only
+                // when a notice is due (a hidden reading skips the scan).
+                let apps = if visible {
+                    snap.apps.clone()
+                } else {
+                    src.read(true).apps
+                };
+                let body = alert::body(&apps)
+                    .unwrap_or_else(|| "Close a few programs to free some.".to_owned());
+                notice::show(&alert::title(pct), &body);
             }
             if no_apps {
                 // A development knob: shows the "Reading apps" row.
@@ -1158,12 +1213,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let latest = Arc::new(Mutex::new(None));
     let shown = Arc::new(AtomicBool::new(false));
     let refresh = Arc::new(AtomicU8::new(settings.hidden_refresh_s));
+    let alert_level = Arc::new(AtomicU8::new(0));
     let (tx, rx) = mpsc::channel();
     spawn_reader(
         cfg.sample,
         latest.clone(),
         shown.clone(),
         refresh.clone(),
+        alert_level.clone(),
+        cfg.mem_pct,
         rx,
     );
 
@@ -1215,6 +1273,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         reading_at: Cell::new(Instant::now()),
         ago: slint::Timer::default(),
         refresh,
+        alert_level,
         tray: RefCell::new(None),
         click_was_open: Cell::new(false),
     });
@@ -1267,6 +1326,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     panel
         .ui
         .on_refresh_picked(|i| with_panel(|p| p.set_refresh(i)));
+    panel
+        .ui
+        .on_low_mem_toggled(|v| with_panel(|p| p.set_low_mem(v)));
+    panel
+        .ui
+        .on_low_mem_level_picked(|i| with_panel(|p| p.set_low_mem_level(i)));
     panel.ui.on_field_clicked(|| {
         with_panel(|p| match record::click(p.recording.get()) {
             record::Click::Start => p.start_recording(),
@@ -1362,6 +1427,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_tooltip("Pulse")
         .with_icon(initial_tray_icon())
         .build()?;
+    // A click on the low memory notice opens the panel.
+    notice::attach(tray_icon.window_handle(), || {
+        let _ = slint::invoke_from_event_loop(|| with_panel(|p| p.present()));
+    });
     *panel.tray.borrow_mut() = Some(TrayState {
         icon: tray_icon,
         key: Cell::new(None),

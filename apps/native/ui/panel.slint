@@ -1324,6 +1324,11 @@ export component PanelWindow inherits Window {
     // The last attempt to save the settings failed.
     in property <bool> save-failed: false;
     in property <int> refresh: 0;
+    // The low memory alert: the switch, and the level's choice (0 to 3: 80, 85, 90, 95 percent).
+    in property <bool> low-mem: true;
+    in property <int> low-mem-level: 2;
+    callback low-mem-toggled(bool);
+    callback low-mem-level-picked(int);
     in property <string> version: "";
     callback close-clicked;
     callback sort-picked(int);
@@ -2037,6 +2042,81 @@ export component PanelWindow inherits Window {
                     }
                 }
 
+                // Low memory alert: name and switch on one line, a note, then the level.
+                Rectangle {
+                    height: 8px + 24px + 1px + lm-note.preferred-height + 8px + 34px + 10px;
+                    Image {
+                        x: 0;
+                        y: 12px;
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("bell.svg");
+                        colorize: Theme.ink;
+                    }
+
+                    Text {
+                        x: 24px;
+                        y: 8px;
+                        width: parent.width - 52px - 24px;
+                        height: 24px;
+                        horizontal-alignment: left;
+                        text: "Low memory alert";
+                        font-family: "Inter";
+                        font-size: 14px;
+                        font-weight: 600;
+                        color: Theme.ink;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    Rectangle {
+                        x: parent.width - 40px;
+                        y: 8px;
+                        width: 40px;
+                        height: 24px;
+                        PSwitch {
+                            checked: root.low-mem;
+                            toggled(v) => {
+                                root.low-mem-toggled(v);
+                            }
+                        }
+                    }
+
+                    lm-note := Text {
+                        x: 24px;
+                        y: 33px;
+                        width: parent.width - 24px;
+                        text: "A notice when memory stays this full.";
+                        wrap: word-wrap;
+                        font-family: "Inter";
+                        font-size: 12.5px;
+                        color: Theme.mute;
+                    }
+
+                    Rectangle {
+                        x: 24px;
+                        y: 33px + lm-note.preferred-height + 8px;
+                        width: parent.width - 24px;
+                        height: 34px;
+                        opacity: root.low-mem ? 1.0 : 0.45;
+                        Seg {
+                            x: 0;
+                            on: root.low-mem;
+                            labels: ["80%", "85%", "90%", "95%"];
+                            current: root.low-mem-level;
+                            picked(i) => {
+                                root.low-mem-level-picked(i);
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        y: parent.height - 1px;
+                        height: 1px;
+                        background: Theme.line;
+                    }
+                }
+
                 // About: the version, and Slint's own attribution widget (its
                 // Royalty-free license asks for it on an About screen), scaled down.
                 Rectangle {
@@ -2334,6 +2414,41 @@ export component PanelWindow inherits Window {
                         checked: root.autostart;
                         toggled(v) => {
                             root.autostart-toggled(v);
+                        }
+                    }
+                }
+
+                CRow {
+                    name: "Low memory alert";
+                    icon: @image-url("bell.svg");
+                    ctl-w: 214px;
+                    ctl-h: 30px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: end;
+                        Rectangle {
+                            width: lm-seg.width;
+                            opacity: root.low-mem ? 1.0 : 0.45;
+                            lm-seg := Seg {
+                                dense: true;
+                                on: root.low-mem;
+                                labels: ["80", "85", "90", "95"];
+                                current: root.low-mem-level;
+                                picked(i) => {
+                                    root.low-mem-level-picked(i);
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            width: 40px;
+                            PSwitch {
+                                y: 3px;
+                                checked: root.low-mem;
+                                toggled(v) => {
+                                    root.low-mem-toggled(v);
+                                }
+                            }
                         }
                     }
                 }

@@ -26,10 +26,28 @@ The webview shell is parked, not deleted: branch `spike/webview`, tag `parked/we
 Two views: the expanded one (380 x 580, the "B Tighter" layout) and a compact one (380 wide, about 287 tall: Processor and Memory as mini tiles, three one-line apps, a collapsible Linux row with its program and agent counts, one footer row of figures).
 The Settings sheet has a one-line-per-setting form in the compact view and never changes the panel's height.
 
-Built: tray icon with live bars and a tooltip, open and close by click or a global shortcut, Processor and Memory tiles with sparklines, Top apps with real icons sorted by memory or processor, the WSL breakdown with coding agents marked, Graphics, Drive, Network and Battery tiles, Settings, start with Windows, a light, dark or system appearance, and a per-user installer (`scripts/build-installer.ps1`).
+Built: tray icon with live bars and a tooltip, open and close by click or a global shortcut, Processor and Memory tiles with sparklines, Top apps with real icons sorted by memory or processor, the WSL breakdown with coding agents marked, Graphics, Drive, Network and Battery tiles, Settings, a low memory alert (a notification, on at 90 percent by default), start with Windows, a light, dark or system appearance, and a per-user installer (`scripts/build-installer.ps1`).
 
 Slint is used under its royalty-free desktop license, which requires an "About Slint" notice in the app or the Slint badge on a public download page.
 Pulse shows the `AboutSlint` widget at the bottom of Settings.
+
+## Low memory alert
+
+Pulse shows a Windows notification when memory in use stays at or above a level you pick, for example "Memory is 92% full" with "Google Chrome is using the most: 6.1 GB" (the top app by memory, or "WSL (Linux)" when that is the top).
+It works while the panel is hidden, and clicking the notification opens the panel.
+Settings has one row, "Low memory alert", with a switch and a level of 80, 85, 90 or 95 percent.
+The default is on at 90 percent; a `settings.json` from before the alert loads with that default (the saved fields are `low_mem_alert` and `low_mem_level`).
+
+Rules (the logic is `apps/native/src/alert.rs`, tested with an injected clock):
+
+- Memory must stay at or above the level for 30 seconds before the first notification.
+- Nothing is shown in the first minute after Pulse starts.
+- After a notification the next one waits until memory has dropped at least 3 points below the level and risen to it again, and is never sooner than 10 minutes after the last one.
+- Switching the alert on or changing the level starts the wait afresh.
+
+The notification is the tray icon's own (`Shell_NotifyIconW`, shown by Windows 10 and 11 as a toast, silenced by Do Not Disturb), so it carries Pulse's name and icon and needs nothing from the installer.
+The alert runs on the reader that already refreshes while the panel is hidden; the per-process scan for the top app happens once, when a notification is due.
+The Windows call lives in `apps/native/src/notice.rs`, so another platform can supply its own.
 
 ## Coding-agent sessions in the WSL list
 
@@ -110,10 +128,13 @@ Environment hooks, for tests and screenshots:
   Screenshots of a test copy should use F20 to F24 shortcuts, never the owner's real one.
 - `PULSE_WARN=1` makes the reader report 92% processor and 9 days of uptime, to see the warning colors and "restart?".
 - `PULSE_NOAPPS=1` makes the reader report no apps, to see the "Reading apps..." row.
+- `PULSE_MEM_PCT=<0 to 100>` replaces the memory percent the low memory alert sees and shortens its waits (3 s of holding, nothing in the first 4 s, 20 s between notifications), so the alert can be triggered on purpose.
+  The alert still has to be on in Settings (it is by default) and the level at or below the forced percent.
+  It counts as a test run, so it never touches the Run key.
 - `PULSE_SETTINGS_DIR=<folder>` keeps `settings.json` in that folder instead of `%APPDATA%\Pulse` (test runs use it).
 - `PULSE_INSTANCE_NAME=<name>` gives a test run its own single-instance name, so it never pokes the real panel.
 - `PULSE_AUTOSTART_NAME=<name>` names the Run-key value a test run would write.
-- With any of `PULSE_SAMPLE`, `PULSE_SHOW`, `PULSE_SELFTEST`, `PULSE_SETTINGS_DIR` or `PULSE_INSTANCE_NAME` set, the app does not bring the Run key in line with the setting at start.
+- With any of `PULSE_SAMPLE`, `PULSE_SHOW`, `PULSE_SELFTEST`, `PULSE_MEM_PCT`, `PULSE_SETTINGS_DIR` or `PULSE_INSTANCE_NAME` set, the app does not bring the Run key in line with the setting at start.
   Neither does any exe not named `Pulse.exe` (development builds are `pulse-native.exe`).
   The check at start never takes the Run value over from another existing copy of Pulse; the Settings switch and the tray item write it for the running exe.
 - `scripts/measure.ps1` gives every start its own `PULSE_SETTINGS_DIR` and `PULSE_INSTANCE_NAME`.
