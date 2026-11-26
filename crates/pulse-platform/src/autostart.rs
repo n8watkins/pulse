@@ -22,7 +22,7 @@ pub fn is_enabled() -> bool {
 
 /// The exe the Run value starts (unquoted), when there is a value.
 pub fn target() -> Option<PathBuf> {
-    imp::target(&value_name())
+    parse_command(&imp::read(&value_name())?)
 }
 
 /// Where the Run value points, compared with the running exe.
@@ -142,7 +142,8 @@ mod imp {
         Ok(())
     }
 
-    pub fn target(_name: &str) -> Option<std::path::PathBuf> {
+    /// The Run value's command text; there is none off Windows.
+    pub fn read(_name: &str) -> Option<String> {
         None
     }
 }
@@ -224,7 +225,8 @@ mod imp {
         result
     }
 
-    fn read(name: &str) -> Option<String> {
+    /// The Run value's command text, when there is a string value.
+    pub fn read(name: &str) -> Option<String> {
         let key_name = wide(RUN_KEY);
         let value_name = wide(name);
         let mut key: HKEY = std::ptr::null_mut();
@@ -260,10 +262,6 @@ mod imp {
             let end = text.iter().position(|&c| c == 0).unwrap_or(text.len());
             Some(String::from_utf16_lossy(&text[..end]))
         }
-    }
-
-    pub fn target(name: &str) -> Option<std::path::PathBuf> {
-        super::parse_command(&read(name)?)
     }
 
     #[cfg(test)]
