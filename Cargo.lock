@@ -3200,6 +3200,7 @@ name = "pulse-native"
 version = "0.1.0"
 dependencies = [
  "embed-resource",
+ "pulse-platform",
  "pulse-readings",
  "slint",
  "slint-build",
