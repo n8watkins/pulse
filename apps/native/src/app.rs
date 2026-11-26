@@ -45,6 +45,9 @@ struct Config {
     selftest_report: Option<String>,
     /// PULSE_OPEN=settings: start with the Settings screen open.
     open_settings: bool,
+    /// PULSE_DEMO_SHORTCUT=recording|keys|taken|failed|invalid: show that state of the
+    /// shortcut field without any key press (for screenshots).
+    demo_shortcut: Option<String>,
     /// Any of PULSE_SAMPLE, PULSE_SHOW, PULSE_SELFTEST, PULSE_SETTINGS_DIR or
     /// PULSE_INSTANCE_NAME is set: a test run, which never touches the Run key.
     test_run: bool,
@@ -65,6 +68,9 @@ impl Config {
             selftest_report: on("PULSE_SELFTEST")
                 .then(|| std::env::var("PULSE_REPORT").unwrap_or_default()),
             open_settings: std::env::var("PULSE_OPEN").is_ok_and(|v| v == "settings"),
+            demo_shortcut: std::env::var("PULSE_DEMO_SHORTCUT")
+                .ok()
+                .filter(|v| !v.is_empty()),
             test_run: set("PULSE_SAMPLE")
                 || set("PULSE_SHOW")
                 || set("PULSE_SELFTEST")
@@ -216,6 +222,10 @@ struct Panel {
     hotkey_ok: Cell<bool>,
     recording: Cell<bool>,
     mods: Cell<Mods>,
+    /// The message under the shortcut field (empty: the usual help line) and
+    /// whether it is a warning.
+    note_msg: RefCell<String>,
+    note_warn: Cell<bool>,
     reading_at: Cell<Instant>,
     /// Counts the footer's "Updated Ns ago"; runs only while the panel is shown.
     ago: slint::Timer,
@@ -455,14 +465,6 @@ impl Panel {
         ui.set_sort_cpu(s.sort == Sort::Processor);
         ui.set_keep_open(s.keep_open);
         ui.set_refresh(refresh_index(s.hidden_refresh_s));
-        ui.set_hotkey_text(
-            if s.hotkey.is_empty() {
-                "Off".to_owned()
-            } else {
-                s.hotkey.clone()
-            }
-            .into(),
-        );
         let shown = if self.hotkey_ok.get() { &s.hotkey } else { "" };
         let (cap, foot) = view::footer_hint(shown);
         ui.set_cap(cap.into());
@@ -471,6 +473,45 @@ impl Panel {
         if let Some(t) = self.tray.borrow().as_ref() {
             t.keep.set_checked(s.keep_open);
         }
+        drop(s);
+        self.refresh_field();
+    }
+
+    /// Shows the shortcut field, its switch and the line under it.
+    fn refresh_field(&self) {
+        let s = self.settings.borrow();
+        let on = s.shortcut_on();
+        let recording = self.recording.get();
+        let msg = self.note_msg.borrow();
+        let warn = self.note_warn.get() && !msg.is_empty();
+        let state = record::field(on, recording, warn);
+        let keys = s.remembered_hotkey();
+        let text = if recording {
+            record::preview(self.mods.get())
+        } else if keys.is_empty() {
+            "Not set".to_owned()
+        } else {
+            Combo::parse(keys).map_or_else(|| keys.to_owned(), |c| c.to_string())
+        };
+        let ui = &self.ui;
+        ui.set_shortcut_on(on);
+        ui.set_key_text(text.into());
+        ui.set_field_state(match state {
+            record::Field::Idle => 0,
+            record::Field::Off => 1,
+            record::Field::Recording => 2,
+            record::Field::Error => 3,
+        });
+        ui.set_key_hint(
+            if recording {
+                record::HINT_RECORDING
+            } else {
+                record::HINT_IDLE
+            }
+            .into(),
+        );
+        ui.set_hotkey_note(record::note(on, recording, &msg).into());
+        ui.set_hotkey_warn(!msg.is_empty() && self.note_warn.get());
     }
 
     /// Saves, once more if the first try fails; Settings says so when it
@@ -480,9 +521,12 @@ impl Panel {
         self.ui.set_save_failed(!ok);
     }
 
+    /// Sets the message under the shortcut field; empty text brings back the
+    /// usual help line for the current state.
     fn set_note(&self, text: &str, warn: bool) {
-        self.ui.set_hotkey_note(text.into());
-        self.ui.set_hotkey_warn(warn);
+        text.clone_into(&mut self.note_msg.borrow_mut());
+        self.note_warn.set(warn);
+        self.refresh_field();
     }
 
     fn set_sort(&self, sort: Sort) {
@@ -571,8 +615,8 @@ impl Panel {
 
     fn start_recording(&self) {
         self.recording.set(true);
-        self.ui.set_recording(true);
-        self.set_note(record::RECORDING, false);
+        self.mods.set(Mods::default());
+        self.set_note("", false);
         // Let the current combination reach the recorder instead of toggling.
         let _ = self.hotkey.set(None);
     }
@@ -582,7 +626,6 @@ impl Panel {
     /// naming the shortcut).
     fn stop_recording(&self) -> Option<String> {
         self.recording.set(false);
-        self.ui.set_recording(false);
         self.mods.set(Mods::default());
         let mut failed = None;
         let ok = match self.saved_combo() {
@@ -607,12 +650,64 @@ impl Panel {
         }
     }
 
-    fn turn_off_shortcut(&self) {
-        let _ = self.hotkey.set(None);
-        self.settings.borrow_mut().hotkey.clear();
-        self.hotkey_ok.set(false);
-        self.save();
-        self.set_note("", false);
+    /// PULSE_DEMO_SHORTCUT: puts the shortcut field into one state for a
+    /// screenshot. Registers nothing and reads no keys.
+    fn demo_shortcut(&self, what: &str) {
+        let saved = self.settings.borrow().remembered_hotkey().to_owned();
+        let combo = Combo::parse(&saved).unwrap_or(Combo {
+            ctrl: false,
+            alt: true,
+            shift: true,
+            key: pulse_platform::hotkey::Key::Letter('P'),
+        });
+        match what {
+            "recording" => {
+                self.recording.set(true);
+                self.set_note("", false);
+            }
+            "keys" => {
+                self.recording.set(true);
+                self.mods.set(Mods {
+                    ctrl: false,
+                    alt: true,
+                    shift: true,
+                });
+                self.set_note(record::HOLD_TWO, true);
+            }
+            "taken" => self.set_note(&record::in_use(combo), true),
+            "failed" => self.set_note(record::FAILED, true),
+            "invalid" => self.set_note(record::NOT_VALID, true),
+            _ => {}
+        }
+    }
+
+    /// The shortcut's switch. Off keeps the combination for later; on
+    /// registers the remembered one, and says why when that does not work.
+    fn set_shortcut_enabled(&self, want: bool) {
+        if self.recording.get() {
+            self.cancel_recording();
+        }
+        if want {
+            let text = self.settings.borrow().remembered_hotkey().to_owned();
+            match Combo::parse(&text) {
+                Some(c) => match self.hotkey.set(Some(c)) {
+                    Ok(()) => {
+                        self.settings.borrow_mut().set_shortcut(&c.to_string());
+                        self.hotkey_ok.set(true);
+                        self.save();
+                        self.set_note("", false);
+                    }
+                    Err(e) => self.set_note(&record::error_note(e, c), true),
+                },
+                None => self.set_note(record::NOT_VALID, true),
+            }
+        } else {
+            let _ = self.hotkey.set(None);
+            self.settings.borrow_mut().switch_shortcut_off();
+            self.hotkey_ok.set(false);
+            self.save();
+            self.set_note("", false);
+        }
         self.sync_settings_ui();
     }
 
@@ -644,9 +739,8 @@ impl Panel {
         match self.hotkey.set(Some(combo)) {
             Ok(()) => {
                 self.recording.set(false);
-                self.ui.set_recording(false);
                 self.mods.set(Mods::default());
-                self.settings.borrow_mut().hotkey = combo.to_string();
+                self.settings.borrow_mut().set_shortcut(&combo.to_string());
                 self.hotkey_ok.set(true);
                 self.save();
                 self.set_note("", false);
@@ -655,7 +749,7 @@ impl Panel {
             Err(e) => {
                 let mut text = record::error_note(e, combo);
                 if self.stop_recording().is_some() {
-                    text.push_str(" Your saved shortcut is not active either.");
+                    text.push_str(" Saved one is off too.");
                 }
                 self.set_note(&text, true);
             }
@@ -987,14 +1081,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     let mut hotkey_note = None;
     let mut hotkey_ok = false;
-    if !settings.hotkey.is_empty() {
+    if settings.shortcut_on() {
         match Combo::parse(&settings.hotkey) {
             Some(c) => match hotkey.set(Some(c)) {
                 Ok(()) => hotkey_ok = true,
                 Err(e) => hotkey_note = Some(record::error_note(e, c)),
             },
             None => {
-                hotkey_note = Some("The saved shortcut is not valid. Choose a new one.".to_owned());
+                hotkey_note = Some(record::NOT_VALID.to_owned());
             }
         }
     }
@@ -1021,6 +1115,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         hotkey_ok: Cell::new(hotkey_ok),
         recording: Cell::new(false),
         mods: Cell::new(Mods::default()),
+        note_msg: RefCell::default(),
+        note_warn: Cell::new(false),
         reading_at: Cell::new(Instant::now()),
         ago: slint::Timer::default(),
         refresh,
@@ -1073,18 +1169,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     panel
         .ui
         .on_refresh_picked(|i| with_panel(|p| p.set_refresh(i)));
-    panel.ui.on_change_clicked(|| {
-        with_panel(|p| {
-            if p.recording.get() {
-                p.cancel_recording();
-            } else {
-                p.start_recording();
-            }
+    panel.ui.on_field_clicked(|| {
+        with_panel(|p| match record::click(p.recording.get()) {
+            record::Click::Start => p.start_recording(),
+            record::Click::Cancel => p.cancel_recording(),
         });
     });
     panel
         .ui
-        .on_off_clicked(|| with_panel(|p| p.turn_off_shortcut()));
+        .on_shortcut_toggled(|v| with_panel(|p| p.set_shortcut_enabled(v)));
 
     // Tray: left click toggles, right click opens the menu.
     let menu = Menu::new();
@@ -1186,6 +1279,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let t2 = timer.clone();
     let start_shown = cfg.show;
     let open_settings = cfg.open_settings;
+    let demo_shortcut = cfg.demo_shortcut.clone();
     let selftest = cfg.selftest_report.clone();
     let selftest_tx = tx;
     timer.start(
@@ -1225,6 +1319,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 alt: s.alt_key(),
                                 shift: s.shift_key(),
                             });
+                            // The field shows the modifiers held so far.
+                            if p.recording.get() {
+                                p.refresh_field();
+                            }
                         });
                         EventResult::Propagate
                     }
@@ -1252,6 +1350,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 if open_settings {
                     p.open_settings();
+                    if let Some(demo) = demo_shortcut.as_deref() {
+                        p.demo_shortcut(demo);
+                    }
                 }
                 if let Some(report) = selftest.clone() {
                     spawn_selftest(report, selftest_tx.clone());

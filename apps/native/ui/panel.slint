@@ -713,10 +713,10 @@ component SRow inherits Rectangle {
     in property <bool> warn: false;
     in property <length> ctl-w: 40px;
     in property <bool> line: true;
-    height: max(58px, 10px + 20px + 1px + note-t.preferred-height + 10px);
+    height: 8px + 20px + 1px + note-t.preferred-height + 9px;
     Text {
         x: 0;
-        y: 10px;
+        y: 8px;
         width: root.width - root.ctl-w - 12px;
         height: 20px;
         text: root.name;
@@ -730,12 +730,12 @@ component SRow inherits Rectangle {
 
     note-t := Text {
         x: 0;
-        y: 31px;
+        y: 29px;
         width: root.width - root.ctl-w - 12px;
         text: root.note;
         wrap: word-wrap;
         font-family: "Inter";
-        font-size: 13px;
+        font-size: 12.5px;
         color: root.warn ? Theme.warn : Theme.mute;
     }
 
@@ -793,10 +793,14 @@ export component PanelWindow inherits Window {
     in property <bool> sort-cpu: false;
     // The Settings screen.
     in-out property <bool> settings-open: false;
-    in property <string> hotkey-text: "Off";
+    // The shortcut switch, the field and the line under it. `field-state`: 0 works,
+    // 1 switched off (dimmed), 2 waiting for keys, 3 did not register.
+    in property <bool> shortcut-on: true;
+    in property <string> key-text: "";
+    in property <int> field-state: 0;
+    in property <string> key-hint: "";
     in property <string> hotkey-note: "";
     in property <bool> hotkey-warn: false;
-    in property <bool> recording: false;
     in property <bool> keep-open: false;
     in property <bool> autostart: false;
     // The Run value starts another copy of Pulse.
@@ -811,8 +815,8 @@ export component PanelWindow inherits Window {
     callback keep-toggled(bool);
     callback autostart-toggled(bool);
     callback refresh-picked(int);
-    callback change-clicked;
-    callback off-clicked;
+    callback field-clicked;
+    callback shortcut-toggled(bool);
     callback settings-shown;
     callback settings-hidden;
 
@@ -1210,71 +1214,97 @@ export component PanelWindow inherits Window {
                         background: Theme.line;
                     }
                 }
-                // Shortcut: the combination, Change and Turn off, then the note.
+                // Shortcut: name and switch on one line, the field under it
+                // (click it to record), then one line of help.
                 Rectangle {
-                    height: 14px + 20px + 8px + 32px + 6px + shortcut-note.preferred-height + 12px;
+                    height: 8px + 24px + 6px + 34px + 6px + shortcut-note.preferred-height + 9px;
                     Text {
                         x: 0;
-                        y: 14px;
-                        width: parent.width;
-                        height: 20px;
+                        y: 8px;
+                        width: parent.width - 52px;
+                        height: 24px;
                         horizontal-alignment: left;
-                        text: "Open/close shortcut";
+                        text: "Open and close shortcut";
                         font-family: "Inter";
                         font-size: 14px;
                         font-weight: 600;
                         color: Theme.ink;
                         vertical-alignment: center;
+                        overflow: elide;
                     }
 
-                    HorizontalLayout {
+                    Rectangle {
+                        x: parent.width - 40px;
+                        y: 8px;
+                        width: 40px;
+                        height: 24px;
+                        PSwitch {
+                            checked: root.shortcut-on;
+                            toggled(v) => {
+                                root.shortcut-toggled(v);
+                            }
+                        }
+                    }
+
+                    field := Rectangle {
                         x: 0;
-                        y: 42px;
-                        height: 32px;
-                        alignment: start;
-                        spacing: 8px;
-                        Rectangle {
-                            width: cap-t.preferred-width + 20px;
-                            height: 30px;
-                            y: 1px;
-                            background: Theme.soft;
-                            border-radius: 6px;
-                            border-width: 1px;
-                            border-color: Theme.line;
-                            cap-t := Text {
-                                text: root.recording ? "..." : root.hotkey-text;
-                                font-family: "Inter";
-                                font-size: 13px;
-                                font-weight: 600;
-                                color: root.hotkey-text == "Off" ? Theme.mute : Theme.ink;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
+                        y: 38px;
+                        width: parent.width;
+                        height: 34px;
+                        border-radius: 8px;
+                        border-width: root.field-state == 2 ? 2px : 1px;
+                        background: root.field-state == 2 ? (Theme.neutral ? Theme.soft : Theme.hero-bg) : (root.field-state == 3 ? Theme.warn.with-alpha(0.08) : (field-ta.has-hover ? Theme.line : Theme.soft));
+                        border-color: root.field-state == 2 ? Theme.dot : (root.field-state == 3 ? Theme.warn : (field-ta.has-hover ? Theme.mute : Theme.line));
+                        Text {
+                            x: 12px;
+                            width: parent.width - 24px - hint-t.preferred-width - 8px;
+                            text: root.key-text;
+                            font-family: "Inter";
+                            font-size: 14px;
+                            font-weight: 600;
+                            color: root.field-state == 3 ? Theme.warn : (root.field-state == 1 ? Theme.mute : Theme.ink);
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+
+                        hint-t := Text {
+                            x: parent.width - self.preferred-width - 12px;
+                            text: root.key-hint;
+                            font-family: "Inter";
+                            font-size: 12px;
+                            color: Theme.mute;
+                            vertical-alignment: center;
+                        }
+
+                        field-fs := FocusScope {
+                            key-pressed(e) => {
+                                if (e.text == " " || e.text == "\n") {
+                                    root.field-clicked();
+                                    return accept;
+                                }
+                                return reject;
                             }
                         }
 
-                        PButton {
-                            text: root.recording ? "Cancel" : "Change";
+                        field-ta := TouchArea {
                             clicked => {
-                                root.change-clicked();
+                                root.field-clicked();
                             }
                         }
 
-                        if root.hotkey-text != "Off" && !root.recording: PButton {
-                            text: "Turn off";
-                            clicked => {
-                                root.off-clicked();
-                            }
+                        Ring {
+                            active: field-fs.has-focus;
                         }
                     }
 
                     shortcut-note := Text {
                         x: 0;
-                        y: 80px;
+                        y: 78px;
                         width: parent.width;
-                        text: root.hotkey-note != "" ? root.hotkey-note : "Press it anywhere to open or close Pulse.";
+                        text: root.hotkey-note;
                         wrap: word-wrap;
                         font-family: "Inter";
-                        font-size: 13px;
+                        font-size: 12.5px;
                         color: root.hotkey-warn ? Theme.warn : Theme.mute;
                     }
 
@@ -1287,7 +1317,7 @@ export component PanelWindow inherits Window {
 
                 SRow {
                     name: "Colours";
-                    note: "Neutral gives each tile its own colour.";
+                    note: "Neutral: a colour per tile.";
                     ctl-w: 150px;
                     Seg {
                         labels: ["Mint", "Neutral"];
@@ -1301,7 +1331,6 @@ export component PanelWindow inherits Window {
                 SRow {
                     name: "Keep open when I click away";
                     note: "Stays open until you press Esc or the x.";
-                    ctl-w: 40px;
                     PSwitch {
                         checked: root.keep-open;
                         toggled(v) => {
@@ -1313,7 +1342,6 @@ export component PanelWindow inherits Window {
                 SRow {
                     name: "Start with Windows";
                     note: root.autostart-other ? "Another copy of Pulse starts with Windows." : "Opens in the tray when you sign in.";
-                    ctl-w: 40px;
                     PSwitch {
                         checked: root.autostart;
                         toggled(v) => {
@@ -1324,7 +1352,7 @@ export component PanelWindow inherits Window {
 
                 SRow {
                     name: "Refresh while hidden";
-                    note: "How often Pulse checks while closed (2 s while open).";
+                    note: "Always 2 s while open.";
                     ctl-w: 136px;
                     Seg {
                         labels: ["2 s", "5 s", "10 s"];
@@ -1335,54 +1363,40 @@ export component PanelWindow inherits Window {
                     }
                 }
 
-                // About: the version, and the Slint notice its licence asks for.
+                // About: the version, and Slint's own attribution widget (its
+                // Royalty-free licence asks for it on an About screen), scaled down.
                 Rectangle {
-                    height: 14px + 20px + 6px + 96px + 4px + 20px + 12px;
+                    height: 62px;
                     Text {
                         x: 0;
-                        y: 14px;
-                        width: 44px;
-                        height: 20px;
+                        y: 0;
+                        width: parent.width - 150px;
+                        height: parent.height;
                         horizontal-alignment: left;
-                        text: "About";
+                        text: "Pulse " + root.version + "\nLicences are in the install folder.";
                         font-family: "Inter";
-                        font-size: 14px;
-                        font-weight: 600;
-                        color: Theme.ink;
-                        vertical-alignment: center;
-                    }
-
-                    Text {
-                        x: 52px;
-                        y: 14px;
-                        width: parent.width - 52px;
-                        height: 20px;
-                        horizontal-alignment: left;
-                        text: "Pulse " + root.version;
-                        font-family: "Inter";
-                        font-size: 13px;
-                        color: Theme.mute;
-                        vertical-alignment: center;
-                    }
-
-                    AboutSlint {
-                        x: 0;
-                        y: 40px;
-                        width: parent.width;
-                        height: 96px;
-                    }
-
-                    Text {
-                        x: 0;
-                        y: 140px;
-                        width: parent.width;
-                        height: 20px;
-                        text: "Open source licences are in the installation folder.";
-                        font-family: "Inter";
-                        font-size: 13px;
+                        font-size: 12px;
                         color: Theme.mute;
                         vertical-alignment: center;
                         overflow: elide;
+                    }
+
+                    Rectangle {
+                        // The widget centres its logo in 128 px; push that box
+                        // right so the logo ends near the switches' edge.
+                        x: parent.width - 92px;
+                        y: 4px;
+                        width: 128px;
+                        height: 54px;
+                        clip: true;
+                        AboutSlint {
+                            x: 0;
+                            y: 0;
+                            width: 256px;
+                            height: 108px;
+                            transform-scale: 0.5;
+                            transform-origin: { x: 0px, y: 0px };
+                        }
                     }
                 }
             }

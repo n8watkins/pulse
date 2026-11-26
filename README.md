@@ -15,11 +15,10 @@ The owner chose this on 2026-11-25 after comparing it with a Tauri webview shell
 
 The webview shell is parked, not deleted: branch `spike/webview`, tag `parked/webview`.
 
-Built so far: tray icon, open and close, Processor and Memory tiles with sparklines, Top apps with real icons, Graphics, Drive and Network tiles, light and dark.
-Not built yet: global shortcut, settings, start with Windows, the WSL breakdown, the tray tooltip and live tray bars, the Neutral colour theme, an installer.
+Built: tray icon with live bars and a tooltip, open and close by click or a global shortcut, Processor and Memory tiles with sparklines, Top apps with real icons sorted by memory or processor, the WSL breakdown with coding agents marked, Graphics, Drive, Network and Battery tiles, Settings, start with Windows, Mint and Neutral colours in light and dark, and a per-user installer (`scripts/build-installer.ps1`).
 
 Slint is used under its royalty-free desktop licence, which requires an "About Slint" notice in the app or the Slint badge on a public download page.
-Neither exists yet; one must be added before the app is shared.
+Pulse shows the `AboutSlint` widget at the bottom of Settings.
 
 ## Build and measure
 
@@ -39,6 +38,10 @@ Environment hooks, for tests and screenshots:
 - `PULSE_BATTERY=<percent>,<plugged 0|1>` replaces the battery reading (for example `12,0` or `80,1`), to see the Battery tile on a desktop PC.
 - `PULSE_WORK_H=<logical px>` pretends the work area is that tall, to check the panel on a short display.
 - `PULSE_OPEN=settings` starts with the Settings screen open (for screenshots).
+- `PULSE_DEMO_SHORTCUT=recording|keys|taken|failed|invalid` (with `PULSE_OPEN=settings`) shows one state of the shortcut field without any key press: `recording` (waiting for keys), `keys` (Alt and Shift held, with the "hold two" warning), `taken` (another app has it), `failed`, `invalid`.
+  It registers nothing.
+  The off state needs no hook: a `settings.json` with `"hotkey": ""` and `"hotkey_last": "Ctrl+Shift+F20"` shows the switch off with the combination dimmed.
+  Screenshots of a test copy should use F20 to F24 shortcuts, never the owner's real one.
 - `PULSE_WARN=1` makes the reader report 92% processor and 9 days of uptime, to see the warning colours and "restart?".
 - `PULSE_NOAPPS=1` makes the reader report no apps, to see the "Reading apps..." row.
 - `PULSE_SETTINGS_DIR=<folder>` keeps `settings.json` in that folder instead of `%APPDATA%\Pulse` (test runs use it).
