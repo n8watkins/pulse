@@ -1141,6 +1141,7 @@ export component PanelWindow inherits Window {
                 Rectangle {
                     height: 14px + 20px + 8px + 32px + 6px + shortcut-note.preferred-height + 12px;
                     Text {
+                        x: 0;
                         y: 14px;
                         width: parent.width;
                         height: 20px;
@@ -1154,6 +1155,7 @@ export component PanelWindow inherits Window {
                     }
 
                     HorizontalLayout {
+                        x: 0;
                         y: 42px;
                         height: 32px;
                         alignment: start;
@@ -1193,6 +1195,7 @@ export component PanelWindow inherits Window {
                     }
 
                     shortcut-note := Text {
+                        x: 0;
                         y: 80px;
                         width: parent.width;
                         text: root.hotkey-note != "" ? root.hotkey-note : "Press it anywhere to open or close Pulse.";
@@ -1263,6 +1266,7 @@ export component PanelWindow inherits Window {
                 Rectangle {
                     height: 14px + 20px + 6px + 96px + 4px + 20px + 12px;
                     Text {
+                        x: 0;
                         y: 14px;
                         width: 44px;
                         height: 20px;
@@ -1289,12 +1293,14 @@ export component PanelWindow inherits Window {
                     }
 
                     AboutSlint {
+                        x: 0;
                         y: 40px;
                         width: parent.width;
                         height: 96px;
                     }
 
                     Text {
+                        x: 0;
                         y: 140px;
                         width: parent.width;
                         height: 20px;
