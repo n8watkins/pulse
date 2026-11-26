@@ -20,11 +20,15 @@ use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATU
 const SLOW: Duration = Duration::from_secs(30);
 /// A rate over a shorter span than this is noise: keep the previous figure.
 const MIN_SPAN: Duration = Duration::from_millis(250);
-/// The graphics counter's instances are fixed when it is added: add it again
-/// this often so new processes' engines show up.
-const GPU_REFRESH_READS: u32 = 15;
 
 /// The per-process 3D engine counter, one instance per (process, engine).
+///
+/// Added once and never rebuilt: PDH re-expands the wildcard on every collect.
+/// Observed on this PC (Windows 11, 2026-11-25) with a query held open while a
+/// process created a Direct3D 11 device and released it again: the instance
+/// of the new process appeared in the same sample and vanished again after the
+/// release, and the instance count matched a freshly built query on every
+/// sample. (A rebuild every 15 reads only dropped a reading and the history.)
 const GPU_COUNTER: &str = r"\GPU Engine(*engtype_3D)\Utilization Percentage";
 
 const IF_TYPE_ETHERNET: u32 = 6;
@@ -165,7 +169,6 @@ pub(crate) struct Extra {
 
 pub(crate) struct Extras {
     gpu: Option<Query>,
-    gpu_reads: u32,
     gpu_last: Option<f32>,
     disk: Option<Query>,
     disk_last: (u64, u64),
@@ -179,7 +182,6 @@ impl Extras {
     pub fn new() -> Self {
         Self {
             gpu: Query::new(&[GPU_COUNTER]),
-            gpu_reads: 0,
             gpu_last: None,
             disk: Query::new(&[
                 r"\PhysicalDisk(_Total)\Disk Read Bytes/sec",
@@ -211,11 +213,6 @@ impl Extras {
     }
 
     fn gpu(&mut self) -> Option<f32> {
-        self.gpu_reads += 1;
-        if self.gpu_reads.is_multiple_of(GPU_REFRESH_READS) {
-            self.gpu = Query::new(&[GPU_COUNTER]);
-            return self.gpu_last;
-        }
         let q = self.gpu.as_ref()?;
         if !q.collect() {
             return self.gpu_last;
