@@ -72,7 +72,10 @@ A file from before has a single `wsl_open`: the compact view takes that value, t
 A new row with sub items needs no new setting, only a group id.
 
 Closed, the expanded row shows the summary on its second line, where "Linux virtual machine · inside:" is when open; the apps below move up.
-In both views the closed WSL row reads "N programs · N agents": the programs are the processes of the Linux programs that are not coding agents, the agents are the sessions (one each, however many helper processes it has), so the two never overlap.
+In both views the closed WSL row reads "N programs · N agents · N dev servers": the programs are the processes of the Linux programs that are not coding agents, the agents are the sessions (one each, however many helper processes it has), so the two never overlap, and the dev servers are described below.
+Zero (or a count that could not be read) is left out of the line.
+Open in the expanded view, the count moves to the detail line: "Linux virtual machine · 3 dev servers · inside:".
+Open in the compact view, the summary stays on the row.
 Opened, the same session rows, folding and order apply, in the compact row style.
 
 Two sessions of the same agent in the same folder show how long each has run ("2h 10m", "14m"), small, after the name.
@@ -81,6 +84,66 @@ Without a readable folder, the row shows the agent alone.
 
 How it is read: the same single `wsl.exe -e sh -c "..."` call as before (WSL is never started by Pulse), now also printing the parent and start of every process (`/proc/<pid>/stat`), the working folder of every process (`ls -l /proc/[0-9]*/cwd`, at most 400 lines), the home folder and the uptime.
 The `ps` part is cut to the 120 biggest processes by memory with each line cut to 240 characters, so the output stays bounded and an agent, being big, is not cut off.
+
+## Dev servers in the WSL list
+
+Many agents leave dev servers running, so the WSL row counts them ("3 dev servers") and the Linux row of a program that is a dev server shows its port, small and muted, after the name: ":3000", or the lowest port and how many more (":8000 +1").
+A dev server that is not among the shown rows (the list shows at most 6) is still counted.
+
+### What counts
+
+A dev server is a Linux process that
+
+1. listens on a TCP port and belongs to the user running the query (the sockets of other users, and of the system's services, come without a process and are never counted), and
+2. is a development program: Node, Bun, Deno, Python, Ruby or PHP running code from a project folder; a dev tool known by name wherever it runs (`next-server`, `next`, `vite`, `webpack`, `wrangler`, `workerd`, `esbuild`, `storybook`, `uvicorn`, `gunicorn`, `rails`, `puma`, `hugo` and a few more, the list is `DEV_TOOLS` in `crates/pulse-readings/src/wsl/servers.rs`); or a compiled program (Go, Rust and others) run from a project folder (a path under the working folder, `./name`, a Cargo `target/debug` or `target/release` folder, `go run`'s temporary build folder).
+   A project folder is any working folder that is not `/`, not the home folder itself and not a system folder (`/usr`, `/var`, `/etc`, `/snap`, `/run`, `/lib` and so on), and
+3. is not a coding agent, not an editor's server (VS Code server and the like), not Docker or Ollama, and not a tool installed on the machine: a script under a global `lib/node_modules`, `.nvm/versions`, an `npx` download (`.npm/_npx`), `.cache`, pnpm or pipx folders, `/usr/lib` or `/usr/share` is a tool, not the project's server (this is what keeps an agent's own helper bridge or an MCP server run through `npx` out of the count).
+
+Not counted on purpose: databases (`postgres`, `redis-server`, `mysqld`, `mongod`), because they are services that stay up by design and not what agents leave behind; Java programs, because language servers and build daemons listen on ports; `sshd`, `systemd-resolved`, the WSL relay and every other system service (no project folder, and they belong to root).
+A plain script run by Node or Python needs its working folder to be known (it is read for every listening process); if it cannot be read, the whole count is dropped instead of guessing.
+
+Processes of one server count once: the same port (several workers, IPv4 and IPv6), or a parent and its child that both listen.
+Ports are attached to the Linux row of the same label as the process that holds them.
+
+The table below is the one used to check the definition (program, folder, result).
+The first rows are what this PC's live list looked like when it was built; the folder names are made up.
+The rest are the unit-test cases in `servers.rs`.
+
+| Program | Port | Working folder | Counted | Why |
+| --- | --- | --- | --- | --- |
+| `node src/serve-dashboards.js` | 7665 | `~/projects/reports` | yes | Node, script in a project folder |
+| `python3 -m http.server 18731` | 18731 | `/tmp/site-a` | yes | Python in a project folder |
+| `node serve.js` | 18732 | `/tmp/site-b` | yes | Node, script in a project folder |
+| `node .../lib/node_modules/chrome-bridge/dist/bridge.js` | 9224 | `/tmp/prev` | no | script of a globally installed tool (an agent's helper) |
+| `sccache` | 4226 | `/` | no | not a dev program, no project folder |
+| systemd-resolved, tailscaled | 53, 443 | n/a | no | other users' sockets: no process to count |
+| `next-server (v16.4.6)` | 3000 | `~/projects/shop-site` | yes | dev tool by name |
+| `node .../node_modules/.bin/vite` | 5173 | `~/projects/shop-site` | yes | dev tool by name |
+| `wrangler dev` / `workerd` | 8787 | `~/projects/edge` | yes (once) | dev tool by name, wrapper and worker share a port |
+| `uvicorn main:app` | 8000 | `~/projects/api` | yes | dev tool by name |
+| `bun --hot server.ts`, `deno run -A server.ts`, `ruby bin/rails server`, `php -S` | any | project folder | yes | runtimes running project code |
+| `api-server` (Cargo `target/debug`), `./main`, `go run` build | any | project folder | yes | compiled program run from a project |
+| `claude`, other coding agents | any | any | no | coding agent |
+| VS Code server | any | any | no | editor server |
+| `dockerd`, `ollama` | any | any | no | Docker, Ollama |
+| `node .../.npm/_npx/.../mcp-server` | any | project folder | no | `npx` download, a tool |
+| `python3 /usr/bin/unattended-upgrade-shutdown` | any | project folder | no | system script |
+| `python3 worker.py` | any | `~` | no | home folder is not a project |
+| `node server.js` | any | `/var/lib/x` | no | system folder |
+| `postgres`, `redis-server`, `java -jar` | any | any | no | databases and Java are not counted (see above) |
+
+### How the ports are read
+
+The same single `wsl.exe -e sh -c "..."` call (no extra spawn, WSL never started by Pulse) also runs `ss -ltnpH` once (at most 300 lines), then `ps -p` and `pwdx` for the processes that own the sockets (at most 100), because a small dev server is not among the 120 biggest processes that the main `ps` lists.
+`ss` was chosen over reading `/proc/net/tcp` and the socket links under `/proc/<pid>/fd`: one program, IPv4 and IPv6 in one list, the process of every socket of the user in one answer.
+The `/proc` route needs the fd listing of every process (about 75 KB here) and a second pass to match socket numbers, and its output is not bounded without a filter that cannot be written without quote characters (which `wsl.exe` mangles).
+Without `ss` (or when it fails) the part says so and no count is shown; so is it when listening processes cannot be read, or when a script's working folder is unknown.
+Another user's server (run with `sudo`, say) has no visible process and is not counted: the count is of the user's own servers.
+The coding-agent session rows do not show "1 server": that would need each server tied to the session that started it, and it is left out.
+
+Measured on this PC through `wsl.exe` (median of 30 runs each, the machine busy with other agents, so compare the pairs and not the absolute numbers): the call took about 100 to 170 ms before and about 160 to 210 ms after, and printed about the same number of bytes plus 1 to 2 KB.
+Most of the added time is `ss` itself (about 30 ms inside Linux here, whatever flags it gets).
+The query runs on its own thread every 6 seconds and never blocks the panel.
 
 ## Build and measure
 
@@ -98,7 +161,7 @@ Environment hooks, for tests and screenshots:
 - `PULSE_SELFTEST=1` with `PULSE_REPORT=<path>` opens and closes the panel five times and writes `{"shell":"native","open_ms":[...]}`.
 - `PULSE_NOTRIM=1` turns off the working-set trim on hide.
 - `PULSE_RENDERER=skia` uses the GPU renderer (about 108 MB; the default software renderer is the reason memory stays low).
-- `PULSE_STRESS=1` feeds worst-case tile values and very long names (app names, exe lines, Linux program labels with a count, 14 agent sessions (busy and idle, a long folder name, the home folder, none readable, two in one folder), the busy status line), to check that every text ends in an ellipsis or wraps and nothing is cut.
+- `PULSE_STRESS=1` feeds worst-case tile values and very long names (app names, exe lines, Linux program labels with a count, 14 agent sessions (busy and idle, a long folder name, the home folder, none readable, two in one folder), 128 dev servers with 5-digit and several ports, the busy status line), to check that every text ends in an ellipsis or wraps and nothing is cut.
 - `PULSE_SCALE=<factor>` (1.0 to 4.0) forces the display scale: Slint draws at that factor, the window is sized and placed (12 logical px from the work-area corner) at that factor, the app icons are asked for at the scaled pixel size (36 px at 1.5) and the tray icon size follows it.
   It simulates scaling on a 100% monitor for screenshots; it is not a real scaled monitor, and per-monitor DPI changes when dragging between monitors are untested.
 - `PULSE_BATTERY=<percent>,<plugged 0|1>` replaces the battery reading (for example `12,0` or `80,1`), to see the Battery tile on a desktop PC.
