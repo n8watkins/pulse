@@ -53,14 +53,20 @@ pub(crate) struct Sections<'a> {
     pub cwd: &'a str,
 }
 
-/// Splits the output of [`PS_COMMAND`] at its marker lines. A missing marker
-/// leaves the parts after it empty.
+/// Splits the output of [`PS_COMMAND`] at its marker lines. A marker is a line
+/// of its own: the command line of the query itself shows in `ps` with the
+/// marker words in it, and must not split anything. A missing marker leaves
+/// the parts after it empty.
 pub(crate) fn split_output(out: &str) -> Sections<'_> {
     fn cut<'a>(text: &'a str, mark: &str) -> (&'a str, &'a str) {
-        match text.find(mark) {
-            Some(i) => (&text[..i], &text[i + mark.len()..]),
-            None => (text, ""),
+        let mut at = 0;
+        for line in text.split_inclusive('\n') {
+            if line.trim_end_matches(['\r', '\n']) == mark {
+                return (&text[..at], &text[at + line.len()..]);
+            }
+            at += line.len();
         }
+        (text, "")
     }
     let (ps, rest) = cut(out, STAT_MARK);
     let (stat, rest) = cut(rest, META_MARK);
@@ -1000,14 +1006,21 @@ mod tests {
             "1 2 a b\n@@PULSE_STAT\n10 (a) S\n@@PULSE_META\nH=/home/u\n12.5 3.0\n@@PULSE_CWD\nl /proc/1/cwd -> /\n",
         );
         assert_eq!(p.ps, "1 2 a b\n");
-        assert_eq!(p.stat, "\n10 (a) S\n");
-        assert_eq!(p.meta, "\nH=/home/u\n12.5 3.0\n");
-        assert_eq!(p.cwd, "\nl /proc/1/cwd -> /\n");
+        assert_eq!(p.stat, "10 (a) S\n");
+        assert_eq!(p.meta, "H=/home/u\n12.5 3.0\n");
+        assert_eq!(p.cwd, "l /proc/1/cwd -> /\n");
         // Parts that are missing are empty.
         let p = split_output("1 2 a b\n");
         assert_eq!((p.ps, p.stat, p.meta, p.cwd), ("1 2 a b\n", "", "", ""));
         let p = split_output("x\n@@PULSE_STAT\ny\n");
-        assert_eq!((p.ps, p.stat, p.meta, p.cwd), ("x\n", "\ny\n", "", ""));
+        assert_eq!((p.ps, p.stat, p.meta, p.cwd), ("x\n", "y\n", "", ""));
+        // The query's own command line shows in `ps`, markers and all.
+        let text = format!(
+            "1 2 sh sh -c ps; echo @@PULSE_STAT; echo @@PULSE_CWD\n3 4 b b\n{STAT_MARK}\n10 (a) S\n{META_MARK}\nH=/h\n1.0 1.0\n{CWD_MARK}\nx\n"
+        );
+        let p = split_output(&text);
+        assert!(p.ps.ends_with("3 4 b b\n") && p.ps.starts_with("1 2 sh"));
+        assert_eq!((p.stat, p.meta, p.cwd), ("10 (a) S\n", "H=/h\n1.0 1.0\n", "x\n"));
     }
 
     #[test]
