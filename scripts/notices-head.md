@@ -58,7 +58,7 @@ The full licence texts are in `apps/native/fonts/` and are installed beside the 
 
 ## Product marks
 
-The small logos beside Linux programs in "Top apps" (Claude, Next.js, Node.js, Chrome and others) are paths from [Simple Icons](https://github.com/simple-icons/simple-icons) (version 16.38.1), embedded in the app from `apps/native/assets/marks/`.
+The small logos beside Linux programs in "Top apps" (Claude, Next.js, Node.js, Chrome, Rust, OpenAI, Visual Studio Code and others) are paths from [Simple Icons](https://github.com/simple-icons/simple-icons) (version 16.38.1), embedded in the app from `apps/native/assets/marks/`.
 Simple Icons publishes its SVG files under CC0 1.0 Universal (public domain dedication); the licence text is in `apps/native/assets/marks/LICENSE-simple-icons.md`.
 The logos themselves remain trademarks of their owners.
 Pulse is not affiliated with or endorsed by any of them, and shows a mark only to say which program a row is.
@@ -92,11 +92,22 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-The Rust logo is listed there under CC BY-SA 4.0 (share-alike), so Pulse does not embed it; Rust programs keep the letter tile.
-Programs with no mark in Simple Icons (Codex CLI, the editor servers) keep the letter tile too.
+The Rust mark carries a share-alike licence:
+
+- Rust logo, copyright the Rust Foundation, licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) (source <https://www.rust-lang.org>, as listed by Simple Icons 16.38.1).
+  The file `apps/native/assets/marks/rust.svg` is under that licence, separate from Pulse's MIT code: the licence covers the logo file and any adaptation of it, not the rest of Pulse.
+  The file is used unchanged, shown only scaled and in white on a black tile.
+
+Two marks come from older Simple Icons releases, because current releases no longer include them.
+Both were under the collection's CC0 default at that time:
+
+- OpenAI mark (used for Codex CLI): Simple Icons 15.22.0, the last release that has it. Source <https://openai.com/brand>.
+- Visual Studio Code mark: Simple Icons 12.4.0, the last release that has it. Source <https://commons.wikimedia.org/wiki/File:Visual_Studio_Code_1.35_icon.svg>.
+
+Programs with no mark (Cursor's and Windsurf's "Editor server", Aider, opencode and others) keep the letter tile.
 
 The marks are drawn unchanged, only scaled and coloured white or black on a tile.
-Each mark with its title, source and licence as Simple Icons lists them (no licence listed means the CC0 default of the collection):
+Each mark with its title, source and licence as Simple Icons lists them (no licence listed means the CC0 default of the collection); the Simple Icons version is 16.38.1 unless the table says otherwise:
 
 | Mark | Simple Icons name | Licence | Source |
 | --- | --- | --- | --- |
@@ -124,3 +135,6 @@ Each mark with its title, source and licence as Simple Icons lists them (no lice
 | MySQL | mysql | CC0 1.0 | <https://www.mysql.com/about/legal/logos.html> |
 | NGINX | nginx | CC0 1.0 | <https://www.nginx.com/press/> |
 | Tailscale | tailscale | CC0 1.0 | <https://tailscale.com/press> |
+| Rust | rust | CC BY-SA 4.0 (Rust Foundation) | <https://www.rust-lang.org> |
+| OpenAI (Codex CLI) | openai (15.22.0) | CC0 1.0 | <https://openai.com/brand> |
+| Visual Studio Code | visualstudiocode (12.4.0) | CC0 1.0 | <https://commons.wikimedia.org/wiki/File:Visual_Studio_Code_1.35_icon.svg> |

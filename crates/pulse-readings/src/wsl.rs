@@ -265,15 +265,20 @@ const AGENT_PACKAGES: &[(&str, &str)] = &[
     ("qwen-code", "Qwen Code"),
 ];
 
-/// Directory names that mean an editor's remote server.
-const EDITOR_DIRS: &[&str] = &[
-    ".vscode-server",
-    "vscode-server",
-    ".vscode-server-insiders",
-    ".cursor-server",
-    "cursor-server",
-    ".windsurf-server",
-    "windsurf-server",
+/// Directory (or file) names that mean an editor's remote server, and the
+/// label of that editor. Visual Studio Code's own server is told apart so the
+/// panel can show its mark; the other editors share one label.
+const EDITOR_DIRS: &[(&str, &str)] = &[
+    (".vscode-server", "VS Code server"),
+    ("vscode-server", "VS Code server"),
+    (".vscode-server-insiders", "VS Code server"),
+    (".vscode-remote", "VS Code server"),
+    ("vscode-remote", "VS Code server"),
+    ("code-server", "VS Code server"),
+    (".cursor-server", "Editor server"),
+    ("cursor-server", "Editor server"),
+    (".windsurf-server", "Editor server"),
+    ("windsurf-server", "Editor server"),
 ];
 
 const ENTRY_FILES: &[&str] = &["cli", "index", "main", "bin"];
@@ -313,8 +318,10 @@ fn agent_by_package(path: &str) -> Option<&'static str> {
     })
 }
 
-fn in_editor_dir(path: &str) -> bool {
-    path.split('/').any(|p| EDITOR_DIRS.contains(&p))
+/// The editor-server label when a path has an editor's server directory.
+fn editor_label(path: &str) -> Option<&'static str> {
+    path.split('/')
+        .find_map(|p| EDITOR_DIRS.iter().find(|(d, _)| *d == p).map(|(_, l)| *l))
 }
 
 fn is_docker(name: &str) -> bool {
@@ -381,19 +388,19 @@ fn label(comm: &str, args: &str) -> Option<(String, bool)> {
             if let Some(l) = agent_named(file_name(script)).or_else(|| agent_by_package(script)) {
                 return agent(l);
             }
-            if in_editor_dir(script) || in_editor_dir(first) {
-                return plain("Editor server");
+            if let Some(l) = editor_label(script).or_else(|| editor_label(first)) {
+                return plain(l);
             }
             let name = truncate_chars(file_name(script), SCRIPT_MAX);
             return Some((format!("{exe}: {name}"), false));
         }
-        if in_editor_dir(first) {
-            return plain("Editor server");
+        if let Some(l) = editor_label(first) {
+            return plain(l);
         }
         return Some((exe.to_string(), false));
     }
-    if in_editor_dir(first) {
-        return plain("Editor server");
+    if let Some(l) = editor_label(first) {
+        return plain(l);
     }
     if is_docker(exe) || is_docker(comm) {
         return plain("Docker");
@@ -792,7 +799,25 @@ mod tests {
                 "MainThread",
                 "/home/u/.vscode-server/bin/abc/node /home/u/.vscode-server/bin/abc/out/server-main.js"
             ),
-            plain("Editor server")
+            plain("VS Code server")
+        );
+        assert_eq!(
+            one(
+                "node",
+                "node /home/u/.vscode-server-insiders/bin/1/out/x.js"
+            ),
+            plain("VS Code server")
+        );
+        assert_eq!(
+            one(
+                "code-server",
+                "/usr/lib/code-server/lib/node /usr/lib/code-server --port 8080"
+            ),
+            plain("VS Code server")
+        );
+        assert_eq!(
+            one("node", "node /home/u/.vscode-remote/x.js"),
+            plain("VS Code server")
         );
         assert_eq!(
             one("node", "node /home/u/.cursor-server/bin/1/out/x.js"),
@@ -879,7 +904,7 @@ mod tests {
 ";
         let cpu: HashMap<u32, f32> = [(11, 0.5), (12, 0.25), (15, 1.5), (13, 40.0)].into();
         let rows = top_procs(out, &cpu);
-        assert_eq!(rows[1].label, "Editor server");
+        assert_eq!(rows[1].label, "VS Code server");
         assert!((rows[1].cpu_pct - 1.5).abs() < 1e-6);
         // Both processes of a group add up; plumbing (pid 13) adds nothing.
         assert!((rows[0].cpu_pct - 0.75).abs() < 1e-6);

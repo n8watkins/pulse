@@ -1112,11 +1112,23 @@ mod tests {
     #[test]
     fn linux_rows_get_their_mark_or_keep_the_letter() {
         let mut snap = sample();
-        snap.wsl.as_mut().unwrap().procs.push(WslProc {
-            label: "tmux".into(),
-            mem_bytes: 1,
+        snap.wsl.as_mut().unwrap().procs = [
+            "Claude Code",
+            "VS Code server",
+            "Codex CLI",
+            "next-server (v16.4.6)",
+            "chrome-headless-shell",
+            "rust-analyzer",
+            "Editor server",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, l)| WslProc {
+            label: (*l).into(),
+            mem_bytes: (100 - i as u64) << 20,
             ..WslProc::default()
-        });
+        })
+        .collect();
         let rows = app_rows(&snap, Sort::Memory);
         let find = |n: &str| rows.iter().find(|r| r.name == n).unwrap().clone();
         let claude = find("Claude Code");
@@ -1130,13 +1142,21 @@ mod tests {
             find("chrome-headless-shell").mark.map(|m| m.slug),
             Some("googlechrome")
         );
-        // No mark in Simple Icons: the letter tile stays, in the hashed colour.
-        for name in ["Codex CLI", "Editor server"] {
-            let r = find(name);
-            assert!(r.mark.is_none(), "{name}");
-            assert_eq!(r.rgb, hsl_rgb(hue(name), 0.45, 0.45));
-            assert_eq!(r.letter, name[..1]);
+        for (name, slug) in [
+            ("VS Code server", "visualstudiocode"),
+            ("Codex CLI", "openai"),
+            ("rust-analyzer", "rust"),
+        ] {
+            assert_eq!(find(name).mark.map(|m| m.slug), Some(slug), "{name}");
         }
+        // Cursor's and Windsurf's server has no mark: the letter tile stays,
+        // in the hashed colour. (Only the first six rows by memory are shown.)
+        snap.wsl.as_mut().unwrap().procs[0].mem_bytes = 1;
+        let rows2 = app_rows(&snap, Sort::Memory);
+        let r = rows2.iter().find(|r| r.name == "Editor server").unwrap();
+        assert!(r.mark.is_none());
+        assert_eq!(r.rgb, hsl_rgb(hue("Editor server"), 0.45, 0.45));
+        assert_eq!(r.letter, "E");
         // App rows never carry one, and the sort does not change the marks.
         assert!(
             rows.iter()
@@ -1146,11 +1166,7 @@ mod tests {
         let cpu = app_rows(&snap, Sort::Processor);
         assert_eq!(
             subs(&cpu).iter().filter(|r| r.mark.is_some()).count(),
-            subs(&rows)
-                .iter()
-                .filter(|r| r.mark.is_some())
-                .count()
-                .min(SUB_ROWS)
+            subs(&rows2).iter().filter(|r| r.mark.is_some()).count()
         );
     }
 

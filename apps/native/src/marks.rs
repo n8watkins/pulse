@@ -43,6 +43,12 @@ const ENTRIES: &[Entry] = &[
     entry!("claude", 0x00D9_7757),
     entry!("googlegemini", 0x008E_75B2),
     entry!("cursor", 0x0000_0000),
+    // From Simple Icons 15.22.0, the last release that has OpenAI.
+    entry!("openai", 0x0041_2991),
+    // From Simple Icons 12.4.0, the last release that has Visual Studio Code.
+    entry!("visualstudiocode", 0x0000_7ACC),
+    // CC BY-SA 4.0 (see THIRD-PARTY-NOTICES.md), separate from Pulse's MIT code.
+    entry!("rust", 0x0000_0000),
     entry!("ollama", 0x0000_0000),
     entry!("docker", 0x0024_96ED),
     entry!("nextdotjs", 0x0000_0000),
@@ -124,8 +130,9 @@ fn first_word(label: &str) -> String {
 /// writes it: "Claude Code", "node: next-server", "next-server (v16.4.6)",
 /// "chrome-headless-shell", "npm exec next"), or `None`.
 ///
-/// Programs that Simple Icons has no mark for (Codex CLI, the editor
-/// servers) have none here, so they keep the letter.
+/// Programs without a mark (Cursor's and Windsurf's "Editor server", Aider and
+/// others) keep the letter. "rustlings" and other words that only start like a
+/// known program are not matched.
 pub fn slug_for(label: &str) -> Option<&'static str> {
     let lower = label.to_ascii_lowercase();
     let word = first_word(label);
@@ -138,7 +145,12 @@ pub fn slug_for(label: &str) -> Option<&'static str> {
         "claude code" => "claude",
         "gemini cli" => "googlegemini",
         "cursor agent" => "cursor",
+        "codex cli" => "openai",
+        l if l.starts_with("vs code") || l.starts_with("visual studio code") => "visualstudiocode",
         _ => match word.as_str() {
+            "cargo" | "rustc" | "rustdoc" | "rustfmt" | "rustup" | "rust-analyzer"
+            | "clippy-driver" => "rust",
+            w if w.starts_with("cargo-") || w.starts_with("rust-analyzer") => "rust",
             "docker" | "dockerd" | "containerd" => "docker",
             "ollama" => "ollama",
             "node" | "nodejs" => "nodedotjs",
@@ -226,19 +238,24 @@ mod tests {
         want("postgres", "postgresql");
         want("redis-server", "redis");
         want("tailscaled", "tailscale");
+        want("cargo", "rust");
+        want("cargo-clippy", "rust");
+        want("rustc", "rust");
+        want("rust-analyzer", "rust");
+        want("rust-analyzer-proc-macro-srv", "rust");
+        want("rustfmt", "rust");
+        want("Codex CLI", "openai");
+        want("VS Code server", "visualstudiocode");
+        want("Visual Studio Code", "visualstudiocode");
     }
 
     #[test]
     fn labels_without_a_mark_keep_the_letter() {
-        // Simple Icons has no OpenAI or Visual Studio Code mark, and its Rust
-        // logo is share-alike (CC BY-SA 4.0), which is not embedded.
+        // "Editor server" is Cursor's or Windsurf's: not VS Code, so no mark.
         for l in [
-            "cargo",
-            "cargo-clippy",
-            "rustc",
-            "rust-analyzer",
-            "Codex CLI",
             "Editor server",
+            "code",
+            "rustlings",
             "Aider",
             "opencode",
             "tmux",
