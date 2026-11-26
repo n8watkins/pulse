@@ -364,10 +364,14 @@ impl Source for Windows {
                 .into_iter()
                 .map(|(row, pids)| self.resolve(row, &pids))
                 .collect();
-            let wsl = groups.vm.map(|(mem_bytes, cpu_pct)| crate::Wsl {
-                mem_bytes,
-                cpu_pct,
-                procs: self.wsl.poll(true),
+            let wsl = groups.vm.map(|(mem_bytes, cpu_pct)| {
+                let found = self.wsl.poll(true);
+                crate::Wsl {
+                    mem_bytes,
+                    cpu_pct,
+                    procs: found.procs,
+                    sessions: found.sessions,
+                }
             });
             if wsl.is_none() {
                 self.wsl.poll(false);
@@ -495,7 +499,11 @@ mod tests {
         let start = std::time::Instant::now();
         let mut snap = s;
         while start.elapsed() < std::time::Duration::from_secs(10) {
-            if snap.wsl.as_ref().is_some_and(|w| !w.procs.is_empty()) {
+            if snap
+                .wsl
+                .as_ref()
+                .is_some_and(|w| !w.procs.is_empty() && !w.sessions.is_empty())
+            {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -512,13 +520,31 @@ mod tests {
                 p.mem_bytes >> 20
             );
         }
+        println!("sessions: {}", wsl.agent_count());
+        for x in &wsl.sessions {
+            println!(
+                "  {:<14} folder={:?} busy={} run={:?}s x {} MiB {:.2}%",
+                x.label,
+                x.folder,
+                x.busy,
+                x.run_secs,
+                x.mem_bytes >> 20,
+                x.cpu_pct
+            );
+        }
         assert!(wsl.mem_bytes > 0 && wsl.procs.len() <= 12);
+        assert!(wsl.procs.iter().all(|p| !p.agent));
         assert!(
-            wsl.procs
+            wsl.sessions.iter().any(|x| x.label == "Claude Code"),
+            "no Claude Code session in {:?}",
+            wsl.sessions
+        );
+        assert!(
+            wsl.sessions
                 .iter()
-                .any(|p| p.label == "Claude Code" && p.agent),
-            "no Claude Code entry in {:?}",
-            wsl.procs
+                .all(|x| x.folder.as_deref().is_none_or(|f| !f.contains('/'))),
+            "a folder is a path: {:?}",
+            wsl.sessions
         );
         assert!(w.read(false).wsl.is_none());
     }
