@@ -8,14 +8,15 @@ use windows_sys::Win32::Graphics::Dwm::{
 use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
 };
+use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows_sys::Win32::UI::HiDpi::{
     GetDpiForMonitor, GetDpiForSystem, GetDpiForWindow, MDT_EFFECTIVE_DPI,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GWL_EXSTYLE, GetCursorPos, GetWindowLongPtrW, HWND_TOPMOST, SW_HIDE, SW_SHOW,
-    SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, WS_EX_APPWINDOW,
-    WS_EX_TOOLWINDOW,
+    BringWindowToTop, GWL_EXSTYLE, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW,
+    GetWindowThreadProcessId, HWND_TOPMOST, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetWindowLongPtrW,
+    SetWindowPos, ShowWindow, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
 };
 
 /// Logical size of the panel and its distance from the work-area edges.
@@ -71,10 +72,38 @@ pub fn show_inactive(h: Hwnd) {
     }
 }
 
+/// True when `h` is the window that has the keyboard focus right now.
+pub fn is_foreground(h: Hwnd) -> bool {
+    unsafe { GetForegroundWindow() == h.raw() }
+}
+
+/// Shows the panel and makes it the foreground window, so Esc and a click
+/// away reach it. Windows refuses `SetForegroundWindow` to a process that did
+/// not just get input (a tray menu command, a second start); then the panel
+/// borrows the foreground window's input queue for the call. No key presses
+/// are synthesised: a lone Alt tap would put windows into menu mode.
 pub fn show_active(h: Hwnd) {
     unsafe {
         ShowWindow(h.raw(), SW_SHOW);
         SetForegroundWindow(h.raw());
+        if GetForegroundWindow() == h.raw() {
+            return;
+        }
+        let front = GetForegroundWindow();
+        let front_thread = if front.is_null() {
+            0
+        } else {
+            GetWindowThreadProcessId(front, std::ptr::null_mut())
+        };
+        let mine = GetCurrentThreadId();
+        let attached = front_thread != 0
+            && front_thread != mine
+            && AttachThreadInput(mine, front_thread, 1) != 0;
+        BringWindowToTop(h.raw());
+        SetForegroundWindow(h.raw());
+        if attached {
+            AttachThreadInput(mine, front_thread, 0);
+        }
     }
 }
 

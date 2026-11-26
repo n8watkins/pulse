@@ -37,10 +37,14 @@ Environment hooks, for tests and screenshots:
 - `PULSE_WORK_H=<logical px>` pretends the work area is that tall, to check the panel on a short display.
 - `PULSE_OPEN=settings` starts with the Settings screen open (for screenshots).
 - `PULSE_WARN=1` makes the reader report 92% processor and 9 days of uptime, to see the warning colours and "restart?".
+- `PULSE_NOAPPS=1` makes the reader report no apps, to see the "Reading apps..." row.
 - `PULSE_SETTINGS_DIR=<folder>` keeps `settings.json` in that folder instead of `%APPDATA%\Pulse` (test runs use it).
 - `PULSE_INSTANCE_NAME=<name>` gives a test run its own single-instance name, so it never pokes the real panel.
 - `PULSE_AUTOSTART_NAME=<name>` names the Run-key value a test run would write.
-- With any of `PULSE_SAMPLE`, `PULSE_SHOW` or `PULSE_SELFTEST` set, the app does not bring the Run key in line with the setting at start.
+- With any of `PULSE_SAMPLE`, `PULSE_SHOW`, `PULSE_SELFTEST`, `PULSE_SETTINGS_DIR` or `PULSE_INSTANCE_NAME` set, the app does not bring the Run key in line with the setting at start.
+  Neither does any exe not named `Pulse.exe` (development builds are `pulse-native.exe`).
+  The check at start never takes the Run value over from another existing copy of Pulse; the Settings switch and the tray item write it for the running exe.
+- `scripts/measure.ps1` gives every start its own `PULSE_SETTINGS_DIR` and `PULSE_INSTANCE_NAME`.
 - `--quit` as an argument asks the running app to quit and exits (0 when it is gone, 1 after 5 s); the installer uses it.
 
 Measure with `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\measure.ps1 -Exe <exe> -Out <folder>`.

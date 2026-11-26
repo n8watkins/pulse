@@ -11,6 +11,9 @@
 #   PULSE_SELFTEST=1 PULSE_REPORT=<path>
 #                                 open and close the panel 5 times, write
 #                                 {"shell":..., "open_ms":[...]} and keep running
+# Every start also gets its own PULSE_SETTINGS_DIR (a scratch folder under -Out)
+# and PULSE_INSTANCE_NAME (a unique name), so measuring never touches the real
+# settings, the running Pulse or the Run key.
 # The panel window is titled "Pulse" (a visible top-level window of the process
 # is used when no window has that title).
 #
@@ -87,14 +90,20 @@ function Descendants([int]$root) {
 $all_started = New-Object System.Collections.Generic.List[int]
 $runs = 0
 function Start-Shell([hashtable]$envVars) {
-  foreach ($k in @("PULSE_SAMPLE", "PULSE_SHOW", "PULSE_THEME", "PULSE_SELFTEST", "PULSE_REPORT", "PULSE_NOTRIM")) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+  foreach ($k in @("PULSE_SAMPLE", "PULSE_SHOW", "PULSE_THEME", "PULSE_SELFTEST", "PULSE_REPORT", "PULSE_NOTRIM", "PULSE_SETTINGS_DIR", "PULSE_INSTANCE_NAME")) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
   foreach ($k in $envVars.Keys) { Set-Item "env:$k" $envVars[$k] }
+  # A scratch settings folder and a unique instance name for every start.
+  $runNo = $script:runs + 1
+  $env:PULSE_SETTINGS_DIR = Join-Path $out "settings\run$runNo"
+  New-Item -ItemType Directory -Force $env:PULSE_SETTINGS_DIR | Out-Null
+  $env:PULSE_INSTANCE_NAME = "Pulse-measure-" + [guid]::NewGuid().ToString("N")
   # A fresh WebView2 profile folder per start (ignored by shells without a
   # webview), so a run never waits on the previous run's dying processes.
   $script:runs++
   $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $out "profiles\run$($script:runs)"
   try { $p = Start-Process $exe -PassThru } finally {
     foreach ($k in $envVars.Keys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+    Remove-Item env:PULSE_SETTINGS_DIR, env:PULSE_INSTANCE_NAME -ErrorAction SilentlyContinue
     Remove-Item env:WEBVIEW2_USER_DATA_FOLDER -ErrorAction SilentlyContinue
   }
   $all_started.Add($p.Id); Add-Content $pidFile $p.Id
@@ -280,6 +289,7 @@ try {
   Start-Sleep -Milliseconds 500
   # The profile folders this run made.
   Remove-Item (Join-Path $out "profiles") -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item (Join-Path $out "settings") -Recurse -Force -ErrorAction SilentlyContinue
   $report.seconds = [int]((Get-Date) - $started).TotalSeconds
   $report | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $out "report.json")
 }

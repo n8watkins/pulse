@@ -77,6 +77,7 @@ mod imp {
         CreateEventW, CreateMutexW, INFINITE, OpenMutexW, SYNCHRONIZATION_SYNCHRONIZE, SetEvent,
         WaitForMultipleObjects,
     };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ASFW_ANY, AllowSetForegroundWindow};
 
     // Handles are process-wide kernel objects, safe to move between threads.
     #[derive(Clone, Copy)]
@@ -134,6 +135,11 @@ mod imp {
         let already = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
         let show = event(&show_name);
         if already {
+            // The user just started this process, so it may hand the foreground
+            // to the first instance: without this its panel would open without
+            // focus and Esc and click-away could not close it.
+            // SAFETY: plain call with a constant.
+            unsafe { AllowSetForegroundWindow(ASFW_ANY) };
             if !show.0.is_null() {
                 // SAFETY: valid event handle.
                 unsafe { SetEvent(show.0) };

@@ -2,6 +2,8 @@
 //! rounded square, drawn for the size Windows asks for. Pure code, so the
 //! quantising and the colours are unit tested.
 
+use pulse_readings::Snapshot;
+
 /// Drawing space, as in the reference page's tray icon.
 const SPACE: f32 = 64.0;
 const TRACK_TOP: f32 = 11.0;
@@ -53,6 +55,23 @@ impl Key {
             neutral,
         }
     }
+}
+
+/// The picture a reading asks for, at the tray size for `dpi`.
+#[allow(clippy::cast_precision_loss)]
+pub fn key_for(snap: &Snapshot, dpi: u32, neutral: bool) -> Key {
+    let mem = if snap.mem_total == 0 {
+        0.0
+    } else {
+        (snap.mem_used as f64 / snap.mem_total as f64) as f32
+    };
+    Key::new(
+        size_for_dpi(dpi),
+        snap.cpu_pct / 100.0,
+        mem,
+        crate::view::status(snap, false, true).warn,
+        neutral,
+    )
 }
 
 const WARN: [u8; 3] = [0xff, 0x9b, 0x6b];
@@ -154,6 +173,25 @@ mod tests {
             Key::new(16, 0.2, 0.4, false, false),
             Key::new(16, 0.2, 0.4, false, true)
         );
+    }
+
+    #[test]
+    fn a_reading_maps_to_a_key_and_a_warning_follows_the_status() {
+        use pulse_readings::{Sample, Source};
+        let mut snap = Sample::default().read(true);
+        snap.cpu_pct = 10.0;
+        snap.mem_used = snap.mem_total / 2;
+        let calm = key_for(&snap, 96, false);
+        assert_eq!(calm.size, 16);
+        assert!(!calm.warn);
+        assert_eq!(calm, Key::new(16, 0.1, 0.5, false, false));
+        snap.cpu_pct = 90.0;
+        let busy = key_for(&snap, 96, true);
+        assert!(busy.warn && busy.neutral);
+        // Net rates change every tick but are not part of the picture.
+        let mut other = snap.clone();
+        other.net_down_bps += 12_345;
+        assert_eq!(key_for(&snap, 96, true), key_for(&other, 96, true));
     }
 
     #[test]

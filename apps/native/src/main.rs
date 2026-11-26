@@ -6,6 +6,7 @@
 
 #[cfg(windows)]
 mod app;
+mod logic;
 mod record;
 mod tray;
 mod view;

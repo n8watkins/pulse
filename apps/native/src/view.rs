@@ -5,11 +5,16 @@ use pulse_platform::Sort;
 use pulse_readings::{AppRow, Snapshot, Wsl};
 use std::collections::VecDeque;
 use std::fmt::Write as _;
+use std::time::{Duration, Instant};
 
 const GB: f64 = 1_073_741_824.0;
 
-/// Samples kept for the sparklines (the web panel keeps 90 as well).
-pub const HISTORY: usize = 90;
+/// The sparklines show this much time, newest at the right.
+pub const WINDOW: Duration = Duration::from_secs(180);
+/// Samples kept at most (one every 2 s fills the window).
+pub const HISTORY: usize = 100;
+/// App rows older than this no longer name "the app that uses the most".
+pub const APPS_STALE: Duration = Duration::from_secs(10);
 /// Sparkline box in px, as in the reference (`.fig` inside a 173 px tile).
 const FIG_W: f32 = 149.0;
 const FIG_H: f32 = 34.0;
@@ -61,16 +66,17 @@ pub fn fit(avail_h: f32, battery: bool) -> Layout {
         .unwrap_or(at(MIN_ROWS))
 }
 
-/// Ring of recent percentages for the two sparklines.
+/// Recent percentages with the time they were read, for the two sparklines.
+/// Readings come every 2 to 10 s, so the lines are drawn by time, not by count.
 #[derive(Clone, Debug, Default)]
 pub struct History {
-    pub cpu: VecDeque<f32>,
-    pub mem: VecDeque<f32>,
+    pub cpu: VecDeque<(Instant, f32)>,
+    pub mem: VecDeque<(Instant, f32)>,
 }
 
 impl History {
-    pub fn push(&mut self, snap: &Snapshot) {
-        push_capped(&mut self.cpu, snap.cpu_pct);
+    pub fn push(&mut self, snap: &Snapshot, at: Instant) {
+        push_capped(&mut self.cpu, at, snap.cpu_pct);
         let pct = if snap.mem_total == 0 {
             0.0
         } else {
@@ -79,15 +85,20 @@ impl History {
                 (snap.mem_used as f64 / snap.mem_total as f64 * 100.0) as f32
             }
         };
-        push_capped(&mut self.mem, pct);
+        push_capped(&mut self.mem, at, pct);
     }
 }
 
-fn push_capped(q: &mut VecDeque<f32>, v: f32) {
+fn push_capped(q: &mut VecDeque<(Instant, f32)>, at: Instant, v: f32) {
+    // Drop what has left the window (one sample beyond it stays, so the line
+    // starts at the left edge), and never keep more than HISTORY.
+    while q.len() > 1 && at.saturating_duration_since(q[1].0) > WINDOW {
+        q.pop_front();
+    }
     if q.len() == HISTORY {
         q.pop_front();
     }
-    q.push_back(v);
+    q.push_back((at, v));
 }
 
 /// What a "Top apps" row is.
@@ -97,6 +108,8 @@ pub enum RowKind {
     /// The WSL virtual machine; its Linux programs follow as `Sub` rows.
     Wsl,
     Sub,
+    /// "Reading apps..." before the first scan has finished.
+    Reading,
 }
 
 /// One row of "Top apps", ready to draw.
@@ -220,12 +233,13 @@ const DISK_LOW: u64 = 8;
 /// Uptime from which a restart is suggested.
 const RESTART_AFTER_S: u64 = 7 * 86_400;
 
-/// The header line, first match wins.
+/// The header line, first match wins. `apps_fresh`: the app rows are recent
+/// enough to say which app uses the most.
 #[allow(clippy::cast_precision_loss)]
-pub fn status(snap: &Snapshot, sample: bool) -> Status {
+pub fn status(snap: &Snapshot, sample: bool, apps_fresh: bool) -> Status {
     let warn = |text: String| Status { text, warn: true };
     if snap.cpu_pct >= CPU_BUSY {
-        return warn(match snap.apps_by_cpu.first() {
+        return warn(match snap.apps_by_cpu.first().filter(|_| apps_fresh) {
             Some(a) => format!("Processor is busy \u{b7} {} uses the most", a.name),
             None => "Processor is busy".into(),
         });
@@ -284,9 +298,13 @@ pub fn footer_hint(hotkey: &str) -> (String, &'static str) {
     if hotkey.is_empty() {
         (String::new(), "Click the tray icon to open Pulse")
     } else {
-        (hotkey.to_owned(), "opens and closes Pulse")
+        (hotkey.to_owned(), FOOT_LONG)
     }
 }
+
+pub const FOOT_LONG: &str = "opens and closes Pulse";
+/// Used instead when a long key cap leaves no room for [`FOOT_LONG`].
+pub const FOOT_SHORT: &str = "toggles Pulse";
 
 /// Footer, right side.
 pub fn updated_ago(secs: u64) -> String {
@@ -296,8 +314,11 @@ pub fn updated_ago(secs: u64) -> String {
 /// Share of the machine the processor bar is scaled against at least.
 const CPU_BAR_FLOOR: f64 = 5.0;
 
+/// The WSL machine is `vmmemWSL`; a plain `vmmem` is a Hyper-V or Sandbox
+/// machine and stays an ordinary row.
 fn is_wsl(a: &AppRow) -> bool {
-    a.exe.to_ascii_lowercase().starts_with("vmmem") || a.name == "WSL (Linux)"
+    let exe = a.exe.strip_suffix(".exe").unwrap_or(&a.exe);
+    exe.eq_ignore_ascii_case("vmmemwsl") || a.name == "WSL (Linux)"
 }
 
 /// Where the WSL row's penguin comes from.
@@ -351,27 +372,40 @@ fn cpu_text(pct: f32) -> String {
     format!("{pct:.1}%")
 }
 
+/// The row shown until the first scan of the apps has finished.
+fn reading_row() -> AppView {
+    AppView {
+        kind: RowKind::Reading,
+        letter: String::new(),
+        rgb: [0, 0, 0],
+        name: "Reading apps\u{2026}".into(),
+        detail: String::new(),
+        value: String::new(),
+        frac: 0.0,
+        path: None,
+        agent: false,
+        count: String::new(),
+        group_end: false,
+    }
+}
+
 /// The "Top apps" rows for the chosen sort: the apps, the WSL row when WSL
-/// runs (in place if it is among them, else after them) and its Linux rows.
+/// runs (in its sorted place, among the apps or between them) and its Linux
+/// rows. Bars are scaled to the biggest row, WSL included.
 #[allow(clippy::cast_precision_loss)]
 pub fn app_rows(snap: &Snapshot, sort: Sort) -> Vec<AppView> {
     let apps = match sort {
         Sort::Memory => &snap.apps,
         Sort::Processor => &snap.apps_by_cpu,
     };
+    if apps.is_empty() {
+        return vec![reading_row()];
+    }
     let wsl = snap.wsl.as_ref();
     let amount = |a: &AppRow| match sort {
         Sort::Memory => a.mem_bytes as f64,
         Sort::Processor => f64::from(a.cpu_pct),
     };
-    let max = apps.iter().map(&amount).fold(
-        if sort == Sort::Memory {
-            1.0
-        } else {
-            CPU_BAR_FLOOR
-        },
-        f64::max,
-    );
     let extra = match wsl {
         Some(_) if !apps.iter().any(is_wsl) => wsl.map(|w| AppRow {
             name: "WSL (Linux)".into(),
@@ -383,8 +417,24 @@ pub fn app_rows(snap: &Snapshot, sort: Sort) -> Vec<AppView> {
         }),
         _ => None,
     };
+    let mut list: Vec<&AppRow> = apps.iter().collect();
+    if let Some(e) = &extra {
+        let at = list
+            .iter()
+            .position(|a| amount(a) < amount(e))
+            .unwrap_or(list.len());
+        list.insert(at, e);
+    }
+    let max = list.iter().map(|a| amount(a)).fold(
+        if sort == Sort::Memory {
+            1.0
+        } else {
+            CPU_BAR_FLOOR
+        },
+        f64::max,
+    );
     let mut rows = Vec::new();
-    for a in apps.iter().chain(extra.iter()) {
+    for a in list {
         let row = app_view(a, sort, wsl, max);
         let is_wsl_row = row.kind == RowKind::Wsl;
         rows.push(row);
@@ -424,13 +474,22 @@ pub fn app_rows(snap: &Snapshot, sort: Sort) -> Vec<AppView> {
 }
 
 #[allow(clippy::cast_precision_loss)]
-pub fn build(snap: &Snapshot, extra: &Extra, hist: &History, sample: bool, sort: Sort) -> View {
+pub fn build(
+    snap: &Snapshot,
+    extra: &Extra,
+    hist: &History,
+    sample: bool,
+    sort: Sort,
+    now: Instant,
+    apps_at: Instant,
+) -> View {
     let used = snap.mem_used as f64;
     let total = snap.mem_total as f64;
-    let (cpu_line, cpu_fill) = sparkline(&hist.cpu);
-    let (mem_line, mem_fill) = sparkline(&hist.mem);
+    let (cpu_line, cpu_fill) = sparkline(&hist.cpu, now);
+    let (mem_line, mem_fill) = sparkline(&hist.mem, now);
+    let apps_fresh = now.saturating_duration_since(apps_at) <= APPS_STALE;
     View {
-        status: status(snap, sample),
+        status: status(snap, sample, apps_fresh),
         cpu_big: format!("{}%", round_half_up(f64::from(snap.cpu_pct))),
         // The tile is 149 px wide: with " \u{b7} restart?" after it there is only
         // room for the uptime, so the core count gives way.
@@ -513,6 +572,8 @@ pub fn format_bytes(bytes: u64) -> String {
 }
 
 /// Like `format_bytes`, with whole numbers from `whole_from` up (10 for rates).
+/// The figure is rounded first and the unit chosen after, so 999.6 KB reads
+/// "1.0 MB" and 99.96 MB reads "100 MB", never "1000 KB" or "100.0 MB".
 #[allow(clippy::cast_precision_loss)]
 fn format_bytes_at(bytes: u64, whole_from: f64) -> String {
     const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
@@ -522,10 +583,19 @@ fn format_bytes_at(bytes: u64, whole_from: f64) -> String {
         b /= 1024.0;
         i += 1;
     }
-    if b >= whole_from || i == 0 {
-        format!("{} {}", round_half_up(b), UNITS[i])
-    } else {
-        format!("{b:.1} {}", UNITS[i])
+    loop {
+        let whole = round_half_up(b);
+        if i > 0 && i < 3 && whole >= 1000 {
+            b /= 1024.0;
+            i += 1;
+            continue;
+        }
+        let tenth = (b * 10.0 + 0.5).floor() / 10.0;
+        return if i == 0 || tenth >= whole_from {
+            format!("{whole} {}", UNITS[i])
+        } else {
+            format!("{tenth:.1} {}", UNITS[i])
+        };
     }
 }
 
@@ -558,28 +628,32 @@ pub fn hsl_rgb(h: f32, s: f32, l: f32) -> [u8; 3] {
     [q(r), q(g), q(b)]
 }
 
-/// Sparkline as two SVG path strings (line, and the closed area under it),
-/// built like the reference page's canvas code: 90 slots, newest at the right.
+/// Sparkline as two SVG path strings (line, and the closed area under it).
+/// Each sample sits at its age: the right edge is `now`, the left edge is
+/// [`WINDOW`] ago, so samples taken every 10 s are spread, not bunched.
 #[allow(clippy::cast_precision_loss)]
-pub fn sparkline(values: &VecDeque<f32>) -> (String, String) {
-    if values.is_empty() {
+pub fn sparkline(values: &VecDeque<(Instant, f32)>, now: Instant) -> (String, String) {
+    let x_of = |at: Instant| {
+        let age = now.saturating_duration_since(at).as_secs_f32();
+        (1.0 - age / WINDOW.as_secs_f32()) * FIG_W
+    };
+    let points: Vec<(f32, f32)> = values
+        .iter()
+        .filter(|(at, _)| x_of(*at) >= 0.0)
+        .map(|&(at, v)| {
+            let y = FIG_H - 2.0 - (v / 100.0).clamp(0.0, 1.0) * (FIG_H - 5.0);
+            (x_of(at), y)
+        })
+        .collect();
+    let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return (String::new(), String::new());
-    }
-    let step = FIG_W / (HISTORY - 1) as f32;
-    let first = HISTORY - values.len();
+    };
     let mut line = String::new();
-    for (i, v) in values.iter().enumerate() {
-        let x = (first + i) as f32 * step;
-        let y = FIG_H - 2.0 - (v / 100.0).clamp(0.0, 1.0) * (FIG_H - 5.0);
+    for (i, (x, y)) in points.iter().enumerate() {
         let _ = write!(line, "{}{x:.2} {y:.2} ", if i == 0 { "M" } else { "L" });
     }
     let mut fill = line.clone();
-    let _ = write!(
-        fill,
-        "L{:.2} {FIG_H} L{:.2} {FIG_H} Z",
-        (HISTORY - 1) as f32 * step,
-        first as f32 * step
-    );
+    let _ = write!(fill, "L{:.2} {FIG_H} L{:.2} {FIG_H} Z", last.0, first.0);
     (line.trim_end().to_owned(), fill)
 }
 
@@ -610,24 +684,70 @@ mod tests {
         assert_eq!(uptime(3_600 * 2 + 60 * 7), "2h 7m");
     }
 
-    #[test]
-    fn sparkline_right_aligns_a_short_history() {
-        let v: VecDeque<f32> = [0.0, 100.0].into();
-        let (line, fill) = sparkline(&v);
-        assert!(line.starts_with("M147.33 32.00 L149.00 3.00"), "{line}");
-        assert!(fill.ends_with("L149.00 34 L147.33 34 Z"), "{fill}");
-        assert_eq!(sparkline(&VecDeque::new()), (String::new(), String::new()));
+    fn at(t0: Instant, secs: u64) -> Instant {
+        t0 + Duration::from_secs(secs)
     }
 
     #[test]
-    fn history_is_capped() {
+    fn sparkline_right_aligns_a_short_history() {
+        let t0 = Instant::now();
+        let v: VecDeque<(Instant, f32)> = [(t0, 0.0), (at(t0, 2), 100.0)].into();
+        let (line, fill) = sparkline(&v, at(t0, 2));
+        assert!(line.starts_with("M147.34 32.00 L149.00 3.00"), "{line}");
+        assert!(fill.ends_with("L149.00 34 L147.34 34 Z"), "{fill}");
+        assert_eq!(
+            sparkline(&VecDeque::new(), t0),
+            (String::new(), String::new())
+        );
+    }
+
+    #[test]
+    fn sparkline_is_drawn_by_time_not_by_count() {
+        let t0 = Instant::now();
+        // Samples 10 s apart (hidden refresh) are 10/180 of the width apart.
+        let slow: VecDeque<(Instant, f32)> =
+            [(t0, 50.0), (at(t0, 10), 50.0), (at(t0, 20), 50.0)].into();
+        let (line, _) = sparkline(&slow, at(t0, 20));
+        let xs: Vec<f32> = line
+            .split(['M', 'L'])
+            .filter(|p| !p.is_empty())
+            .map(|p| p.split_whitespace().next().unwrap().parse().unwrap())
+            .collect();
+        assert_eq!(xs.len(), 3);
+        let gap = FIG_W * 10.0 / 180.0;
+        assert!((xs[2] - FIG_W).abs() < 0.01);
+        assert!((xs[2] - xs[1] - gap).abs() < 0.02, "{xs:?}");
+        assert!((xs[1] - xs[0] - gap).abs() < 0.02, "{xs:?}");
+        // Samples older than three minutes are not drawn.
+        let old: VecDeque<(Instant, f32)> = [(t0, 50.0), (at(t0, 200), 50.0)].into();
+        let (line, _) = sparkline(&old, at(t0, 200));
+        assert_eq!(line.matches('L').count(), 0, "{line}");
+        assert!(line.starts_with("M149.00"), "{line}");
+        // The left edge is exactly three minutes ago.
+        let edge: VecDeque<(Instant, f32)> = [(t0, 50.0), (at(t0, 180), 50.0)].into();
+        assert!(sparkline(&edge, at(t0, 180)).0.starts_with("M0.00"));
+    }
+
+    #[test]
+    fn history_is_capped_and_forgets_what_left_the_window() {
         let mut h = History::default();
         let snap = Sample::default().read(true);
-        for _ in 0..HISTORY + 10 {
-            h.push(&snap);
+        let t0 = Instant::now();
+        for i in 0..HISTORY as u64 + 10 {
+            h.push(&snap, at(t0, i));
         }
         assert_eq!(h.cpu.len(), HISTORY);
         assert_eq!(h.mem.len(), HISTORY);
+        // Slow samples: only the window (plus one beyond it) is kept.
+        let mut h = History::default();
+        for i in 0..40 {
+            h.push(&snap, at(t0, i * 10));
+        }
+        assert!(h.cpu.len() <= 20, "{}", h.cpu.len());
+        let newest = h.cpu.back().unwrap().0;
+        let oldest = h.cpu.front().unwrap().0;
+        assert!(newest - oldest >= WINDOW);
+        assert!(newest - oldest <= WINDOW + Duration::from_secs(10));
     }
 
     fn sample() -> Snapshot {
@@ -638,14 +758,26 @@ mod tests {
     fn view_of_the_sample_lists_apps_then_the_wsl_group() {
         let snap = sample();
         let mut h = History::default();
-        h.push(&snap);
-        let v = build(&snap, &Extra::from_snapshot(&snap), &h, true, Sort::Memory);
-        // 6 apps, the WSL row, then its Linux rows.
+        let now = Instant::now();
+        h.push(&snap, now);
+        let v = build(
+            &snap,
+            &Extra::from_snapshot(&snap),
+            &h,
+            true,
+            Sort::Memory,
+            now,
+            now,
+        );
+        // 6 apps, the WSL row (biggest, so first), then its Linux rows.
         let wsl = snap.wsl.as_ref().unwrap();
         assert_eq!(v.apps.len(), 6 + 1 + wsl.procs.len());
+        assert_eq!(v.apps[0].kind, RowKind::Wsl);
         assert!((v.apps[0].frac - 1.0).abs() < f32::EPSILON);
-        assert_eq!(v.apps[0].detail, "chrome.exe \u{b7} 24 processes");
-        assert_eq!(v.apps[3].detail, "obs64.exe");
+        let chrome = v.apps.iter().find(|a| a.name == "Google Chrome").unwrap();
+        assert_eq!(chrome.detail, "chrome.exe \u{b7} 24 processes");
+        assert!(chrome.frac < 1.0);
+        assert!(v.apps.iter().any(|a| a.detail == "obs64.exe"));
         assert_eq!(v.mem_sub, "of 32 GB \u{b7} 43%");
         assert_eq!(v.cpu_sub, "16 cores \u{b7} up 3d 4h");
         assert!(!v.cpu_restart);
@@ -661,7 +793,8 @@ mod tests {
         let snap = sample();
         let mem = app_rows(&snap, Sort::Memory);
         assert!(mem[0].value.ends_with("GB"), "{}", mem[0].value);
-        assert_eq!(mem[0].name, snap.apps[0].name);
+        let first_app = mem.iter().find(|r| r.kind == RowKind::App).unwrap();
+        assert_eq!(first_app.name, snap.apps[0].name);
         let cpu = app_rows(&snap, Sort::Processor);
         assert_eq!(cpu[0].name, snap.apps_by_cpu[0].name);
         assert!(cpu[0].value.ends_with('%') && cpu[0].value.contains('.'));
@@ -695,11 +828,12 @@ mod tests {
         assert_eq!(subs.len(), snap.wsl.as_ref().unwrap().procs.len());
         assert!(subs[0].agent && subs[0].count == "\u{d7}3");
         assert!(!subs[1].agent && subs[1].count == "\u{d7}6");
-        assert!(rows.last().unwrap().group_end);
         assert_eq!(rows.iter().filter(|r| r.group_end).count(), 1);
-        // Sub rows come right after the WSL row.
+        // Sub rows come right after the WSL row, the last one closes the group.
         let at = rows.iter().position(|r| r.kind == RowKind::Wsl).unwrap();
-        assert!(rows[at + 1..].iter().all(|r| r.kind == RowKind::Sub));
+        let n = subs.len();
+        assert!(rows[at + 1..=at + n].iter().all(|r| r.kind == RowKind::Sub));
+        assert!(rows[at + n].group_end);
     }
 
     #[test]
@@ -742,20 +876,20 @@ mod tests {
     fn status_first_match_wins() {
         let mut s = sample();
         assert_eq!(
-            status(&s, false),
+            status(&s, false, true),
             Status {
                 text: "Running smoothly".into(),
                 warn: false
             }
         );
-        assert_eq!(status(&s, true).text, "Sample data, not this PC");
+        assert_eq!(status(&s, true, true).text, "Sample data, not this PC");
         s.disk_free = s.disk_total / 20;
-        assert_eq!(status(&s, false).text, "Drive C: is nearly full");
-        assert!(status(&s, false).warn);
+        assert_eq!(status(&s, false, true).text, "Drive C: is nearly full");
+        assert!(status(&s, false, true).warn);
         s.mem_used = s.mem_total * 91 / 100;
-        assert_eq!(status(&s, false).text, "Memory is nearly full");
+        assert_eq!(status(&s, false, true).text, "Memory is nearly full");
         s.cpu_pct = 85.0;
-        let st = status(&s, false);
+        let st = status(&s, false, true);
         assert_eq!(
             st.text,
             format!(
@@ -765,10 +899,10 @@ mod tests {
         );
         assert!(st.warn);
         s.cpu_pct = 84.9;
-        assert_eq!(status(&s, false).text, "Memory is nearly full");
+        assert_eq!(status(&s, false, true).text, "Memory is nearly full");
         s.mem_used = s.mem_total * 89 / 100;
         s.disk_free = s.disk_total * 8 / 100 + 1;
-        assert_eq!(status(&s, false).text, "Running smoothly");
+        assert_eq!(status(&s, false, true).text, "Running smoothly");
     }
 
     #[test]
@@ -781,7 +915,9 @@ mod tests {
                 &Extra::default(),
                 &History::default(),
                 false,
-                Sort::Memory
+                Sort::Memory,
+                Instant::now(),
+                Instant::now()
             )
             .cpu_restart
         );
@@ -792,6 +928,8 @@ mod tests {
             &History::default(),
             false,
             Sort::Memory,
+            Instant::now(),
+            Instant::now(),
         );
         assert!(v.cpu_restart);
         assert_eq!(v.cpu_sub, "up 7d 0h");
@@ -898,5 +1036,181 @@ mod tests {
         let b = t.battery.unwrap();
         assert_eq!((b.big.as_str(), b.sub.as_str()), ("86%", "Plugged in"));
         assert_eq!(tiles(&Extra::default()).battery, None);
+    }
+
+    fn row(name: &str, exe: &str, mem_mb: u64, cpu: f32) -> AppRow {
+        AppRow {
+            name: name.into(),
+            exe: exe.into(),
+            processes: 1,
+            mem_bytes: mem_mb * (1 << 20),
+            cpu_pct: cpu,
+            path: None,
+        }
+    }
+
+    #[test]
+    fn a_hyper_v_vmmem_row_is_not_the_wsl_row() {
+        for sort in [Sort::Memory, Sort::Processor] {
+            let mut snap = sample();
+            let vm = row("Virtual machine", "vmmem", 900, 3.0);
+            let wsl = row("WSL (Linux)", "vmmemWSL", 3400, 4.0);
+            snap.apps = vec![wsl.clone(), vm.clone()];
+            snap.apps_by_cpu = vec![wsl, vm];
+            let rows = app_rows(&snap, sort);
+            assert_eq!(
+                rows.iter().filter(|r| r.kind == RowKind::Wsl).count(),
+                1,
+                "{sort:?}"
+            );
+            let vm_row = rows.iter().find(|r| r.name == "Virtual machine").unwrap();
+            assert_eq!(vm_row.kind, RowKind::App);
+            assert_eq!(vm_row.detail, "vmmem");
+            assert!(vm_row.path.is_none());
+            // Only the WSL row is followed by Linux rows.
+            let at = rows.iter().position(|r| r.kind == RowKind::Wsl).unwrap();
+            assert!(rows[at + 1].kind == RowKind::Sub);
+            assert!(
+                rows.iter().filter(|r| r.kind == RowKind::Sub).count()
+                    == snap.wsl.as_ref().unwrap().procs.len()
+            );
+        }
+        let mut snap = sample();
+        snap.apps = vec![row("Virtual machine", "vmmem", 900, 3.0)];
+        snap.apps_by_cpu = snap.apps.clone();
+        // A vmmem row alone does not stop the WSL row from being added.
+        let rows = app_rows(&snap, Sort::Memory);
+        assert_eq!(rows.iter().filter(|r| r.kind == RowKind::Wsl).count(), 1);
+        assert!(is_wsl(&row("x", "VMMEMWSL.exe", 1, 0.0)));
+        assert!(!is_wsl(&row("x", "vmmemwsl2", 1, 0.0)));
+    }
+
+    #[test]
+    fn the_added_wsl_row_sets_the_bars_and_sits_in_its_sorted_place() {
+        let mut snap = sample();
+        snap.apps = vec![
+            row("Google Chrome", "chrome.exe", 2100, 6.0),
+            row("Code", "code.exe", 800, 2.0),
+            row("Notes", "notes.exe", 100, 0.1),
+        ];
+        snap.apps_by_cpu = vec![
+            snap.apps[0].clone(),
+            snap.apps[1].clone(),
+            snap.apps[2].clone(),
+        ];
+        snap.wsl.as_mut().unwrap().mem_bytes = 3400 * (1 << 20);
+        let rows = app_rows(&snap, Sort::Memory);
+        assert_eq!(rows[0].kind, RowKind::Wsl, "3.4 GB beats Chrome 2.1 GB");
+        assert!((rows[0].frac - 1.0).abs() < 1e-6);
+        let chrome = rows.iter().find(|r| r.name == "Google Chrome").unwrap();
+        assert!(
+            (chrome.frac - 2100.0 / 3400.0).abs() < 1e-4,
+            "{}",
+            chrome.frac
+        );
+        // A smaller WSL lands between the apps.
+        snap.wsl.as_mut().unwrap().mem_bytes = 500 * (1 << 20);
+        let rows = app_rows(&snap, Sort::Memory);
+        let order: Vec<&str> = rows
+            .iter()
+            .filter(|r| r.kind != RowKind::Sub)
+            .map(|r| r.name.as_str())
+            .collect();
+        assert_eq!(order, ["Google Chrome", "Code", "WSL (Linux)", "Notes"]);
+        // The biggest app is still full.
+        assert!((rows[0].frac - 1.0).abs() < 1e-6);
+        // Smallest of all goes last.
+        snap.wsl.as_mut().unwrap().mem_bytes = 10 * (1 << 20);
+        let rows = app_rows(&snap, Sort::Memory);
+        let last_app = rows.iter().rev().find(|r| r.kind != RowKind::Sub).unwrap();
+        assert_eq!(last_app.kind, RowKind::Wsl);
+    }
+
+    #[test]
+    fn processor_sort_places_wsl_by_its_processor_use() {
+        let mut snap = sample();
+        snap.apps_by_cpu = vec![
+            row("Google Chrome", "chrome.exe", 2100, 6.0),
+            row("Code", "code.exe", 800, 2.0),
+        ];
+        snap.wsl.as_mut().unwrap().cpu_pct = 4.0;
+        let rows = app_rows(&snap, Sort::Processor);
+        let order: Vec<&str> = rows
+            .iter()
+            .filter(|r| r.kind != RowKind::Sub)
+            .map(|r| r.name.as_str())
+            .collect();
+        assert_eq!(order, ["Google Chrome", "WSL (Linux)", "Code"]);
+        snap.wsl.as_mut().unwrap().cpu_pct = 40.0;
+        let rows = app_rows(&snap, Sort::Processor);
+        assert_eq!(rows[0].kind, RowKind::Wsl);
+        assert!((rows[0].frac - 1.0).abs() < 1e-6);
+        assert!(rows.iter().find(|r| r.name == "Code").unwrap().frac < 0.1);
+    }
+
+    #[test]
+    fn the_first_open_says_the_apps_are_being_read() {
+        let mut snap = sample();
+        snap.apps.clear();
+        snap.apps_by_cpu.clear();
+        snap.wsl = None;
+        for sort in [Sort::Memory, Sort::Processor] {
+            let rows = app_rows(&snap, sort);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].kind, RowKind::Reading);
+            assert_eq!(rows[0].name, "Reading apps\u{2026}");
+        }
+    }
+
+    #[test]
+    fn old_app_rows_do_not_name_an_app_in_the_status() {
+        let mut s = sample();
+        s.cpu_pct = 90.0;
+        let name = s.apps_by_cpu[0].name.clone();
+        assert!(status(&s, false, true).text.contains(&name));
+        assert_eq!(status(&s, false, false).text, "Processor is busy");
+        assert!(status(&s, false, false).warn);
+        let now = Instant::now();
+        let v = |age: u64| {
+            let sort = Sort::Memory;
+            build(
+                &s,
+                &Extra::default(),
+                &History::default(),
+                false,
+                sort,
+                at(now, age),
+                now,
+            )
+            .status
+            .text
+        };
+        assert!(v(10).contains(&name));
+        assert_eq!(v(11), "Processor is busy");
+    }
+
+    #[test]
+    fn rounding_never_leaves_a_figure_that_needs_a_bigger_unit() {
+        let mb = |x: f64| (x * 1_048_576.0) as u64;
+        let kb = |x: f64| (x * 1024.0) as u64;
+        assert_eq!(format_bytes(mb(99.96)), "100 MB");
+        assert_eq!(format_bytes(mb(99.94)), "99.9 MB");
+        assert_eq!(format_bytes(kb(999.6)), "1.0 MB");
+        assert_eq!(format_bytes(kb(999.4)), "999 KB");
+        assert_eq!(format_bytes(mb(999.7)), "1.0 GB");
+        assert_eq!(format_bytes(999), "999 B");
+        assert_eq!(format_bytes(1000), "1.0 KB");
+        assert_eq!(format_bytes_at(mb(9.96), 10.0), "10 MB");
+        assert_eq!(format_bytes_at(mb(9.94), 10.0), "9.9 MB");
+        assert_eq!(format_bytes_at(kb(999.6), 10.0), "1.0 MB");
+        assert_eq!(format_bytes_at(mb(999.7), 10.0), "1.0 GB");
+        assert_eq!(format_bytes(100 * (1 << 30) - 1), "100 GB");
+        assert_eq!(format_bytes(2100 * (1 << 20)), "2.1 GB");
+    }
+
+    #[test]
+    fn the_footer_has_a_short_fallback_sentence() {
+        assert_eq!(FOOT_SHORT, "toggles Pulse");
+        assert!(FOOT_SHORT.len() < FOOT_LONG.len());
     }
 }
