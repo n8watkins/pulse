@@ -234,7 +234,7 @@ component Seg inherits Rectangle {
         y: 2px;
         height: root.dense ? 26px : 30px;
         for label[i] in root.labels: Rectangle {
-            width: root.icon-only ? 34px : measure.preferred-width + root.lead + (root.dense ? 18px : 20px);
+            width: root.icon-only ? 34px : measure.preferred-width + root.lead + (root.icons.length > 0 ? 14px : (root.dense ? 18px : 20px));
             border-radius: 6px;
             accessible-role: radio-button;
             accessible-label: label;
@@ -1901,7 +1901,7 @@ export component PanelWindow inherits Window {
                     name: "Appearance";
                     note: "System follows Windows.";
                     icon: @image-url("sun.svg");
-                    ctl-w: 214px;
+                    ctl-w: 202px;
                     Seg {
                         icons: [@image-url("monitor.svg"), @image-url("sun.svg"), @image-url("moon.svg")];
                         labels: ["System", "Light", "Dark"];
@@ -1966,7 +1966,7 @@ export component PanelWindow inherits Window {
                     Text {
                         x: 24px;
                         y: 0;
-                        width: parent.width - 150px - 24px;
+                        width: parent.width - 112px - 24px;
                         height: parent.height;
                         horizontal-alignment: left;
                         text: "Pulse " + root.version + "\nLicenses are in the install folder.";
