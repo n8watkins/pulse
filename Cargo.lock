@@ -3195,6 +3195,7 @@ dependencies = [
 name = "pulse-native"
 version = "0.0.0"
 dependencies = [
+ "pulse-platform",
  "pulse-readings",
  "slint",
  "slint-build",
