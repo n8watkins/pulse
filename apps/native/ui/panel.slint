@@ -2042,9 +2042,9 @@ export component PanelWindow inherits Window {
                     }
                 }
 
-                // Low memory alert: name and switch on one line, a note, then the level.
+                // Low memory alert: name and switch on one line, then the level and a note.
                 Rectangle {
-                    height: 8px + 24px + 1px + lm-note.preferred-height + 8px + 34px + 10px;
+                    height: 36px + 34px + 8px;
                     Image {
                         x: 0;
                         y: 12px;
@@ -2083,23 +2083,25 @@ export component PanelWindow inherits Window {
                     }
 
                     lm-note := Text {
-                        x: 24px;
-                        y: 33px;
-                        width: parent.width - 24px;
-                        text: "A notice when memory stays this full.";
+                        x: 24px + lm-seg-x.width + 12px;
+                        y: 36px;
+                        width: parent.width - self.x;
+                        height: 34px;
+                        text: "When memory stays this full.";
                         wrap: word-wrap;
                         font-family: "Inter";
                         font-size: 12.5px;
                         color: Theme.mute;
+                        vertical-alignment: center;
                     }
 
-                    Rectangle {
+                    lm-seg-x := Rectangle {
                         x: 24px;
-                        y: 33px + lm-note.preferred-height + 8px;
-                        width: parent.width - 24px;
+                        y: 36px;
+                        width: lm-levels.width;
                         height: 34px;
                         opacity: root.low-mem ? 1.0 : 0.45;
-                        Seg {
+                        lm-levels := Seg {
                             x: 0;
                             on: root.low-mem;
                             labels: ["80%", "85%", "90%", "95%"];
@@ -2421,7 +2423,7 @@ export component PanelWindow inherits Window {
                 CRow {
                     name: "Low memory alert";
                     icon: @image-url("bell.svg");
-                    ctl-w: 214px;
+                    ctl-w: 190px;
                     ctl-h: 30px;
                     HorizontalLayout {
                         spacing: 8px;
