@@ -13,15 +13,31 @@ use windows_sys::Win32::UI::HiDpi::{
     GetDpiForMonitor, GetDpiForSystem, GetDpiForWindow, MDT_EFFECTIVE_DPI,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, GWL_EXSTYLE, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW,
-    GetWindowThreadProcessId, HWND_TOPMOST, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetWindowLongPtrW,
-    SetWindowPos, ShowWindow, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    BringWindowToTop, CreateWindowExW, GWL_EXSTYLE, GetCursorPos, GetForegroundWindow,
+    GetWindowLongPtrW, GetWindowThreadProcessId, HWND_TOPMOST, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 /// Logical size of the panel and its distance from the work-area edges.
 pub const PANEL_W: f32 = 380.0;
 pub const MARGIN: f32 = 12.0;
+
+#[cfg(test)]
+mod tests {
+    use super::parse_scale;
+
+    #[test]
+    fn scale_override_parses_only_sane_factors() {
+        assert_eq!(parse_scale(Some("1.5")), Some(1.5));
+        assert_eq!(parse_scale(Some(" 1.25 ")), Some(1.25));
+        assert_eq!(parse_scale(Some("2")), Some(2.0));
+        for bad in ["", "0", "0.5", "5", "x", "NaN", "inf", "-1"] {
+            assert_eq!(parse_scale(Some(bad)), None, "{bad:?}");
+        }
+        assert_eq!(parse_scale(None), None);
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct Hwnd(pub isize);
@@ -29,6 +45,33 @@ pub struct Hwnd(pub isize);
 impl Hwnd {
     fn raw(self) -> HWND {
         self.0 as HWND
+    }
+}
+
+/// A hidden, never shown window to own the panel. winit gives a window with
+/// no owner `WS_EX_APPWINDOW` (a taskbar button and an Alt+Tab entry the
+/// moment it is visible), and Slint can only create the panel by showing it
+/// once, offscreen, before it is hidden again. An owned window gets neither,
+/// from its first millisecond on. Returns 0 when Windows refuses.
+pub fn create_owner() -> isize {
+    // "STATIC" is a window class every process has.
+    let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+    // SAFETY: a never-visible zero-size popup, owned by nobody.
+    unsafe {
+        CreateWindowExW(
+            WS_EX_TOOLWINDOW,
+            class.as_ptr(),
+            class.as_ptr().add(6),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null(),
+        ) as isize
     }
 }
 
@@ -128,7 +171,7 @@ fn work_area(h: Hwnd) -> Option<(RECT, f32)> {
         if GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &raw mut dx, &raw mut dy) != 0 {
             dx = GetDpiForWindow(h.raw()).max(96);
         }
-        Some((info.rcWork, dx as f32 / 96.0))
+        Some((info.rcWork, scale_override().unwrap_or(dx as f32 / 96.0)))
     }
 }
 
@@ -165,9 +208,33 @@ pub fn place(h: Hwnd, height: f32) {
     }
 }
 
-/// The system DPI, which sets the tray icon's size.
+/// `PULSE_SCALE=<factor>` (1.0 to 4.0): pretend every display is at this
+/// scale, so a 150 percent layout can be drawn on a 100 percent monitor. A
+/// development knob; the real display settings are never touched.
+pub fn scale_override() -> Option<f32> {
+    parse_scale(std::env::var("PULSE_SCALE").ok().as_deref())
+}
+
+fn parse_scale(v: Option<&str>) -> Option<f32> {
+    v?.trim()
+        .parse::<f32>()
+        .ok()
+        .filter(|f| f.is_finite() && (1.0..=4.0).contains(f))
+}
+
+/// The system DPI, which sets the tray icon's size (`PULSE_SCALE` overrides it).
 pub fn system_dpi() -> u32 {
-    unsafe { GetDpiForSystem() }
+    scale_override().map_or_else(
+        || unsafe { GetDpiForSystem() },
+        |f| (96.0 * f).round() as u32,
+    )
+}
+
+/// Pixel size to ask for the 24 px (logical) app icons at: the scaled size,
+/// never below 32 (36 at 150 percent, 48 at 200 percent).
+pub fn icon_px() -> u32 {
+    let scale = system_dpi().max(96) as f32 / 96.0;
+    ((24.0 * scale).round() as u32).max(32)
 }
 
 /// Hands the process's idle pages back to Windows (the same trim Windows

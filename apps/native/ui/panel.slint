@@ -756,6 +756,7 @@ export component PanelWindow inherits Window {
     in property <string> bat-big: "";
     in property <string> bat-sub: "";
     in property <float> bat-frac;
+    in property <bool> bat-low: false;
     // Footer: the shortcut's key cap (empty when off), the words after it, and the age.
     in property <string> cap: "";
     in property <string> foot: "";
@@ -1048,7 +1049,7 @@ export component PanelWindow inherits Window {
                 width: parent.width * root.bat-frac;
                 height: parent.height;
                 border-radius: 3px;
-                background: Theme.ink;
+                background: root.bat-low ? Theme.warn : Theme.ink;
                 animate width {
                     duration: Theme.motion;
                     easing: cubic-bezier(0.25, 0.1, 0.25, 1);

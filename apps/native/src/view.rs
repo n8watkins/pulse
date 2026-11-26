@@ -176,6 +176,8 @@ pub struct Tiles {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BatteryView {
+    /// On battery at or under [`BATTERY_LOW`] percent: the bar takes the warning colour.
+    pub low: bool,
     pub big: String,
     pub sub: String,
     pub frac: f32,
@@ -224,12 +226,92 @@ impl Extra {
     }
 }
 
+/// Very long names in every place a name can outgrow its space: app names and
+/// exe lines, Linux program labels (with the agent badge and a count), and the
+/// status line (busy, naming the app that uses the most). A development knob
+/// (`PULSE_STRESS=1`), to check that every text ends in an ellipsis or wraps.
+pub fn stress_snapshot(snap: &mut Snapshot) {
+    let long = |name: &str, exe: &str, processes: u32, mem_gb: u64, cpu: f32| AppRow {
+        name: name.into(),
+        exe: exe.into(),
+        processes,
+        mem_bytes: mem_gb * (1 << 30),
+        cpu_pct: cpu,
+        path: None,
+    };
+    snap.cpu_pct = 92.0;
+    snap.apps = vec![
+        long(
+            "Microsoft Visual Studio Code Insiders Extension Host (Preview)",
+            "Code - Insiders - Extension Host Helper Renderer.exe",
+            24,
+            9,
+            30.0,
+        ),
+        long("Chrome", "chrome.exe", 3, 6, 20.0),
+        long(
+            "Antimalware Service Executable with a very long name",
+            "MsMpEng-long-name-for-the-stress-test-run.exe",
+            1,
+            3,
+            10.0,
+        ),
+        long("Spotify", "Spotify.exe", 7, 2, 5.0),
+    ];
+    snap.apps_by_cpu = snap.apps.clone();
+    snap.wsl = Some(Wsl {
+        mem_bytes: 5 * (1 << 30),
+        cpu_pct: 8.0,
+        procs: vec![
+            wsl_proc(&first_label(), true, 12, 900),
+            wsl_proc(
+                "Claude Code with an extremely long label indeed",
+                true,
+                123,
+                800,
+            ),
+            wsl_proc(
+                "python3: /home/user/projects/some/very/long/path/server.py",
+                false,
+                2,
+                400,
+            ),
+            wsl_proc("rust-analyzer", false, 1, 300),
+        ],
+    });
+}
+
+/// The first Linux label of the stress rows. `PULSE_STRESS_LEN=<n>` cuts or
+/// repeats it to n characters, to sweep lengths around the point where the
+/// name starts to be cut.
+fn first_label() -> String {
+    let base = "node: pool_entry-[turbopack-node]_";
+    match std::env::var("PULSE_STRESS_LEN")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        Some(n) => base.chars().cycle().take(n).collect(),
+        None => base.into(),
+    }
+}
+
+fn wsl_proc(label: &str, agent: bool, count: u32, mem_mb: u64) -> pulse_readings::WslProc {
+    pulse_readings::WslProc {
+        label: label.into(),
+        agent,
+        count,
+        mem_bytes: mem_mb * (1 << 20),
+    }
+}
+
 /// Processor use at or above this is "busy".
 const CPU_BUSY: f32 = 85.0;
 /// Memory use at or above this (percent) is "nearly full".
 const MEM_FULL: u64 = 90;
 /// Drive C: under this share free (percent) is "nearly full".
 const DISK_LOW: u64 = 8;
+/// On battery at or under this charge (percent) the battery bar warns.
+const BATTERY_LOW: u8 = 15;
 /// Uptime from which a restart is suggested.
 const RESTART_AFTER_S: u64 = 7 * 86_400;
 
@@ -541,6 +623,7 @@ fn tiles(x: &Extra) -> Tiles {
         net_big: format!("\u{2193} {}/s", format_bytes(x.net_down_bps)),
         net_sub: format!("\u{2191} {}/s", format_bytes(x.net_up_bps)),
         battery: x.battery.map(|(pct, plugged)| BatteryView {
+            low: !plugged && pct <= BATTERY_LOW,
             big: format!("{pct}%"),
             sub: if plugged { "Plugged in" } else { "On battery" }.into(),
             frac: f32::from(pct.min(100)) / 100.0,
@@ -1036,6 +1119,18 @@ mod tests {
         let b = t.battery.unwrap();
         assert_eq!((b.big.as_str(), b.sub.as_str()), ("86%", "Plugged in"));
         assert_eq!(tiles(&Extra::default()).battery, None);
+        let low = |pct, plugged| {
+            tiles(&Extra {
+                battery: Some((pct, plugged)),
+                ..Extra::default()
+            })
+            .battery
+            .unwrap()
+            .low
+        };
+        assert!(low(15, false) && low(12, false) && low(0, false));
+        assert!(!low(16, false), "above the line");
+        assert!(!low(12, true), "plugged in is not a warning");
     }
 
     fn row(name: &str, exe: &str, mem_mb: u64, cpu: f32) -> AppRow {

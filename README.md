@@ -33,7 +33,10 @@ Environment hooks, for tests and screenshots:
 - `PULSE_SELFTEST=1` with `PULSE_REPORT=<path>` opens and closes the panel five times and writes `{"shell":"native","open_ms":[...]}`.
 - `PULSE_NOTRIM=1` turns off the working-set trim on hide.
 - `PULSE_RENDERER=skia` uses the GPU renderer (about 108 MB; the default software renderer is the reason memory stays low).
-- `PULSE_STRESS=1` feeds worst-case tile values, to check nothing is clipped.
+- `PULSE_STRESS=1` feeds worst-case tile values and very long names (app names, exe lines, Linux program labels with the agent badge and a count, the busy status line), to check that every text ends in an ellipsis or wraps and nothing is cut.
+- `PULSE_SCALE=<factor>` (1.0 to 4.0) forces the display scale: Slint draws at that factor, the window is sized and placed (12 logical px from the work-area corner) at that factor, the app icons are asked for at the scaled pixel size (36 px at 1.5) and the tray icon size follows it.
+  It simulates scaling on a 100% monitor for screenshots; it is not a real scaled monitor, and per-monitor DPI changes when dragging between monitors are untested.
+- `PULSE_BATTERY=<percent>,<plugged 0|1>` replaces the battery reading (for example `12,0` or `80,1`), to see the Battery tile on a desktop PC.
 - `PULSE_WORK_H=<logical px>` pretends the work area is that tall, to check the panel on a short display.
 - `PULSE_OPEN=settings` starts with the Settings screen open (for screenshots).
 - `PULSE_WARN=1` makes the reader report 92% processor and 9 days of uptime, to see the warning colours and "restart?".
@@ -50,7 +53,14 @@ Environment hooks, for tests and screenshots:
 Measure with `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\measure.ps1 -Exe <exe> -Out <folder>`.
 It sends no keys, makes no clicks, does not touch the clipboard and never takes focus.
 
-Lint and tests, from WSL:
+Lint and tests:
+
+- CI (`.github/workflows/ci.yml`, GitHub-hosted runners only) runs fmt, clippy with `-D warnings`, the tests and a release build on Windows, the pure-logic tests on Linux and `scripts/check-dashes.sh` (no em dash in tracked text files).
+- Tests that need this particular PC (WSL running with a "Claude Code" process, `explorer.exe` icons from the shell icon cache, the live comparison with the PDH counters) do nothing unless `PULSE_LIVE_TESTS=1`.
+  Run them locally on Windows with `PULSE_LIVE_TESTS=1 cargo test -p pulse-readings -- --nocapture`.
+  `compare_with_pdh_counter` samples the reader and the `Process(*)` counter over the same window (`PULSE_COMPARE_SECS`, default 10) and prints both.
+
+From WSL:
 
 - `cargo fmt --all --check`
 - `cargo clippy -p pulse-native -p pulse-readings --all-targets --target x86_64-pc-windows-msvc -- -D warnings`
