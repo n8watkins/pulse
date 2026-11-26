@@ -334,7 +334,7 @@ impl Panel {
             &l.extra,
             &l.hist,
             self.sample,
-            mode,
+            &mode,
             Instant::now(),
             l.apps_at,
         );

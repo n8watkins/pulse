@@ -952,7 +952,7 @@ pub fn build(
     extra: &Extra,
     hist: &History,
     sample: bool,
-    mode: Mode,
+    mode: &Mode,
     now: Instant,
     apps_at: Instant,
 ) -> View {
@@ -1245,7 +1245,7 @@ mod tests {
             &Extra::from_snapshot(&snap),
             &h,
             true,
-            Mode::expanded(Sort::Memory),
+            &Mode::expanded(Sort::Memory),
             now,
             now,
         );
@@ -1564,7 +1564,7 @@ mod tests {
                 &Extra::default(),
                 &History::default(),
                 false,
-                Mode::expanded(Sort::Memory),
+                &Mode::expanded(Sort::Memory),
                 Instant::now(),
                 Instant::now()
             )
@@ -1576,7 +1576,7 @@ mod tests {
             &Extra::default(),
             &History::default(),
             false,
-            Mode::expanded(Sort::Memory),
+            &Mode::expanded(Sort::Memory),
             Instant::now(),
             Instant::now(),
         );
@@ -1912,7 +1912,7 @@ mod tests {
             };
             let (hist, extra) = (History::default(), Extra::default());
             let now = Instant::now();
-            build(&snap, &extra, &hist, true, mode, now, now)
+            build(&snap, &extra, &hist, true, &mode, now, now)
                 .apps
                 .iter()
                 .filter(|r| r.kind == RowKind::Sub)
@@ -2116,7 +2116,7 @@ mod tests {
                 &Extra::default(),
                 &History::default(),
                 false,
-                Mode::expanded(sort),
+                &Mode::expanded(sort),
                 at(now, age),
                 now,
             )
