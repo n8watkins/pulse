@@ -83,6 +83,8 @@ foreach ($case in $caseList) {
   $env:PULSE_SHOW = "1"
   $env:PULSE_SETTINGS_DIR = Join-Path $out "settings\run$run"
   New-Item -ItemType Directory -Force $env:PULSE_SETTINGS_DIR | Out-Null
+  # Optional "settings": an object written as settings.json before the start.
+  if ($case.settings) { $case.settings | ConvertTo-Json | Set-Content (Join-Path $env:PULSE_SETTINGS_DIR "settings.json") }
   $env:PULSE_INSTANCE_NAME = "Pulse-shots-" + [guid]::NewGuid().ToString("N")
   $proc = $null
   try {
@@ -104,13 +106,16 @@ foreach ($case in $caseList) {
     $bmp.Save($png, [Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
     $r = New-Object W+RECT; [void][W]::GetWindowRect($h, [ref]$r)
     $ex = [int64][W]::GetWindowLongPtrW($h, -20)
+    # The work area of the monitor the window is on (the cursor's monitor).
+    $wa = [System.Windows.Forms.Screen]::FromHandle($h).WorkingArea
     $report.shots[$name] = [ordered]@{
       png = $png
       window = "$($r.L),$($r.T) to $($r.R),$($r.B)"
       sizePx = "$($r.R - $r.L)x$($r.B - $r.T)"
       dpi = [W]::GetDpiForWindow($h)
-      gapRight = ($area.X + $area.Width) - $r.R
-      gapBottom = ($area.Y + $area.Height) - $r.B
+      workArea = "$($wa.X),$($wa.Y) $($wa.Width)x$($wa.Height)"
+      gapRight = ($wa.X + $wa.Width) - $r.R
+      gapBottom = ($wa.Y + $wa.Height) - $r.B
       toolWindow = (($ex -band 0x80) -ne 0)
     }
     Write-Output "$name $($report.shots[$name].sizePx) gap $($report.shots[$name].gapRight),$($report.shots[$name].gapBottom)"
