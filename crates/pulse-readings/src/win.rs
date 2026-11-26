@@ -254,6 +254,8 @@ impl Source for Windows {
             mem_used,
             mem_total,
             apps,
+            apps_by_cpu: Vec::new(),
+            wsl: None,
             gpu_pct: x.gpu_pct,
             disk_free: x.disk_free,
             disk_total: x.disk_total,

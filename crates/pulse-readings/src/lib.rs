@@ -38,6 +38,12 @@ pub struct Snapshot {
     pub mem_total: u64,
     /// Top apps by memory, largest first. Empty when read with `with_apps` false.
     pub apps: Vec<AppRow>,
+    /// Top apps by processor use, largest first (the same rows as `apps`, a
+    /// different ranking). Empty when read with `with_apps` false.
+    pub apps_by_cpu: Vec<AppRow>,
+    /// The WSL 2 virtual machine and the Linux programs in it. `Some` whenever
+    /// a `vmmemWSL` (or `vmmem`) process exists and `with_apps` is true.
+    pub wsl: Option<Wsl>,
     /// 3D engine use, 0 to 100. `None` when the PC does not report it (never 0).
     pub gpu_pct: Option<f32>,
     /// Drive C:, bytes.
@@ -72,11 +78,39 @@ pub struct AppRow {
     pub processes: u32,
     /// Private working set summed over the group, as Task Manager shows it.
     pub mem_bytes: u64,
+    /// The group's share of the whole machine, 0 to 100 (0 on the first read
+    /// of a process).
+    pub cpu_pct: f32,
     /// Where to get the row's icon: the full path of one process in the group,
     /// or for system rows a stand-in file (the `System32` file of the same
     /// name for protected processes, or a built-in pick such as `wsl.exe` for
     /// WSL). `None` only when there is nothing to use (sample data).
     pub path: Option<String>,
+}
+
+/// The WSL 2 virtual machine as the Windows side sees it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Wsl {
+    /// Memory of the `vmmemWSL` (or `vmmem`) process.
+    pub mem_bytes: u64,
+    /// That process's share of the whole machine, 0 to 100.
+    pub cpu_pct: f32,
+    /// Up to 6 Linux programs using the most memory in the default distro,
+    /// grouped by label, largest first. Empty when the distro is not running,
+    /// the query failed or it has not returned yet.
+    pub procs: Vec<WslProc>,
+}
+
+/// One labelled group of Linux processes. Memory only: `ps` reports no live
+/// processor figure.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct WslProc {
+    /// For example "Claude Code" or "node: next-server".
+    pub label: String,
+    /// Whether this is a coding agent.
+    pub agent: bool,
+    pub count: u32,
+    pub mem_bytes: u64,
 }
 
 /// An icon as straight (non-premultiplied) RGBA, top-down.
@@ -174,27 +208,54 @@ impl Source for Sample {
         let wave = (t / 7.0).sin();
         // The reference page's activity factor, scaled to 0..1.
         let busy = ((1.0 + 0.7 * wave).max(0.35) - 0.35) / 1.35;
-        let apps = if with_apps {
+        // Processor figures follow the same activity factor as the rest.
+        let factor = 0.4 + 1.2 * busy;
+        let mut apps: Vec<AppRow> = if with_apps {
             [
-                ("Google Chrome", "chrome.exe", 24, 2100 * MB),
-                ("Visual Studio Code", "Code.exe", 11, 1300 * MB),
-                ("Discord", "Discord.exe", 6, 622 * MB),
-                ("OBS Studio", "obs64.exe", 1, 410 * MB),
-                ("Spotify", "Spotify.exe", 5, 329 * MB),
-                ("Windows Explorer", "explorer.exe", 1, 184 * MB),
+                ("Google Chrome", "chrome.exe", 24, 2100 * MB, 6.0),
+                ("Visual Studio Code", "Code.exe", 11, 1300 * MB, 3.4),
+                ("Discord", "Discord.exe", 6, 622 * MB, 1.8),
+                ("OBS Studio", "obs64.exe", 1, 410 * MB, 1.5),
+                ("Spotify", "Spotify.exe", 5, 329 * MB, 0.8),
+                ("Windows Explorer", "explorer.exe", 1, 184 * MB, 0.4),
             ]
             .into_iter()
-            .map(|(name, exe, processes, mem_bytes)| AppRow {
+            .map(|(name, exe, processes, mem_bytes, cpu)| AppRow {
                 name: name.into(),
                 exe: exe.into(),
                 processes,
                 mem_bytes,
+                #[allow(clippy::cast_possible_truncation)]
+                cpu_pct: (cpu * factor) as f32,
                 path: None,
             })
             .collect()
         } else {
             Vec::new()
         };
+        let mut apps_by_cpu = apps.clone();
+        apps_by_cpu.sort_by(|a, b| b.cpu_pct.total_cmp(&a.cpu_pct));
+        apps.sort_by_key(|a| std::cmp::Reverse(a.mem_bytes));
+        let wsl = with_apps.then(|| Wsl {
+            mem_bytes: 3 * GB + 400 * MB,
+            #[allow(clippy::cast_possible_truncation)]
+            cpu_pct: (1.2 * factor) as f32,
+            procs: [
+                ("Claude Code", true, 3, 640 * MB),
+                ("Editor server", false, 6, 512 * MB),
+                ("node: next-server", false, 1, 318 * MB),
+                ("Codex CLI", true, 2, 236 * MB),
+                ("Docker", false, 2, 174 * MB),
+            ]
+            .into_iter()
+            .map(|(label, agent, count, mem_bytes)| WslProc {
+                label: label.into(),
+                agent,
+                count,
+                mem_bytes,
+            })
+            .collect(),
+        });
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         Snapshot {
             cpu_pct: (24.0 + 14.0 * wave) as f32,
@@ -203,6 +264,8 @@ impl Source for Sample {
             mem_used: (13.8 * GB as f64 + 0.4 * GB as f64 * (t / 15.0).sin()) as u64,
             mem_total: 32 * GB,
             apps,
+            apps_by_cpu,
+            wsl,
             gpu_pct: Some((4.0 + 18.0 * busy) as f32),
             disk_free: 296 * GB,
             disk_total: 953 * GB,
@@ -226,5 +289,23 @@ mod tests {
         assert_eq!(x, y);
         assert!(x.apps.windows(2).all(|w| w[0].mem_bytes >= w[1].mem_bytes));
         assert!(a.read(false).apps.is_empty());
+    }
+
+    #[test]
+    fn sample_has_cpu_ranking_and_wsl() {
+        let mut s = Sample::default();
+        let x = s.read(true);
+        assert_eq!(x.apps_by_cpu.len(), 6);
+        assert!(
+            x.apps_by_cpu
+                .windows(2)
+                .all(|w| w[0].cpu_pct >= w[1].cpu_pct)
+        );
+        assert_eq!(x.apps_by_cpu[0].exe, "chrome.exe");
+        let w = x.wsl.expect("wsl in sample");
+        assert_eq!(w.procs.len(), 5);
+        assert!(w.procs.windows(2).all(|p| p[0].mem_bytes >= p[1].mem_bytes));
+        let off = s.read(false);
+        assert!(off.apps_by_cpu.is_empty() && off.wsl.is_none());
     }
 }

@@ -93,6 +93,7 @@ where
                 exe: image.clone(),
                 processes: 0,
                 mem_bytes: 0,
+                cpu_pct: 0.0,
                 path: None,
             };
             (row, Vec::new())
