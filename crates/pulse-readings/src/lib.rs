@@ -252,7 +252,7 @@ impl Source for Sample {
                 ("VS Code server", false, 6, 512 * MB, 0.2),
                 ("next-server (v16.4.6)", false, 1, 318 * MB, 0.9),
                 ("Codex CLI", true, 2, 236 * MB, 0.1),
-                ("Docker", false, 2, 174 * MB, 0.05),
+                ("rust-analyzer", false, 2, 174 * MB, 0.05),
                 ("chrome-headless-shell", false, 4, 120 * MB, 0.6),
             ]
             .into_iter()
