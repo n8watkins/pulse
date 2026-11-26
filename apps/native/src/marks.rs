@@ -53,7 +53,6 @@ const ENTRIES: &[Entry] = &[
     entry!("deno", 0x0000_0000),
     entry!("python", 0x0037_76AB),
     entry!("git", 0x00F0_3C2E),
-    entry!("rust", 0x0000_0000),
     entry!("googlechrome", 0x0042_85F4),
     entry!("go", 0x0000_ADD8),
     entry!("postgresql", 0x0041_69E1),
@@ -149,8 +148,6 @@ pub fn slug_for(label: &str) -> Option<&'static str> {
             "deno" => "deno",
             "git" => "git",
             "go" | "gopls" => "go",
-            "cargo" | "rustc" | "rustdoc" | "rustfmt" | "rustup" | "rust-analyzer"
-            | "clippy-driver" => "rust",
             "chrome" | "google-chrome" | "chrome-headless-shell" => "googlechrome",
             "redis" | "redis-server" => "redis",
             "postgres" | "postgresql" => "postgresql",
@@ -163,7 +160,6 @@ pub fn slug_for(label: &str) -> Option<&'static str> {
             "tsc" | "tsserver" => "typescript",
             w if w == "python" || w.starts_with("python3") || w.starts_with("python2") => "python",
             w if w.starts_with("git-") => "git",
-            w if w.starts_with("cargo-") => "rust",
             _ => return None,
         },
     };
@@ -217,10 +213,6 @@ mod tests {
         want("node", "nodedotjs");
         want("pnpm", "pnpm");
         want("pnpm exec vite", "pnpm");
-        want("cargo", "rust");
-        want("cargo-clippy", "rust");
-        want("rustc", "rust");
-        want("rust-analyzer", "rust");
         want("chrome-headless-shell", "googlechrome");
         want("bun: run", "bun");
         want("deno: main.ts", "deno");
@@ -238,8 +230,13 @@ mod tests {
 
     #[test]
     fn labels_without_a_mark_keep_the_letter() {
-        // Simple Icons has no OpenAI or Visual Studio Code mark.
+        // Simple Icons has no OpenAI or Visual Studio Code mark, and its Rust
+        // logo is share-alike (CC BY-SA 4.0), which is not embedded.
         for l in [
+            "cargo",
+            "cargo-clippy",
+            "rustc",
+            "rust-analyzer",
             "Codex CLI",
             "Editor server",
             "Aider",

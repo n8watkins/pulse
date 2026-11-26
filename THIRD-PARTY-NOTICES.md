@@ -58,18 +58,72 @@ The full licence texts are in `apps/native/fonts/` and are installed beside the 
 
 ## Product marks
 
-The small logos beside Linux programs in "Top apps" (Claude, Next.js, Node.js, Rust, Chrome and others) are paths from [Simple Icons](https://github.com/simple-icons/simple-icons) (version 16.38.1), embedded in the app from `apps/native/assets/marks/`.
+The small logos beside Linux programs in "Top apps" (Claude, Next.js, Node.js, Chrome and others) are paths from [Simple Icons](https://github.com/simple-icons/simple-icons) (version 16.38.1), embedded in the app from `apps/native/assets/marks/`.
 Simple Icons publishes its SVG files under CC0 1.0 Universal (public domain dedication); the licence text is in `apps/native/assets/marks/LICENSE-simple-icons.md`.
 The logos themselves remain trademarks of their owners.
 Pulse is not affiliated with or endorsed by any of them, and shows a mark only to say which program a row is.
 
-Simple Icons lists a separate licence for the artwork of three of these marks, and that licence applies to them:
+Two marks carry a licence of their own in the Simple Icons data, and it applies to them:
 
-- Git logo: CC BY 3.0 (the Git logo by Jason Long, <https://git-scm.com/downloads/logos>).
-- Rust logo: CC BY-SA 4.0 (the Rust Foundation, <https://github.com/rust-lang/rust-artwork>).
-- Deno logo: MIT (the Deno authors, <https://github.com/denoland/deno>).
+- Git logo by Jason Long, licensed under [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).
+- Deno logo, under the MIT licence of the Deno docs repository, text below.
+
+```text
+MIT License
+
+Copyright (c) 2018-2024 the Deno authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+The Rust logo is listed there under CC BY-SA 4.0 (share-alike), so Pulse does not embed it; Rust programs keep the letter tile.
+Programs with no mark in Simple Icons (Codex CLI, the editor servers) keep the letter tile too.
 
 The marks are drawn unchanged, only scaled and coloured white or black on a tile.
+Each mark with its title, source and licence as Simple Icons lists them (no licence listed means the CC0 default of the collection):
+
+| Mark | Simple Icons name | Licence | Source |
+| --- | --- | --- | --- |
+| Claude | claude | CC0 1.0 | <https://claude.ai> |
+| Google Gemini | googlegemini | CC0 1.0 | <https://gemini.google.com> |
+| Cursor | cursor | CC0 1.0 | <https://cursor.com/brand> |
+| Ollama | ollama | CC0 1.0 | <https://github.com/ollama/ollama/issues/2152#issuecomment-1905286922> |
+| Docker | docker | CC0 1.0 | <https://www.docker.com/company/newsroom/media-resources> |
+| Next.js | nextdotjs | CC0 1.0 | <https://vercel.com/design/brands#next-js> |
+| Node.js | nodedotjs | CC0 1.0 | <https://nodejs.org/en/about/branding> |
+| npm | npm | CC0 1.0 | <https://www.npmjs.com> |
+| pnpm | pnpm | CC0 1.0 | <https://pnpm.io/logos> |
+| Bun | bun | CC0 1.0 | <https://bun.sh/press-kit> |
+| Deno | deno | MIT | <https://github.com/denoland/docs/blob/5dee713844c7447f80acd4093caa9d350d80bf36/static/img/logo.svg> |
+| Python | python | CC0 1.0 | <https://www.python.org/community/logos/> |
+| Git | git | CC BY 3.0 | <https://git-scm.com/community/logos> |
+| Google Chrome | googlechrome | CC0 1.0 | <https://www.google.com/chrome> |
+| Go | go | CC0 1.0 | <https://blog.golang.org/go-brand> |
+| PostgreSQL | postgresql | CC0 1.0 | <https://wiki.postgresql.org/wiki/Logo> |
+| Redis | redis | CC0 1.0 | <https://redis.io/brand-guidelines> |
+| Vite | vite | CC0 1.0 | <https://github.com/voidzero-dev/community-design-resources/blob/55902097229cf01cf2a4ceb376f992f5cf306756/brand-assets/vite/vite-icon-color-bracketless.svg> |
+| TypeScript | typescript | CC0 1.0 | <https://www.typescriptlang.org/branding> |
+| esbuild | esbuild | CC0 1.0 | <https://github.com/evanw/esbuild/blob/ac542f913908d7326b65eb2e01f0559ed135a40e/images/logo.svg> |
+| MongoDB | mongodb | CC0 1.0 | <https://www.mongodb.com/pressroom> |
+| MySQL | mysql | CC0 1.0 | <https://www.mysql.com/about/legal/logos.html> |
+| NGINX | nginx | CC0 1.0 | <https://www.nginx.com/press/> |
+| Tailscale | tailscale | CC0 1.0 | <https://tailscale.com/press> |
 
 ## Rust crates
 
