@@ -5,16 +5,57 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Theme {
-    Mint,
-    Neutral,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum Sort {
     Memory,
     Processor,
+}
+
+/// Light or dark: follow the system (the default), or always one of them.
+/// The stored words are `system`, `light` and `dark` on every platform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    System,
+    Light,
+    Dark,
+}
+
+impl Appearance {
+    /// Whether the panel is dark, given whether the system is.
+    pub fn is_dark(self, system_dark: bool) -> bool {
+        match self {
+            Self::System => system_dark,
+            Self::Light => false,
+            Self::Dark => true,
+        }
+    }
+}
+
+/// Which size the panel has: the full view (default) or the compact one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PanelView {
+    Expanded,
+    Compact,
+}
+
+impl PanelView {
+    /// The other view (what the header button switches to).
+    pub fn other(self) -> Self {
+        match self {
+            Self::Expanded => Self::Compact,
+            Self::Compact => Self::Expanded,
+        }
+    }
+
+    /// `expanded` or `compact` (any case); used by `PULSE_VIEW`.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "expanded" => Some(Self::Expanded),
+            "compact" => Some(Self::Compact),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,12 +67,18 @@ pub struct Settings {
     /// The combination to bring back when the shortcut is switched on again.
     /// Always equal to `hotkey` while the shortcut is on; kept while it is off.
     pub hotkey_last: String,
-    pub theme: Theme,
     pub keep_open: bool,
     pub autostart: bool,
     /// Seconds between refreshes while the panel is hidden: 2, 5 or 10.
     pub hidden_refresh_s: u8,
     pub sort: Sort,
+    /// Light, dark, or follow the system.
+    pub appearance: Appearance,
+    /// The panel view, expanded by default.
+    pub view: PanelView,
+    /// The compact view's Linux (WSL) list is open. Closed by default; the
+    /// expanded view always shows it.
+    pub wsl_open: bool,
 }
 
 impl Default for Settings {
@@ -39,11 +86,13 @@ impl Default for Settings {
         Self {
             hotkey: DEFAULT_HOTKEY.to_owned(),
             hotkey_last: DEFAULT_HOTKEY.to_owned(),
-            theme: Theme::Mint,
             keep_open: false,
             autostart: true,
             hidden_refresh_s: 2,
             sort: Sort::Memory,
+            appearance: Appearance::System,
+            view: PanelView::Expanded,
+            wsl_open: false,
         }
     }
 }
@@ -154,12 +203,6 @@ impl Settings {
         if !out.hotkey.is_empty() {
             out.hotkey_last.clone_from(&out.hotkey);
         }
-        if let Some(v) = map
-            .get("theme")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-        {
-            out.theme = v;
-        }
         if let Some(b) = map.get("keep_open").and_then(Value::as_bool) {
             out.keep_open = b;
         }
@@ -177,6 +220,21 @@ impl Settings {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
         {
             out.sort = v;
+        }
+        if let Some(v) = map
+            .get("appearance")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+        {
+            out.appearance = v;
+        }
+        if let Some(v) = map
+            .get("view")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+        {
+            out.view = v;
+        }
+        if let Some(b) = map.get("wsl_open").and_then(Value::as_bool) {
+            out.wsl_open = b;
         }
         out
     }
@@ -197,11 +255,12 @@ mod tests {
     fn defaults() {
         let s = Settings::default();
         assert_eq!(s.hotkey, "Alt+Shift+P");
-        assert_eq!(s.theme, Theme::Mint);
         assert!(!s.keep_open);
         assert!(s.autostart);
         assert_eq!(s.hidden_refresh_s, 2);
         assert_eq!(s.sort, Sort::Memory);
+        assert_eq!(s.view, PanelView::Expanded);
+        assert!(!s.wsl_open);
     }
 
     #[test]
@@ -211,21 +270,46 @@ mod tests {
         let s = Settings {
             hotkey: String::new(),
             hotkey_last: "Ctrl+Shift+K".to_owned(),
-            theme: Theme::Neutral,
             keep_open: true,
             autostart: false,
             hidden_refresh_s: 10,
             sort: Sort::Processor,
+            appearance: Appearance::Dark,
+            view: PanelView::Compact,
+            wsl_open: true,
         };
         s.save_to(&path).unwrap();
         assert!(!dir.join("settings.json.tmp").exists());
         assert_eq!(Settings::load_from(&path), s);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"dark\"") && text.contains("\"compact\""));
         assert!(
-            std::fs::read_to_string(&path)
-                .unwrap()
-                .contains("\"neutral\"")
+            !text.contains("theme"),
+            "the removed color theme is not written"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_removed_color_theme_in_an_old_file_is_ignored_and_dropped_on_save() {
+        for old in [
+            r#"{"hotkey":"Alt+Shift+P","theme":"mint","sort":"processor"}"#,
+            r#"{"hotkey":"Alt+Shift+P","theme":"neutral","sort":"processor"}"#,
+            r#"{"hotkey":"Alt+Shift+P","theme":42,"sort":"processor"}"#,
+        ] {
+            let s = Settings::from_json(old);
+            assert_eq!(s.sort, Sort::Processor, "{old}");
+            assert_eq!(s.hotkey, "Alt+Shift+P");
+            let dir = temp("oldtheme");
+            let path = dir.join("settings.json");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(&path, old).unwrap();
+            let loaded = Settings::load_from(&path);
+            assert_eq!(loaded, s);
+            loaded.save_to(&path).unwrap();
+            assert!(!std::fs::read_to_string(&path).unwrap().contains("theme"));
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     #[test]
@@ -249,7 +333,6 @@ mod tests {
     #[test]
     fn unknown_ignored_missing_defaulted() {
         let s = Settings::from_json(r#"{"theme":"neutral","future":{"a":1}}"#);
-        assert_eq!(s.theme, Theme::Neutral);
         assert_eq!(s.hotkey, "Alt+Shift+P");
         assert_eq!(s.hidden_refresh_s, 2);
     }
@@ -257,9 +340,73 @@ mod tests {
     #[test]
     fn bad_field_values_fall_back_individually() {
         let s = Settings::from_json(r#"{"theme":"pink","sort":"processor","keep_open":"yes"}"#);
-        assert_eq!(s.theme, Theme::Mint);
         assert_eq!(s.sort, Sort::Processor);
         assert!(!s.keep_open);
+    }
+
+    #[test]
+    fn a_file_from_before_the_views_loads_expanded_with_wsl_closed() {
+        // The exact shape older Pulse versions wrote.
+        let old = r#"{"hotkey":"Alt+Shift+P","hotkey_last":"Alt+Shift+P","theme":"neutral","keep_open":true,"autostart":false,"hidden_refresh_s":5,"sort":"processor"}"#;
+        let s = Settings::from_json(old);
+        assert_eq!(s.view, PanelView::Expanded);
+        assert!(!s.wsl_open);
+        assert_eq!(s.sort, Sort::Processor);
+        assert_eq!(s.hidden_refresh_s, 5);
+        assert!(s.keep_open && !s.autostart);
+    }
+
+    #[test]
+    fn the_view_and_the_wsl_state_are_read_and_bad_values_fall_back() {
+        let s = Settings::from_json(r#"{"view":"compact","wsl_open":true}"#);
+        assert_eq!(s.view, PanelView::Compact);
+        assert!(s.wsl_open);
+        let s = Settings::from_json(r#"{"view":"huge","wsl_open":"yes","sort":"processor"}"#);
+        assert_eq!(s.view, PanelView::Expanded);
+        assert!(!s.wsl_open);
+        assert_eq!(s.sort, Sort::Processor);
+        let v: Value =
+            serde_json::from_str(&serde_json::to_string(&Settings::default()).unwrap()).unwrap();
+        assert_eq!(v["view"], "expanded");
+        assert_eq!(v["wsl_open"], false);
+    }
+
+    #[test]
+    fn an_old_file_follows_the_system_and_the_words_are_platform_neutral() {
+        assert_eq!(Settings::from_json("{}").appearance, Appearance::System);
+        let old = r#"{"hotkey":"Alt+Shift+P","theme":"neutral","sort":"memory"}"#;
+        assert_eq!(Settings::from_json(old).appearance, Appearance::System);
+        for (word, want) in [
+            ("system", Appearance::System),
+            ("light", Appearance::Light),
+            ("dark", Appearance::Dark),
+        ] {
+            let s = Settings::from_json(&format!(r#"{{"appearance":"{word}"}}"#));
+            assert_eq!(s.appearance, want);
+            let v: Value = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+            assert_eq!(v["appearance"], word);
+        }
+        // A bad value falls back on its own, the rest of the file still loads.
+        let s = Settings::from_json(r#"{"appearance":"sepia","theme":"neutral"}"#);
+        assert_eq!(s.appearance, Appearance::System);
+    }
+
+    #[test]
+    fn which_theme_follows_from_the_setting_and_the_system() {
+        for system_dark in [false, true] {
+            assert_eq!(Appearance::System.is_dark(system_dark), system_dark);
+            assert!(!Appearance::Light.is_dark(system_dark));
+            assert!(Appearance::Dark.is_dark(system_dark));
+        }
+    }
+
+    #[test]
+    fn views_switch_and_parse() {
+        assert_eq!(PanelView::Expanded.other(), PanelView::Compact);
+        assert_eq!(PanelView::Compact.other(), PanelView::Expanded);
+        assert_eq!(PanelView::parse(" Compact "), Some(PanelView::Compact));
+        assert_eq!(PanelView::parse("expanded"), Some(PanelView::Expanded));
+        assert_eq!(PanelView::parse("tiny"), None);
     }
 
     #[test]

@@ -10,19 +10,16 @@ import "../fonts/SpaceGrotesk-700.ttf";
 export global Theme {
     // 0 follows Windows, 1 light, 2 dark (PULSE_THEME).
     in property <int> force: 0;
-    // The Neutral colour theme: each tile gets its own colour.
-    in property <bool> neutral: false;
     // Windows "Animation effects": off means bars and tiles do not move.
     in property <bool> animate: true;
-    out property <bool> dark: force == 2 || (force == 0 && Palette.color-scheme == ColorScheme.dark);
+    // Windows is in dark mode (set by the app from the window's theme, live).
+    in property <bool> system-dark: false;
+    out property <bool> dark: force == 2 || (force == 0 && system-dark);
     out property <color> bg: dark ? #0d0f0e : #ffffff;
     out property <color> ink: dark ? #f1f4f2 : #0d0f0e;
     out property <color> mute: dark ? #98a19d : #5b625f;
     out property <color> line: dark ? #232926 : #e4e7e5;
     out property <color> soft: dark ? #161a18 : #f2f4f3;
-    out property <color> hero-bg: dark ? #12231a : #b8f5d0;
-    out property <color> hero-ink: dark ? #b8f5d0 : #0d0f0e;
-    out property <color> mint: #b8f5d0;
     out property <color> dot: #2fbf71;
     out property <color> warn: dark ? #ff9b6b : #c2410c;
     out property <color> focus: dark ? #7dd3fc : #2563eb;
@@ -54,7 +51,7 @@ export struct AppItem {
     age: string,
     group-end: bool,
     // A Linux program with a product mark: the glyph path (24 x 24) replaces
-    // the letter on a tile in the brand colour (`color`).
+    // the letter on a tile in the brand color (`color`).
     has-mark: bool,
     mark-path: string,
     mark-dark-ink: bool,
@@ -71,18 +68,39 @@ component Ring inherits Rectangle {
     border-radius: root.radius;
 }
 
-// Square icon button (gear, close).
+// Sizes that both views share with src/view.rs (`row_height` and the compact
+// and expanded heights). Kinds: 0 app, 1 WSL, 2 Linux program, 3 reading,
+// 4 and 5 the compact view's Linux row (closed, open).
+global Metrics {
+    pure public function row-h(kind: int, compact: bool) -> length {
+        if (compact) {
+            return kind == 2 ? 22px : (kind == 3 ? 36px : 29px);
+        }
+        return kind == 2 ? 24px : (kind == 3 ? 40px : 53px);
+    }
+}
+
+// Square icon button (view switch, gear, close). 30 px in the expanded view,
+// 28 px in the compact one.
 component IconBtn inherits Rectangle {
     in property <image> source;
     in property <bool> on: true;
+    in property <length> size: 34px;
+    // The accessible name (there is no tooltip).
+    in property <string> label;
     callback clicked;
-    width: 34px;
-    height: 34px;
+    width: root.size;
+    height: root.size;
     border-radius: 8px;
     background: ta.has-hover && root.on ? Theme.soft : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => {
+        root.clicked();
+    }
     Image {
-        width: 18px;
-        height: 18px;
+        width: root.size >= 34px ? 18px : 16px;
+        height: self.width;
         source: root.source;
         colorize: ta.has-hover ? Theme.ink : Theme.mute;
     }
@@ -118,7 +136,7 @@ component PButton inherits Rectangle {
     height: 32px;
     width: lbl.preferred-width + 28px;
     border-radius: 8px;
-    background: root.primary ? (ta.has-hover ? (Theme.neutral ? Theme.ink.with-alpha(0.8) : Theme.hero-bg.brighter(0.15)) : (Theme.neutral ? Theme.ink : Theme.hero-bg)) : (ta.has-hover ? Theme.line : Theme.soft);
+    background: root.primary ? (ta.has-hover ? (Theme.ink.with-alpha(0.8)) : (Theme.ink)) : (ta.has-hover ? Theme.line : Theme.soft);
     border-width: root.primary ? 0px : 1px;
     border-color: Theme.line;
     lbl := Text {
@@ -126,7 +144,7 @@ component PButton inherits Rectangle {
         font-family: "Inter";
         font-size: 13px;
         font-weight: 600;
-        color: root.primary ? (Theme.neutral ? Theme.bg : Theme.hero-ink) : Theme.ink;
+        color: root.primary ? (Theme.bg) : Theme.ink;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -161,7 +179,7 @@ component PSwitch inherits Rectangle {
     width: 40px;
     height: 24px;
     border-radius: 12px;
-    background: root.checked ? Theme.dot : (ta.has-hover ? Theme.mute : Theme.track-off);
+    background: root.checked ? Theme.c-cpu : (ta.has-hover ? Theme.mute : Theme.track-off);
     Rectangle {
         x: root.checked ? 19px : 3px;
         y: 3px;
@@ -203,18 +221,31 @@ component Seg inherits Rectangle {
     in property <[string]> labels;
     in property <int> current;
     in property <bool> on: true;
+    // The panel's own control: 30 px high with 12.5 px text (Settings keeps 34 px).
+    in property <bool> dense: false;
+    // A small icon before each label.
+    in property <[image]> icons;
+    // Only the icons, no labels (each segment keeps its accessible name).
+    in property <bool> icon-only: false;
+    property <length> lead: (root.icons.length > 0 && !root.icon-only) ? 18px : 0px;
     callback picked(int);
     width: row.preferred-width + 4px;
-    height: 34px;
+    height: root.dense ? 30px : 34px;
     background: Theme.soft;
     border-radius: 8px;
     row := HorizontalLayout {
         x: 2px;
         y: 2px;
-        height: 30px;
+        height: root.dense ? 26px : 30px;
         for label[i] in root.labels: Rectangle {
-            width: measure.preferred-width + 20px;
+            width: root.icon-only ? 34px : measure.preferred-width + root.lead + (root.icons.length > 0 ? 10px : (root.dense ? 18px : 20px));
             border-radius: 6px;
+            accessible-role: radio-button;
+            accessible-label: label;
+            accessible-checked: i == root.current;
+            accessible-action-default => {
+                root.picked(i);
+            }
             background: i == root.current ? Theme.bg : (ta.has-hover ? Theme.line.with-alpha(0.6) : transparent);
             drop-shadow-blur: i == root.current ? 2px : 0px;
             drop-shadow-offset-y: 1px;
@@ -224,14 +255,26 @@ component Seg inherits Rectangle {
                 visible: false;
                 text: label;
                 font-family: "Inter";
-                font-size: 13px;
+                font-size: root.dense ? 12.5px : 13px;
                 font-weight: 600;
             }
 
+            if root.icons.length > 0: Image {
+                x: root.icon-only ? (parent.width - 14px) / 2 : (parent.width - root.lead - measure.preferred-width) / 2;
+                y: (parent.height - 14px) / 2;
+                width: 14px;
+                height: 14px;
+                source: root.icons[i];
+                colorize: i == root.current ? Theme.ink : Theme.mute;
+            }
+
             Text {
+                visible: !root.icon-only;
+                x: root.lead;
+                width: parent.width - root.lead;
                 text: label;
                 font-family: "Inter";
-                font-size: 13px;
+                font-size: root.dense ? 12.5px : 13px;
                 font-weight: i == root.current ? 600 : 400;
                 color: i == root.current ? Theme.ink : (ta.has-hover ? Theme.ink : Theme.mute);
                 horizontal-alignment: center;
@@ -288,31 +331,31 @@ component Scroll inherits Rectangle {
     }
 }
 
+// Expanded view: Processor and Memory tiles, "B Tighter" (175 x 118).
 component Hero inherits Rectangle {
     in property <string> label;
     in property <string> big;
     in property <string> sub;
-    // " · restart?" after the sub line, in the warning colour.
+    // " · restart?" after the sub line, in the warning color.
     in property <bool> restart: false;
     in property <string> line;
     in property <string> fill;
     in property <color> ink;
     in property <color> tile-bg;
-    // Colour of the sparkline (the text colour unless the Neutral theme sets one).
+    // Color of the sparkline (the tile's own accent).
     in property <color> spark;
-    // Neutral: a coloured square before the label.
-    in property <bool> square: false;
+    // A colored square before the label.
     in property <bool> outlined: false;
     background: tile-bg;
     border-radius: 14px;
     border-width: root.outlined ? 1px : 0px;
     border-color: Theme.line;
-    height: 136px;
-    width: 173px;
+    height: 118px;
+    width: 175px;
 
-    if root.square: Rectangle {
-        x: 12px;
-        y: 14px;
+    Rectangle {
+        x: 10px;
+        y: 13px;
         width: 8px;
         height: 8px;
         border-radius: 2px;
@@ -320,9 +363,9 @@ component Hero inherits Rectangle {
     }
 
     Text {
-        x: root.square ? 26px : 12px;
-        y: 9px;
-        width: parent.width - 24px - (root.square ? 14px : 0px);
+        x: 24px;
+        y: 8px;
+        width: parent.width - 20px - (14px);
         height: 19px;
         text: root.label;
         font-family: "Inter";
@@ -334,24 +377,24 @@ component Hero inherits Rectangle {
     }
 
     Text {
-        x: 12px;
-        y: 30px;
-        width: parent.width - 24px;
-        height: 36px;
+        x: 10px;
+        y: 29px;
+        width: parent.width - 20px;
+        height: 29px;
         text: root.big;
         font-family: "Space Grotesk";
-        font-size: 34px;
+        font-size: 28px;
         font-weight: 700;
-        letter-spacing: -0.68px;
+        letter-spacing: -0.56px;
         color: root.ink;
         vertical-alignment: center;
     }
 
     Path {
-        x: 12px;
-        y: 73px;
-        width: 149px;
-        height: 34px;
+        x: 10px;
+        y: 64px;
+        width: parent.width - 20px;
+        height: 26px;
         viewbox-x: 0;
         viewbox-y: 0;
         viewbox-width: 149;
@@ -361,10 +404,10 @@ component Hero inherits Rectangle {
     }
 
     Path {
-        x: 12px;
-        y: 73px;
-        width: 149px;
-        height: 34px;
+        x: 10px;
+        y: 64px;
+        width: parent.width - 20px;
+        height: 26px;
         viewbox-x: 0;
         viewbox-y: 0;
         viewbox-width: 149;
@@ -376,9 +419,9 @@ component Hero inherits Rectangle {
     }
 
     sub-t := Text {
-        x: 12px;
-        y: 107px;
-        width: min(self.preferred-width, parent.width - 24px - (root.restart ? restart-t.preferred-width : 0px));
+        x: 10px;
+        y: 92px;
+        width: min(self.preferred-width, parent.width - 20px - (root.restart ? restart-t.preferred-width : 0px));
         height: 19px;
         text: root.sub;
         font-family: "Inter";
@@ -390,8 +433,8 @@ component Hero inherits Rectangle {
 
     restart-t := Text {
         visible: root.restart;
-        x: 12px + sub-t.width;
-        y: 107px;
+        x: 10px + sub-t.width;
+        y: 92px;
         height: 19px;
         text: " · restart?";
         font-family: "Inter";
@@ -402,6 +445,91 @@ component Hero inherits Rectangle {
     }
 }
 
+// Compact view: Processor or Memory as a half-width tile with the number and
+// a tiny chart (177 x 49).
+component MiniTile inherits Rectangle {
+    in property <string> label;
+    in property <string> big;
+    in property <length> big-size: 22px;
+    in property <string> line;
+    in property <string> fill;
+    in property <color> ink;
+    in property <color> tile-bg;
+    in property <color> spark;
+    in property <bool> outlined: false;
+    background: tile-bg;
+    border-radius: 10px;
+    border-width: root.outlined ? 1px : 0px;
+    border-color: Theme.line;
+    height: 49px;
+    width: 177px;
+    // The text column is as wide as its wider line; the chart takes the rest.
+    property <length> txt-w: max(lab.preferred-width + (12px), bigt.preferred-width);
+
+    Rectangle {
+        x: 9px;
+        y: 9px;
+        width: 8px;
+        height: 8px;
+        border-radius: 2px;
+        background: root.spark;
+    }
+
+    lab := Text {
+        x: 21px;
+        y: 6px;
+        height: 14px;
+        text: root.label;
+        font-family: "Inter";
+        font-size: 11.5px;
+        font-weight: 600;
+        color: root.ink.with-alpha(0.75);
+        vertical-alignment: center;
+    }
+
+    bigt := Text {
+        x: 9px;
+        y: 20px;
+        height: 23px;
+        text: root.big;
+        font-family: "Space Grotesk";
+        font-size: root.big-size;
+        font-weight: 700;
+        letter-spacing: -0.2px;
+        color: root.ink;
+        vertical-alignment: center;
+    }
+
+    Path {
+        x: 9px + root.txt-w + 8px;
+        y: 10px;
+        width: max(10px, root.width - 18px - root.txt-w - 8px);
+        height: 28px;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 149;
+        viewbox-height: 34;
+        commands: root.fill;
+        fill: root.spark.with-alpha(0.16);
+    }
+
+    Path {
+        x: 9px + root.txt-w + 8px;
+        y: 10px;
+        width: max(10px, root.width - 18px - root.txt-w - 8px);
+        height: 28px;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 149;
+        viewbox-height: 34;
+        commands: root.line;
+        stroke: root.spark;
+        stroke-width: 2px;
+        stroke-line-join: round;
+    }
+}
+
+// Expanded view: the bottom tiles (Graphics, Drive, Network), 114 x 83.
 component Tile inherits Rectangle {
     in property <string> k;
     in property <string> v;
@@ -411,13 +539,13 @@ component Tile inherits Rectangle {
     in property <color> accent;
     // No reading: the value text is smaller so "Not reported" fits.
     in property <bool> small-v: false;
-    height: 85px;
+    height: 83px;
     border-radius: 12px;
     background: Theme.soft;
 
-    if Theme.neutral: Rectangle {
-        x: 10px;
-        y: 14px;
+    Rectangle {
+        x: 9px;
+        y: 12px;
         width: 8px;
         height: 8px;
         border-radius: 2px;
@@ -425,9 +553,9 @@ component Tile inherits Rectangle {
     }
 
     Text {
-        x: Theme.neutral ? 24px : 10px;
-        y: 9px;
-        width: parent.width - 20px - (Theme.neutral ? 14px : 0px);
+        x: 23px;
+        y: 7px;
+        width: parent.width - 18px - (14px);
         height: 19px;
         text: root.k;
         font-family: "Inter";
@@ -439,13 +567,13 @@ component Tile inherits Rectangle {
     }
 
     Text {
-        x: 10px;
-        y: 28px;
-        width: parent.width - 20px;
-        height: 20px;
+        x: 9px;
+        y: 26px;
+        width: parent.width - 18px;
+        height: 19px;
         text: root.v;
         font-family: "Space Grotesk";
-        font-size: root.small-v ? 13px : 17px;
+        font-size: root.small-v ? 13px : 15.5px;
         font-weight: 700;
         color: Theme.ink;
         vertical-alignment: center;
@@ -453,9 +581,9 @@ component Tile inherits Rectangle {
     }
 
     Text {
-        x: 10px;
-        y: 48px;
-        width: parent.width - 20px;
+        x: 9px;
+        y: 45px;
+        width: parent.width - 18px;
         height: 19px;
         text: root.s;
         font-family: "Inter";
@@ -466,9 +594,9 @@ component Tile inherits Rectangle {
     }
 
     if root.bar: Rectangle {
-        x: 10px;
-        y: 72px;
-        width: parent.width - 20px;
+        x: 9px;
+        y: 70px;
+        width: parent.width - 18px;
         height: 5px;
         border-radius: 3px;
         background: Theme.line;
@@ -478,7 +606,7 @@ component Tile inherits Rectangle {
             width: parent.width * root.frac;
             height: parent.height;
             border-radius: 3px;
-            background: Theme.neutral ? root.accent : Theme.ink;
+            background: root.accent;
             animate width {
                 duration: Theme.motion;
                 easing: cubic-bezier(0.25, 0.1, 0.25, 1);
@@ -487,18 +615,107 @@ component Tile inherits Rectangle {
     }
 }
 
+// Compact view: one small figure of the footer row, "Graphics 13%" or
+// "C: 296 GB free": a muted word, the bold figure, more muted words.
+component FootFig inherits Rectangle {
+    in property <string> pre;
+    in property <string> val;
+    in property <string> post;
+    // A second bold figure (the network's up rate).
+    in property <string> val2;
+    in property <bool> warn: false;
+    // A colored square first, like the other tiles.
+    in property <color> accent: transparent;
+    width: row.preferred-width;
+    height: 17px;
+    row := HorizontalLayout {
+        spacing: 4px;
+        alignment: start;
+        Rectangle {
+            width: 7px;
+            Rectangle {
+                y: 5px;
+                width: 7px;
+                height: 7px;
+                border-radius: 2px;
+                background: root.accent;
+            }
+        }
+        if root.pre != "": Text {
+            text: root.pre;
+            font-family: "Inter";
+            font-size: 11.5px;
+            color: Theme.mute;
+            vertical-alignment: center;
+        }
+        if root.val != "": Text {
+            text: root.val;
+            font-family: "Inter";
+            font-size: 11.5px;
+            font-weight: 600;
+            color: root.warn ? Theme.warn : Theme.ink;
+            vertical-alignment: center;
+        }
+        if root.post != "": Text {
+            text: root.post;
+            font-family: "Inter";
+            font-size: 11.5px;
+            color: Theme.mute;
+            vertical-alignment: center;
+        }
+        if root.val2 != "": Text {
+            text: root.val2;
+            font-family: "Inter";
+            font-size: 11.5px;
+            font-weight: 600;
+            color: Theme.ink;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// An app's icon: the real icon, or a colored square with the first letter.
+component AppIcon inherits Rectangle {
+    in property <AppItem> item;
+    // Size of a real icon inside the square.
+    in property <length> img: 20px;
+    background: root.item.has-icon ? transparent : root.item.color;
+    border-radius: root.width / 4;
+    if root.item.has-icon: Image {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.img;
+        height: root.img;
+        source: root.item.icon;
+        image-fit: contain;
+    }
+    if !root.item.has-icon: Text {
+        text: root.item.letter;
+        font-family: "Inter";
+        font-size: root.width * 0.46;
+        font-weight: 700;
+        color: #ffffff;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
 component AppRow inherits Rectangle {
     in property <AppItem> item;
     in property <bool> last;
     in property <color> bar;
-    height: root.item.kind == 2 ? 30px : (root.item.kind == 3 ? 44px : 60px);
+    // The compact view's rows are one line high.
+    in property <bool> compact;
+    // The compact view's Linux row was clicked (or Space or Enter pressed).
+    callback toggled;
+    height: Metrics.row-h(root.item.kind, root.compact);
 
     // Before the first scan of the apps has finished.
     if root.item.kind == 3: Text {
         x: 2px;
-        y: 8px;
+        y: 0px;
         width: root.width - 4px;
-        height: 28px;
+        height: root.height;
         text: root.item.name;
         font-family: "Inter";
         font-size: 13px;
@@ -506,43 +723,25 @@ component AppRow inherits Rectangle {
         vertical-alignment: center;
     }
 
-    // Apps and the WSL machine.
-    if root.item.kind < 2: Rectangle {
-        if root.item.has-icon: Image {
-            x: 4px;
-            y: 18px;
+    // Expanded view: apps and the WSL machine, two lines.
+    if !root.compact && root.item.kind < 2: Rectangle {
+        AppIcon {
+            x: 2px;
+            y: 14px;
             width: 24px;
             height: 24px;
-            source: root.item.icon;
-            image-fit: contain;
-        }
-
-        if !root.item.has-icon: Rectangle {
-            x: 2px;
-            y: 16px;
-            width: 28px;
-            height: 28px;
-            border-radius: 7px;
-            background: root.item.color;
-            Text {
-                text: root.item.letter;
-                font-family: "Inter";
-                font-size: 13px;
-                font-weight: 700;
-                color: #ffffff;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
+            item: root.item;
+            img: 22px;
         }
 
         Text {
-            x: 40px;
-            y: 8px;
-            width: root.width - 40px - 2px - val.preferred-width - 10px;
+            x: 36px;
+            y: 5px;
+            width: root.width - 36px - 2px - val.preferred-width - 10px;
             height: 20px;
             text: root.item.name;
             font-family: "Inter";
-            font-size: 14px;
+            font-size: 13.5px;
             font-weight: 500;
             color: Theme.ink;
             vertical-alignment: center;
@@ -551,11 +750,11 @@ component AppRow inherits Rectangle {
 
         val := Text {
             x: root.width - 2px - self.preferred-width;
-            y: 8px;
+            y: 5px;
             height: 20px;
             text: root.item.value;
             font-family: "Inter";
-            font-size: 14px;
+            font-size: 13.5px;
             font-weight: 600;
             color: Theme.ink;
             horizontal-alignment: right;
@@ -563,13 +762,13 @@ component AppRow inherits Rectangle {
         }
 
         Text {
-            x: 40px;
-            y: 32px;
-            width: root.width - 40px - 2px - 90px - 10px;
+            x: 36px;
+            y: 29px;
+            width: root.width - 36px - 2px - 90px - 10px;
             height: 19px;
             text: root.item.detail;
             font-family: "Inter";
-            font-size: 13px;
+            font-size: 12.5px;
             color: Theme.mute;
             vertical-alignment: center;
             overflow: elide;
@@ -577,7 +776,7 @@ component AppRow inherits Rectangle {
 
         Rectangle {
             x: root.width - 2px - 90px;
-            y: 38px;
+            y: 36px;
             width: 90px;
             height: 5px;
             border-radius: 3px;
@@ -597,35 +796,225 @@ component AppRow inherits Rectangle {
         }
 
         Rectangle {
-            y: 59px;
+            y: 52px;
             height: (root.last || root.item.kind == 1) ? 0px : 1px;
             background: Theme.line;
         }
     }
 
-    // A Linux program inside WSL: indented, smaller.
-    if root.item.kind == 2: Rectangle {
-        Rectangle {
-            x: 8px;
-            y: 5px;
+    // Compact view: an app on one line, name, thin bar, figure. The figure
+    // column has one width, so the bars line up.
+    if root.compact && root.item.kind == 0: Rectangle {
+        AppIcon {
+            x: 2px;
+            y: 4px;
             width: 20px;
             height: 20px;
+            item: root.item;
+            img: 18px;
+        }
+
+        Text {
+            x: 30px;
+            y: 5px;
+            width: root.width - 2px - 54px - 8px - 56px - 8px - 30px;
+            height: 19px;
+            text: root.item.name;
+            font-family: "Inter";
+            font-size: 13px;
+            font-weight: 500;
+            color: Theme.ink;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Rectangle {
+            x: root.width - 2px - 54px - 8px - 56px;
+            y: 12px;
+            width: 56px;
+            height: 4px;
+            border-radius: 2px;
+            background: Theme.line;
+            clip: true;
+            Rectangle {
+                x: 0;
+                width: parent.width * root.item.frac;
+                height: parent.height;
+                border-radius: 2px;
+                background: root.bar;
+                animate width {
+                    duration: Theme.motion;
+                    easing: cubic-bezier(0.25, 0.1, 0.25, 1);
+                }
+            }
+        }
+
+        Text {
+            x: root.width - 2px - 54px;
+            y: 5px;
+            width: 54px;
+            height: 19px;
+            text: root.item.value;
+            font-family: "Inter";
+            font-size: 13px;
+            font-weight: 600;
+            color: Theme.ink;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+
+        Rectangle {
+            y: 28px;
+            height: root.last ? 0px : 1px;
+            background: Theme.line;
+        }
+    }
+
+    // Compact view: the Linux row. With programs inside it is a button that
+    // opens and closes the list (chevron on the right); a bare machine is a
+    // plain row.
+    if root.compact && (root.item.kind == 1 || root.item.kind >= 4): Rectangle {
+        property <bool> fold: root.item.kind >= 4;
+        property <length> tail: fold ? 26px : 0px;
+
+        Rectangle {
+            visible: fold && ta.has-hover;
+            y: 1px;
+            height: root.height - 2px;
+            border-radius: 6px;
+            background: Theme.soft;
+        }
+
+        AppIcon {
+            x: 2px;
+            y: 4px;
+            width: 20px;
+            height: 20px;
+            item: root.item;
+            img: 18px;
+        }
+
+        HorizontalLayout {
+            x: 30px;
+            y: 5px;
+            height: 19px;
+            width: root.width - 30px - 2px - tail - val-c.preferred-width - 8px;
+            alignment: start;
+            spacing: 6px;
+            Text {
+                text: root.item.name;
+                font-family: "Inter";
+                font-size: 13px;
+                font-weight: 500;
+                color: Theme.ink;
+                vertical-alignment: center;
+                overflow: elide;
+                min-width: 0px;
+            }
+
+            if root.item.detail != "": Text {
+                text: "· " + root.item.detail;
+                font-family: "Inter";
+                font-size: 12.5px;
+                color: Theme.mute;
+                vertical-alignment: center;
+                overflow: elide;
+                min-width: 0px;
+            }
+        }
+
+        val-c := Text {
+            x: root.width - 2px - tail - self.preferred-width;
+            y: 5px;
+            height: 19px;
+            text: root.item.value;
+            font-family: "Inter";
+            font-size: 13px;
+            font-weight: 600;
+            color: Theme.ink;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+
+        if fold: Path {
+            x: root.width - 2px - 18px + 2px;
+            y: 7px;
+            width: 14px;
+            height: 14px;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            commands: root.item.kind == 5 ? "M6 15 L12 9 L18 15" : "M6 9 L12 15 L18 9";
+            stroke: Theme.mute;
+            stroke-width: 1.6px;
+            stroke-line-cap: round;
+            stroke-line-join: round;
+        }
+
+        Rectangle {
+            y: 28px;
+            height: root.last ? 0px : 1px;
+            background: Theme.line;
+        }
+
+        fs := FocusScope {
+            enabled: fold;
+            accessible-role: button;
+            accessible-label: root.item.name + ", " + root.item.detail;
+            accessible-expandable: true;
+            accessible-expanded: root.item.kind == 5;
+            accessible-action-default => {
+                root.toggled();
+            }
+            key-pressed(e) => {
+                if (e.text == " " || e.text == "\n") {
+                    root.toggled();
+                    return accept;
+                }
+                return reject;
+            }
+        }
+
+        ta := TouchArea {
+            enabled: fold;
+            clicked => {
+                root.toggled();
+            }
+        }
+
+        Ring {
+            active: fold && fs.has-focus;
+            radius: 6px;
+        }
+    }
+
+    // A Linux program inside WSL: indented, smaller.
+    if root.item.kind == 2: Rectangle {
+        property <length> pad: root.compact ? 4px : 8px;
+        property <length> ic: 18px;
+        property <length> top: (root.height - self.ic) / 2;
+        Rectangle {
+            x: parent.pad;
+            y: parent.top;
+            width: parent.ic;
+            height: parent.ic;
             border-radius: 5px;
             background: root.item.color;
             if !root.item.has-mark: Text {
                 text: root.item.letter;
                 font-family: "Inter";
-                font-size: 11px;
+                font-size: 10.5px;
                 font-weight: 700;
                 color: #ffffff;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
             if root.item.has-mark: Path {
-                x: 4px;
-                y: 4px;
-                width: 12px;
-                height: 12px;
+                x: 3.5px;
+                y: 3.5px;
+                width: 11px;
+                height: 11px;
                 viewbox-x: 0;
                 viewbox-y: 0;
                 viewbox-width: 24;
@@ -642,17 +1031,17 @@ component AppRow inherits Rectangle {
         }
 
         HorizontalLayout {
-            x: 38px;
-            y: 5px;
-            height: 20px;
-            width: root.width - 38px - 2px - sub-val.preferred-width - 8px;
+            x: parent.pad + parent.ic + 8px;
+            y: parent.top;
+            height: parent.ic;
+            width: root.width - self.x - 2px - sub-val.preferred-width - 8px;
             alignment: start;
             spacing: 0px;
             // Busy or idle: a green dot, or a grey one.
             if root.item.state > 0: Rectangle {
                 width: 13px;
                 Rectangle {
-                    y: 6.5px;
+                    y: (parent.parent.height - 7px) / 2;
                     width: 7px;
                     height: 7px;
                     border-radius: 3.5px;
@@ -664,7 +1053,7 @@ component AppRow inherits Rectangle {
             Text {
                 text: root.item.name;
                 font-family: "Inter";
-                font-size: 13px;
+                font-size: 12.5px;
                 color: Theme.ink;
                 vertical-alignment: center;
                 overflow: elide;
@@ -687,15 +1076,15 @@ component AppRow inherits Rectangle {
             if root.item.agent: Rectangle {
                 width: badge-t.preferred-width + 10px;
                 height: 17px;
-                y: 1.5px;
+                y: 0.5px;
                 border-radius: 4px;
-                background: Theme.neutral ? Theme.c-cpu : Theme.mint;
+                background: Theme.c-cpu;
                 badge-t := Text {
                     text: "agent";
                     font-family: "Inter";
                     font-size: 11.5px;
                     font-weight: 600;
-                    color: Theme.neutral ? Theme.bg : #0d0f0e;
+                    color: Theme.bg;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
@@ -706,7 +1095,7 @@ component AppRow inherits Rectangle {
             if root.item.count != "": Text {
                 text: root.item.count;
                 font-family: "Inter";
-                font-size: 13px;
+                font-size: 12.5px;
                 color: Theme.mute;
                 vertical-alignment: center;
             }
@@ -714,11 +1103,11 @@ component AppRow inherits Rectangle {
 
         sub-val := Text {
             x: root.width - 2px - self.preferred-width;
-            y: 5px;
-            height: 20px;
+            y: parent.top;
+            height: parent.ic;
             text: root.item.value;
             font-family: "Inter";
-            font-size: 13px;
+            font-size: 12.5px;
             font-weight: 500;
             color: Theme.mute;
             horizontal-alignment: right;
@@ -726,10 +1115,58 @@ component AppRow inherits Rectangle {
         }
 
         Rectangle {
-            y: 29px;
-            height: root.item.group-end ? 1px : 0px;
+            y: root.height - 1px;
+            height: (root.item.group-end && !root.compact) ? 1px : 0px;
             background: Theme.line;
         }
+    }
+}
+
+// One line of the compact Settings screen: the name on the left, the control on the right.
+component CRow inherits Rectangle {
+    in property <string> name;
+    in property <length> ctl-w: 40px;
+    in property <length> ctl-h: 24px;
+    in property <bool> line: true;
+    in property <image> icon;
+    property <length> lead: root.icon.width > 0 ? 22px : 0px;
+    height: 32px;
+    if root.icon.width > 0: Image {
+        x: 0;
+        y: 8px;
+        width: 16px;
+        height: 16px;
+        source: root.icon;
+        colorize: Theme.ink;
+    }
+
+    Text {
+        x: root.lead;
+        y: 0;
+        width: root.width - root.ctl-w - 10px - root.lead;
+        height: 32px;
+        text: root.name;
+        font-family: "Inter";
+        font-size: 13px;
+        font-weight: 600;
+        color: Theme.ink;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    HorizontalLayout {
+        x: root.width - root.ctl-w;
+        y: (32px - root.ctl-h) / 2;
+        width: root.ctl-w;
+        height: root.ctl-h;
+        alignment: end;
+        @children
+    }
+
+    Rectangle {
+        y: root.height - 1px;
+        height: root.line ? 1px : 0px;
+        background: Theme.line;
     }
 }
 
@@ -740,11 +1177,22 @@ component SRow inherits Rectangle {
     in property <bool> warn: false;
     in property <length> ctl-w: 40px;
     in property <bool> line: true;
+    in property <image> icon;
+    property <length> lead: root.icon.width > 0 ? 24px : 0px;
     height: 8px + 20px + 1px + note-t.preferred-height + 9px;
-    Text {
+    if root.icon.width > 0: Image {
         x: 0;
+        y: 10px;
+        width: 16px;
+        height: 16px;
+        source: root.icon;
+        colorize: Theme.ink;
+    }
+
+    Text {
+        x: root.lead;
         y: 8px;
-        width: root.width - root.ctl-w - 12px;
+        width: root.width - root.ctl-w - 12px - root.lead;
         height: 20px;
         text: root.name;
         font-family: "Inter";
@@ -756,9 +1204,9 @@ component SRow inherits Rectangle {
     }
 
     note-t := Text {
-        x: 0;
+        x: root.lead;
         y: 29px;
-        width: root.width - root.ctl-w - 12px;
+        width: root.width - root.ctl-w - 12px - root.lead;
         text: root.note;
         wrap: word-wrap;
         font-family: "Inter";
@@ -814,8 +1262,14 @@ export component PanelWindow inherits Window {
     // Used instead of `foot` when a long key cap leaves it no room.
     in property <string> foot-short: "";
     in property <string> ago: "";
-    // Height given up when the work area is short (the Top apps list gets shorter).
-    in property <length> shrink: 0px;
+    // The compact view: half-width tiles, one-line rows, one footer row of figures.
+    in property <bool> compact: false;
+    // The window's height: set by the app for the view, the Linux list, the work
+    // area and the Settings sheet (see `panel_height` in src/view.rs).
+    in property <length> panel-h: 580px;
+    // The footer row's network figures.
+    in property <string> net-down: "";
+    in property <string> net-up: "";
     // Top apps: false sorts by memory, true by processor.
     in property <bool> sort-cpu: false;
     // The Settings screen.
@@ -838,31 +1292,49 @@ export component PanelWindow inherits Window {
     in property <string> version: "";
     callback close-clicked;
     callback sort-picked(int);
-    callback theme-picked(int);
     callback keep-toggled(bool);
     callback autostart-toggled(bool);
     callback refresh-picked(int);
     callback field-clicked;
     callback shortcut-toggled(bool);
     callback settings-shown;
+    // Appearance: 0 System, 1 Light, 2 Dark.
+    callback appearance-picked(int);
+    in property <int> appearance: 0;
     callback settings-hidden;
+    // The header button: switch between the expanded and the compact view.
+    callback view-toggled;
+    // The compact view's Linux row: open or close its list.
+    callback wsl-toggled;
 
-    // Follow a forced light or dark theme in the standard widgets as well.
-    property <int> scheme: Theme.force;
-    changed scheme => {
-        Palette.color-scheme = root.scheme == 2 ? ColorScheme.dark : (root.scheme == 1 ? ColorScheme.light : Palette.color-scheme);
+    // The standard widgets (the About Slint badge) follow the panel's theme.
+    property <bool> is-dark: Theme.dark;
+    changed is-dark => {
+        Palette.color-scheme = root.is-dark ? ColorScheme.dark : ColorScheme.light;
+    }
+    init => {
+        Palette.color-scheme = Theme.dark ? ColorScheme.dark : ColorScheme.light;
     }
 
     title: "Pulse";
     width: 380px;
-    height: 700px - root.shrink;
+    height: root.panel-h;
     no-frame: true;
     always-on-top: true;
     background: transparent;
     default-font-family: "Inter";
 
-    property <length> tiles-y: (root.has-battery ? 512px : 572px) - root.shrink;
-    property <color> bar: Theme.neutral ? (root.sort-cpu ? Theme.c-cpu : Theme.c-mem) : Theme.ink;
+    // Layout, from the top and from the bottom (the footer and the tiles keep
+    // their distance from the bottom edge, the list takes what is between).
+    property <length> px: root.compact ? 9px : 11px;
+    property <length> ib: root.compact ? 28px : 30px;
+    property <length> close-x: root.width - (root.compact ? 7px : 9px) - root.ib;
+    property <length> head-y: root.compact ? 100px : 191px;
+    property <length> list-y: root.compact ? 134px : 225px;
+    property <length> foot-y: root.compact ? root.height - (root.has-battery ? 52px : 33px) : root.height - 35px;
+    property <length> tiles-y: root.height - 43px - 83px - (root.has-battery ? 59px : 0px);
+    property <length> list-bottom: root.compact ? root.foot-y - 4px : root.tiles-y - 9px;
+    property <color> bar: ((root.sort-cpu ? Theme.c-cpu : Theme.c-mem));
 
     Rectangle {
         width: parent.width;
@@ -875,29 +1347,43 @@ export component PanelWindow inherits Window {
 
     // top: logo, name, buttons, status
     Image {
-        x: 17px;
-        y: 19px;
-        width: 22px;
-        height: 22px;
+        x: root.compact ? 13px : 15px;
+        y: 13px;
+        width: root.compact ? 20px : 22px;
+        height: self.width;
         source: @image-url("logo.svg");
     }
 
-    Text {
-        x: 47px;
-        y: 21.5px;
-        height: 17px;
+    title-t := Text {
+        x: root.compact ? 41px : 44px;
+        y: root.compact ? 14px : 15px;
+        height: 18px;
         text: "Pulse";
         font-family: "Space Grotesk";
-        font-size: 17px;
+        font-size: root.compact ? 15px : 16px;
         font-weight: 700;
         color: Theme.ink;
         vertical-alignment: center;
     }
 
     IconBtn {
-        x: 297px;
-        y: 13px;
+        x: root.close-x - 4px - 2 * root.ib;
+        y: 9px;
+        size: root.ib;
+        source: root.compact ? @image-url("view-expanded.svg") : @image-url("view-compact.svg");
+        label: root.compact ? "Switch to the expanded view" : "Switch to the compact view";
+        on: !root.settings-open;
+        clicked => {
+            root.view-toggled();
+        }
+    }
+
+    IconBtn {
+        x: root.close-x - 2px - root.ib;
+        y: 9px;
+        size: root.ib;
         source: @image-url("settings.svg");
+        label: "Settings";
         on: !root.settings-open;
         clicked => {
             root.settings-shown();
@@ -905,28 +1391,33 @@ export component PanelWindow inherits Window {
     }
 
     IconBtn {
-        x: 333px;
-        y: 13px;
+        x: root.close-x;
+        y: 9px;
+        size: root.ib;
         source: @image-url("close.svg");
+        label: "Hide the panel";
         on: !root.settings-open;
         clicked => {
             root.close-clicked();
         }
     }
 
-    Rectangle {
-        x: 17px;
-        y: 54px;
+    // The status line (expanded view). The compact header has no room for it:
+    // it names a warning in the warning color, after the title, and says
+    // nothing when all is well.
+    if !root.compact: Rectangle {
+        x: 15px;
+        y: 46px;
         width: 8px;
         height: 8px;
         border-radius: 4px;
         background: root.status-warn ? Theme.warn : Theme.dot;
     }
 
-    Text {
-        x: 32px;
-        y: 48px;
-        width: 335px;
+    if !root.compact: Text {
+        x: 30px;
+        y: 41px;
+        width: root.width - 30px - 14px;
         height: 19px;
         text: root.status;
         font-family: "Inter";
@@ -936,26 +1427,39 @@ export component PanelWindow inherits Window {
         overflow: elide;
     }
 
-    // tiles
-    Hero {
-        x: 13px;
-        y: 76px;
+    if root.compact && root.status-warn: Text {
+        x: title-t.x + title-t.preferred-width + 10px;
+        y: 14px;
+        width: max(0px, root.close-x - 4px - 2 * root.ib - 8px - self.x);
+        height: 18px;
+        text: root.status;
+        font-family: "Inter";
+        font-size: 12.5px;
+        font-weight: 500;
+        color: Theme.warn;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // tiles, expanded: B Tighter
+    if !root.compact: Hero {
+        x: 11px;
+        y: 64px;
         label: "Processor";
         big: root.cpu-big;
         sub: root.cpu-sub;
         restart: root.cpu-restart;
         line: root.cpu-line;
         fill: root.cpu-fill;
-        ink: Theme.neutral ? Theme.ink : Theme.hero-ink;
-        tile-bg: Theme.neutral ? Theme.soft : Theme.hero-bg;
-        spark: Theme.neutral ? Theme.c-cpu : Theme.hero-ink;
-        square: Theme.neutral;
-        outlined: Theme.neutral;
+        ink: Theme.ink;
+        tile-bg: Theme.soft;
+        spark: Theme.c-cpu;
+        outlined: true;
     }
 
-    Hero {
+    if !root.compact: Hero {
         x: 194px;
-        y: 76px;
+        y: 64px;
         label: "Memory";
         big: root.mem-big;
         sub: root.mem-sub;
@@ -963,26 +1467,53 @@ export component PanelWindow inherits Window {
         fill: root.mem-fill;
         ink: Theme.ink;
         tile-bg: Theme.soft;
-        spark: Theme.neutral ? Theme.c-mem : Theme.ink;
-        square: Theme.neutral;
+        spark: Theme.c-mem;
+    }
+
+    // tiles, compact: A Mini tiles
+    if root.compact: MiniTile {
+        x: 9px;
+        y: 43px;
+        label: "Processor";
+        big: root.cpu-big;
+        line: root.cpu-line;
+        fill: root.cpu-fill;
+        ink: Theme.ink;
+        tile-bg: Theme.soft;
+        spark: Theme.c-cpu;
+        outlined: true;
+    }
+
+    if root.compact: MiniTile {
+        x: 194px;
+        y: 43px;
+        label: "Memory";
+        big: root.mem-big;
+        big-size: 19px;
+        line: root.mem-line;
+        fill: root.mem-fill;
+        ink: Theme.ink;
+        tile-bg: Theme.soft;
+        spark: Theme.c-mem;
     }
 
     // top apps header
     Text {
-        x: 13px;
-        y: 234px;
+        x: root.px;
+        y: root.head-y + 8px;
         height: 14px;
         text: "Top apps";
         font-family: "Inter";
-        font-size: 14px;
+        font-size: root.compact ? 13px : 13.5px;
         font-weight: 600;
         color: Theme.ink;
         vertical-alignment: center;
     }
 
     Seg {
-        x: root.width - 13px - self.width;
-        y: 224px;
+        x: root.width - root.px - self.width;
+        y: root.head-y;
+        dense: true;
         labels: ["Memory", "Processor"];
         current: root.sort-cpu ? 1 : 0;
         on: !root.settings-open;
@@ -991,12 +1522,12 @@ export component PanelWindow inherits Window {
         }
     }
 
-    // The list fills the space down to the tiles and scrolls when it does not fit.
+    // The list fills the space down to the tiles (or the footer) and scrolls when it does not fit.
     apps-scroll := Scroll {
-        x: 13px;
-        y: 262px;
-        width: 354px;
-        height: root.tiles-y - 262px - 4px;
+        x: root.px;
+        y: root.list-y;
+        width: root.width - 2 * root.px;
+        height: root.list-bottom - root.list-y;
         content-h: list.preferred-height;
         list := VerticalLayout {
             y: 0px;
@@ -1007,15 +1538,19 @@ export component PanelWindow inherits Window {
                 item: item;
                 last: i == root.apps.length - 1;
                 bar: root.bar;
+                compact: root.compact;
+                toggled => {
+                    root.wsl-toggled();
+                }
             }
         }
     }
 
-    // bottom row of tiles
-    Tile {
-        x: 13px;
+    // bottom row of tiles (expanded)
+    if !root.compact: Tile {
+        x: 11px;
         y: root.tiles-y;
-        width: 112.67px;
+        width: 114px;
         k: "Graphics";
         v: root.gpu-big;
         s: root.gpu-missing ? "" : "3D engine";
@@ -1025,10 +1560,10 @@ export component PanelWindow inherits Window {
         accent: Theme.c-gpu;
     }
 
-    Tile {
-        x: 133.67px;
+    if !root.compact: Tile {
+        x: 133px;
         y: root.tiles-y;
-        width: 112.67px;
+        width: 114px;
         k: "Drive C: free";
         v: root.drive-big;
         s: root.drive-sub;
@@ -1036,10 +1571,10 @@ export component PanelWindow inherits Window {
         accent: Theme.c-drive;
     }
 
-    Tile {
-        x: 254.33px;
+    if !root.compact: Tile {
+        x: 255px;
         y: root.tiles-y;
-        width: 112.67px;
+        width: 114px;
         k: "Network";
         v: root.net-big;
         s: root.net-sub;
@@ -1047,15 +1582,15 @@ export component PanelWindow inherits Window {
         accent: Theme.c-net;
     }
 
-    if root.has-battery: Rectangle {
-        x: 13px;
-        y: 605px - root.shrink;
-        width: 354px;
+    if !root.compact && root.has-battery: Rectangle {
+        x: 11px;
+        y: root.height - 93px;
+        width: 358px;
         height: 50px;
         border-radius: 12px;
         background: Theme.soft;
         Text {
-            x: 10px;
+            x: 9px;
             y: 6px;
             height: 19px;
             text: "Battery";
@@ -1067,20 +1602,20 @@ export component PanelWindow inherits Window {
         }
 
         Text {
-            x: 10px;
-            y: 26px;
-            height: 20px;
+            x: 9px;
+            y: 25px;
+            height: 19px;
             text: root.bat-big;
             font-family: "Space Grotesk";
-            font-size: 17px;
+            font-size: 15.5px;
             font-weight: 700;
             color: Theme.ink;
             vertical-alignment: center;
         }
 
         Text {
-            x: 76px;
-            y: 28px;
+            x: 72px;
+            y: 25px;
             width: 140px;
             height: 19px;
             text: root.bat-sub;
@@ -1092,7 +1627,7 @@ export component PanelWindow inherits Window {
         }
 
         Rectangle {
-            x: parent.width - 10px - 110px;
+            x: parent.width - 9px - 110px;
             y: 22.5px;
             width: 110px;
             height: 5px;
@@ -1116,15 +1651,53 @@ export component PanelWindow inherits Window {
     // footer
     Rectangle {
         x: 1px;
-        y: root.height - 39px;
+        y: root.foot-y;
         width: root.width - 2px;
         height: 1px;
         background: Theme.line;
     }
 
-    if root.cap != "": Rectangle {
-        x: 17px;
-        y: root.height - 29px;
+    // footer, compact: small figures in one row (the battery has a second line)
+    if root.compact: HorizontalLayout {
+        x: 13px;
+        y: root.foot-y + 7px;
+        width: root.width - 26px;
+        height: 17px;
+        alignment: start;
+        spacing: 10px;
+        FootFig {
+            pre: "Graphics";
+            val: root.gpu-missing ? "n/a" : root.gpu-big;
+            accent: Theme.c-gpu;
+        }
+
+        FootFig {
+            pre: "C:";
+            val: root.drive-big;
+            post: "free";
+            accent: Theme.c-drive;
+        }
+
+        FootFig {
+            val: root.net-down;
+            val2: root.net-up;
+            accent: Theme.c-net;
+        }
+    }
+
+    if root.compact && root.has-battery: FootFig {
+        x: 13px;
+        y: root.foot-y + 26px;
+        pre: "Battery";
+        val: root.bat-big;
+        post: "· " + root.bat-sub;
+        warn: root.bat-low;
+    }
+
+    // footer, expanded: the shortcut and the age of the reading
+    if !root.compact && root.cap != "": Rectangle {
+        x: 15px;
+        y: root.foot-y + 8px;
         width: cap-measure.preferred-width + 12px;
         height: 18px;
         background: Theme.soft;
@@ -1144,9 +1717,9 @@ export component PanelWindow inherits Window {
         }
     }
 
-    Text {
-        x: root.cap != "" ? 17px + cap-measure.preferred-width + 12px + 4px : 17px;
-        y: root.height - 30px;
+    if !root.compact: Text {
+        x: root.cap != "" ? 15px + cap-measure.preferred-width + 12px + 4px : 15px;
+        y: root.foot-y + 7px;
         width: 262px - self.x;
         height: 19px;
         text: (root.cap != "" && foot-measure.preferred-width > self.width) ? root.foot-short : root.foot;
@@ -1157,9 +1730,9 @@ export component PanelWindow inherits Window {
         overflow: elide;
     }
 
-    Text {
+    if !root.compact: Text {
         x: 255px;
-        y: root.height - 30px;
+        y: root.foot-y + 7px;
         width: 110px;
         height: 19px;
         text: root.ago;
@@ -1188,7 +1761,7 @@ export component PanelWindow inherits Window {
     }
 
     // The Settings screen, a layer over the whole panel.
-    if root.settings-open: Rectangle {
+    if root.settings-open && !root.compact: Rectangle {
         width: root.width;
         height: root.height;
         background: Theme.bg;
@@ -1245,10 +1818,19 @@ export component PanelWindow inherits Window {
                 // (click it to record), then one line of help.
                 Rectangle {
                     height: 8px + 24px + 6px + 34px + 6px + shortcut-note.preferred-height + 9px;
-                    Text {
+                    Image {
                         x: 0;
+                        y: 12px;
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("keyboard.svg");
+                        colorize: Theme.ink;
+                    }
+
+                    Text {
+                        x: 24px;
                         y: 8px;
-                        width: parent.width - 52px;
+                        width: parent.width - 52px - 24px;
                         height: 24px;
                         horizontal-alignment: left;
                         text: "Open and close shortcut";
@@ -1280,8 +1862,8 @@ export component PanelWindow inherits Window {
                         height: 34px;
                         border-radius: 8px;
                         border-width: root.field-state == 2 ? 2px : 1px;
-                        background: root.field-state == 2 ? (Theme.neutral ? Theme.soft : Theme.hero-bg) : (root.field-state == 3 ? Theme.warn.with-alpha(0.08) : (field-ta.has-hover ? Theme.line : Theme.soft));
-                        border-color: root.field-state == 2 ? Theme.dot : (root.field-state == 3 ? Theme.warn : (field-ta.has-hover ? Theme.mute : Theme.line));
+                        background: root.field-state == 2 ? Theme.c-cpu.with-alpha(0.14) : (root.field-state == 3 ? Theme.warn.with-alpha(0.08) : (field-ta.has-hover ? Theme.line : Theme.soft));
+                        border-color: root.field-state == 2 ? Theme.c-cpu : (root.field-state == 3 ? Theme.warn : (field-ta.has-hover ? Theme.mute : Theme.line));
                         Text {
                             x: 12px;
                             width: parent.width - 24px - hint-t.preferred-width - 8px;
@@ -1343,20 +1925,23 @@ export component PanelWindow inherits Window {
                 }
 
                 SRow {
-                    name: "Colours";
-                    note: "Neutral: a colour per tile.";
-                    ctl-w: 150px;
+                    name: "Appearance";
+                    note: "Follows your PC.";
+                    icon: @image-url("sun.svg");
+                    ctl-w: 204px;
                     Seg {
-                        labels: ["Mint", "Neutral"];
-                        current: Theme.neutral ? 1 : 0;
+                        icons: [@image-url("monitor.svg"), @image-url("sun.svg"), @image-url("moon.svg")];
+                        labels: ["System", "Light", "Dark"];
+                        current: root.appearance;
                         picked(i) => {
-                            root.theme-picked(i);
+                            root.appearance-picked(i);
                         }
                     }
                 }
 
                 SRow {
                     name: "Keep open when I click away";
+                    icon: @image-url("pin.svg");
                     note: "Stays open until you press Esc or the x.";
                     PSwitch {
                         checked: root.keep-open;
@@ -1368,6 +1953,7 @@ export component PanelWindow inherits Window {
 
                 SRow {
                     name: "Start with Windows";
+                    icon: @image-url("power.svg");
                     note: root.autostart-other ? "Another copy of Pulse starts with Windows." : "Opens in the tray when you sign in.";
                     PSwitch {
                         checked: root.autostart;
@@ -1379,6 +1965,7 @@ export component PanelWindow inherits Window {
 
                 SRow {
                     name: "Refresh while hidden";
+                    icon: @image-url("refresh.svg");
                     note: "Always 2 s while open.";
                     ctl-w: 136px;
                     Seg {
@@ -1391,16 +1978,25 @@ export component PanelWindow inherits Window {
                 }
 
                 // About: the version, and Slint's own attribution widget (its
-                // Royalty-free licence asks for it on an About screen), scaled down.
+                // Royalty-free license asks for it on an About screen), scaled down.
                 Rectangle {
                     height: 62px;
-                    Text {
+                    Image {
                         x: 0;
+                        y: 23px;
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("info.svg");
+                        colorize: Theme.ink;
+                    }
+
+                    Text {
+                        x: 24px;
                         y: 0;
-                        width: parent.width - 150px;
+                        width: parent.width - 112px - 24px;
                         height: parent.height;
                         horizontal-alignment: left;
-                        text: "Pulse " + root.version + "\nLicences are in the install folder.";
+                        text: "Pulse " + root.version + "\nLicenses are in the install folder.";
                         font-family: "Inter";
                         font-size: 12px;
                         color: Theme.mute;
@@ -1409,7 +2005,7 @@ export component PanelWindow inherits Window {
                     }
 
                     Rectangle {
-                        // The widget centres its logo in 128 px; push that box
+                        // The widget centers its logo in 128 px; push that box
                         // right so the logo ends near the switches' edge.
                         x: parent.width - 92px;
                         y: 4px;
@@ -1438,6 +2034,288 @@ export component PanelWindow inherits Window {
             primary: true;
             clicked => {
                 root.settings-hidden();
+            }
+        }
+    }
+
+    // The Settings screen in the compact view: the same width and height as the
+    // compact panel, one line per setting, no help notes (a note shows only
+    // while recording or when something went wrong), a back button in the
+    // header instead of Done, and a small About line at the bottom.
+    if root.settings-open && root.compact: Rectangle {
+        width: root.width;
+        height: root.height;
+        background: Theme.bg;
+        border-radius: 14px;
+        border-width: 1px;
+        border-color: Theme.line;
+        // Swallow clicks so nothing underneath reacts.
+        TouchArea { }
+
+        IconBtn {
+            x: 7px;
+            y: 7px;
+            size: 28px;
+            source: @image-url("back.svg");
+            label: "Close settings";
+            clicked => {
+                root.settings-hidden();
+            }
+        }
+
+        Text {
+            x: 42px;
+            y: 7px;
+            height: 28px;
+            text: "Settings";
+            font-family: "Space Grotesk";
+            font-size: 15px;
+            font-weight: 700;
+            color: Theme.ink;
+            vertical-alignment: center;
+        }
+
+        Rectangle {
+            x: 1px;
+            y: 42px;
+            width: root.width - 2px;
+            height: 1px;
+            background: Theme.line;
+        }
+
+        csc := Scroll {
+            x: 14px;
+            y: 43px;
+            width: root.width - 28px;
+            height: root.height - 43px - 29px;
+            content-h: crows.preferred-height;
+            crows := VerticalLayout {
+                y: 0px;
+                width: csc.width - 10px;
+                alignment: start;
+                if root.save-failed: Rectangle {
+                    height: csave.preferred-height + 12px;
+                    csave := Text {
+                        x: 0;
+                        y: 6px;
+                        width: parent.width;
+                        text: "Couldn't save settings. Changes will be lost when Pulse closes.";
+                        wrap: word-wrap;
+                        font-family: "Inter";
+                        font-size: 12px;
+                        font-weight: 600;
+                        color: Theme.warn;
+                    }
+                }
+                // Shortcut: name, the field that records, the switch.
+                Rectangle {
+                    height: 32px + (root.hotkey-warn || root.field-state == 2 ? cnote.preferred-height + 6px : 0px);
+                    Image {
+                        x: 0;
+                        y: 8px;
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("keyboard.svg");
+                        colorize: Theme.ink;
+                    }
+
+                    Text {
+                        x: 22px;
+                        y: 0;
+                        width: 60px;
+                        height: 32px;
+                        text: "Shortcut";
+                        font-family: "Inter";
+                        font-size: 13px;
+                        font-weight: 600;
+                        color: Theme.ink;
+                        vertical-alignment: center;
+                    }
+
+                    cfield := Rectangle {
+                        x: 86px;
+                        y: 3px;
+                        width: parent.width - 86px - 48px;
+                        height: 26px;
+                        border-radius: 8px;
+                        border-width: root.field-state == 2 ? 2px : 1px;
+                        background: root.field-state == 2 ? Theme.c-cpu.with-alpha(0.14) : (root.field-state == 3 ? Theme.warn.with-alpha(0.08) : (cfield-ta.has-hover ? Theme.line : Theme.soft));
+                        border-color: root.field-state == 2 ? Theme.c-cpu : (root.field-state == 3 ? Theme.warn : (cfield-ta.has-hover ? Theme.mute : Theme.line));
+                        Text {
+                            x: 10px;
+                            width: parent.width - 20px - chint.preferred-width - 8px;
+                            text: root.key-text;
+                            font-family: "Inter";
+                            font-size: 13px;
+                            font-weight: 600;
+                            color: root.field-state == 3 ? Theme.warn : (root.field-state == 1 ? Theme.mute : Theme.ink);
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+
+                        chint := Text {
+                            x: parent.width - self.preferred-width - 10px;
+                            text: root.key-hint;
+                            font-family: "Inter";
+                            font-size: 11.5px;
+                            color: Theme.mute;
+                            vertical-alignment: center;
+                        }
+
+                        cfield-fs := FocusScope {
+                            key-pressed(e) => {
+                                if (e.text == " " || e.text == "\n") {
+                                    root.field-clicked();
+                                    return accept;
+                                }
+                                return reject;
+                            }
+                        }
+
+                        cfield-ta := TouchArea {
+                            clicked => {
+                                root.field-clicked();
+                            }
+                        }
+
+                        Ring {
+                            active: cfield-fs.has-focus;
+                        }
+                    }
+
+                    Rectangle {
+                        x: parent.width - 40px;
+                        y: 4px;
+                        width: 40px;
+                        height: 24px;
+                        PSwitch {
+                            checked: root.shortcut-on;
+                            toggled(v) => {
+                                root.shortcut-toggled(v);
+                            }
+                        }
+                    }
+
+                    cnote := Text {
+                        visible: root.hotkey-warn || root.field-state == 2;
+                        x: 0;
+                        y: 32px;
+                        width: parent.width;
+                        text: root.hotkey-note;
+                        wrap: word-wrap;
+                        font-family: "Inter";
+                        font-size: 12px;
+                        color: root.hotkey-warn ? Theme.warn : Theme.mute;
+                    }
+
+                    Rectangle {
+                        y: parent.height - 1px;
+                        height: 1px;
+                        background: Theme.line;
+                    }
+                }
+
+                CRow {
+                    name: "Appearance";
+                    icon: @image-url("sun.svg");
+                    ctl-w: 108px;
+                    ctl-h: 30px;
+                    Seg {
+                        dense: true;
+                        icon-only: true;
+                        icons: [@image-url("monitor.svg"), @image-url("sun.svg"), @image-url("moon.svg")];
+                        labels: ["System", "Light", "Dark"];
+                        current: root.appearance;
+                        picked(i) => {
+                            root.appearance-picked(i);
+                        }
+                    }
+                }
+
+                CRow {
+                    name: "Keep open when I click away";
+                    icon: @image-url("pin.svg");
+                    PSwitch {
+                        checked: root.keep-open;
+                        toggled(v) => {
+                            root.keep-toggled(v);
+                        }
+                    }
+                }
+
+                CRow {
+                    name: "Start with Windows";
+                    icon: @image-url("power.svg");
+                    PSwitch {
+                        checked: root.autostart;
+                        toggled(v) => {
+                            root.autostart-toggled(v);
+                        }
+                    }
+                }
+
+                CRow {
+                    name: "Refresh while hidden";
+                    icon: @image-url("refresh.svg");
+                    ctl-w: 124px;
+                    ctl-h: 30px;
+                    line: false;
+                    Seg {
+                        dense: true;
+                        labels: ["2 s", "5 s", "10 s"];
+                        current: root.refresh;
+                        picked(i) => {
+                            root.refresh-picked(i);
+                        }
+                    }
+                }
+            }
+        }
+
+        // About: the version and Slint's own attribution widget, small, on one line.
+        Rectangle {
+            x: 1px;
+            y: root.height - 29px;
+            width: root.width - 2px;
+            height: 1px;
+            background: Theme.line;
+        }
+
+        Image {
+            x: 14px;
+            y: root.height - 28px + 5.5px;
+            width: 16px;
+            height: 16px;
+            source: @image-url("info.svg");
+            colorize: Theme.ink;
+        }
+
+        Text {
+            x: 36px;
+            y: root.height - 28px;
+            width: root.width - 36px - 14px - 70px;
+            height: 27px;
+            text: "Pulse " + root.version + " · Licenses are in the install folder.";
+            font-family: "Inter";
+            font-size: 11.5px;
+            color: Theme.mute;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Rectangle {
+            x: root.width - 14px - 67px;
+            y: root.height - 28px;
+            width: 67px;
+            height: 27px;
+            clip: true;
+            AboutSlint {
+                x: 0;
+                y: 0;
+                width: 256px;
+                height: 108px;
+                transform-scale: 0.26;
+                transform-origin: { x: 0px, y: 0px };
             }
         }
     }

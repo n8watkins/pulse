@@ -2,7 +2,7 @@
 # Sends no keys, makes no clicks, never takes the focus, never touches the
 # clipboard, and stops only the processes it started (by the recorded PID).
 #
-# -CasesFile is a JSON file: [{"name": "mint-light", "env": {"PULSE_THEME": "light", ...}}, ...]
+# -CasesFile is a JSON file: [{"name": "light", "env": {"PULSE_THEME": "light", ...}}, ...]
 # Every start gets its own PULSE_SETTINGS_DIR and PULSE_INSTANCE_NAME, PULSE_SHOW=1
 # and the exe is started under a copy name so it is never mistaken for a real Pulse.
 # Writes <name>.png and shots.json (window rectangle, dpi, work area, gaps, styles).
