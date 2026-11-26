@@ -49,6 +49,12 @@ export struct AppItem {
     agent: bool,
     count: string,
     group-end: bool,
+    // A Linux program with a product mark: the glyph path (24 x 24) replaces
+    // the letter on a tile in the brand colour (`color`).
+    has-mark: bool,
+    mark-path: string,
+    mark-dark-ink: bool,
+    mark-ring: bool,
 }
 
 // A keyboard-focus ring, drawn over a control while it has focus.
@@ -602,7 +608,7 @@ component AppRow inherits Rectangle {
             height: 20px;
             border-radius: 5px;
             background: root.item.color;
-            Text {
+            if !root.item.has-mark: Text {
                 text: root.item.letter;
                 font-family: "Inter";
                 font-size: 11px;
@@ -610,6 +616,24 @@ component AppRow inherits Rectangle {
                 color: #ffffff;
                 horizontal-alignment: center;
                 vertical-alignment: center;
+            }
+            if root.item.has-mark: Path {
+                x: 4px;
+                y: 4px;
+                width: 12px;
+                height: 12px;
+                viewbox-x: 0;
+                viewbox-y: 0;
+                viewbox-width: 24;
+                viewbox-height: 24;
+                commands: root.item.mark-path;
+                fill: root.item.mark-dark-ink ? #000000 : #ffffff;
+            }
+            // Near-black brands: a faint edge so the tile shows on the dark panel.
+            if root.item.has-mark && root.item.mark-ring: Rectangle {
+                border-radius: 5px;
+                border-width: 1px;
+                border-color: Theme.dark ? #ffffff30 : #00000000;
             }
         }
 

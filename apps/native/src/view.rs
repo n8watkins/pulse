@@ -1,8 +1,9 @@
 //! Turns readings into the strings, colours and sparkline paths the panel shows.
 //! No toolkit types here, so it is plain code and unit tested on any machine.
 
+use crate::marks::{self, Mark};
 use pulse_platform::Sort;
-use pulse_readings::{AppRow, Snapshot, Wsl};
+use pulse_readings::{AppRow, Snapshot, Wsl, WslProc};
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
@@ -132,6 +133,8 @@ pub struct AppView {
     pub count: String,
     /// Last row of a WSL group: a hairline closes it.
     pub group_end: bool,
+    /// Sub rows: the product mark that replaces the letter, when one is known.
+    pub mark: Option<Mark>,
 }
 
 /// Everything the panel shows, as plain data.
@@ -263,20 +266,24 @@ pub fn stress_snapshot(snap: &mut Snapshot) {
         mem_bytes: 5 * (1 << 30),
         cpu_pct: 8.0,
         procs: vec![
-            wsl_proc(&first_label(), true, 12, 900),
+            wsl_proc(&first_label(), true, 12, 900, 3.0),
             wsl_proc(
                 "Claude Code with an extremely long label indeed",
                 true,
                 123,
                 800,
+                2.0,
             ),
             wsl_proc(
                 "python3: /home/user/projects/some/very/long/path/server.py",
                 false,
                 2,
                 400,
+                1.0,
             ),
-            wsl_proc("rust-analyzer", false, 1, 300),
+            wsl_proc("rust-analyzer", false, 1, 300, 0.5),
+            wsl_proc("Claude Code", true, 3, 250, 0.4),
+            wsl_proc("chrome-headless-shell", false, 4, 200, 0.3),
         ],
     });
 }
@@ -295,12 +302,13 @@ fn first_label() -> String {
     }
 }
 
-fn wsl_proc(label: &str, agent: bool, count: u32, mem_mb: u64) -> pulse_readings::WslProc {
-    pulse_readings::WslProc {
+fn wsl_proc(label: &str, agent: bool, count: u32, mem_mb: u64, cpu: f32) -> WslProc {
+    WslProc {
         label: label.into(),
         agent,
         count,
         mem_bytes: mem_mb * (1 << 20),
+        cpu_pct: cpu,
     }
 }
 
@@ -439,6 +447,7 @@ fn app_view(a: &AppRow, sort: Sort, wsl: Option<&Wsl>, max: f64) -> AppView {
         agent: false,
         count: String::new(),
         group_end: false,
+        mark: None,
     }
 }
 
@@ -468,7 +477,75 @@ fn reading_row() -> AppView {
         agent: false,
         count: String::new(),
         group_end: false,
+        mark: None,
     }
+}
+
+/// Linux program rows shown under the WSL row.
+const SUB_ROWS: usize = 6;
+
+/// Share of the machine the Linux processor bars are scaled against at least.
+const SUB_CPU_BAR_FLOOR: f64 = 1.0;
+
+/// The Linux rows for the chosen sort: the first [`SUB_ROWS`] programs by
+/// memory, or by processor (memory breaks ties), with the same value as the
+/// app rows above them.
+#[allow(clippy::cast_precision_loss)]
+fn sub_rows(w: &Wsl, sort: Sort) -> Vec<AppView> {
+    let mut procs: Vec<&WslProc> = w.procs.iter().collect();
+    match sort {
+        Sort::Memory => procs.sort_by(|a, b| {
+            b.mem_bytes
+                .cmp(&a.mem_bytes)
+                .then_with(|| a.label.cmp(&b.label))
+        }),
+        Sort::Processor => procs.sort_by(|a, b| {
+            b.cpu_pct
+                .total_cmp(&a.cpu_pct)
+                .then_with(|| b.mem_bytes.cmp(&a.mem_bytes))
+                .then_with(|| a.label.cmp(&b.label))
+        }),
+    }
+    procs.truncate(SUB_ROWS);
+    let amount = |p: &WslProc| match sort {
+        Sort::Memory => p.mem_bytes as f64,
+        Sort::Processor => f64::from(p.cpu_pct),
+    };
+    let top = procs.iter().map(|p| amount(p)).fold(
+        if sort == Sort::Memory {
+            1.0
+        } else {
+            SUB_CPU_BAR_FLOOR
+        },
+        f64::max,
+    );
+    procs
+        .into_iter()
+        .map(|p| {
+            let mark = marks::for_label(&p.label);
+            AppView {
+                kind: RowKind::Sub,
+                letter: p.label.chars().next().map(String::from).unwrap_or_default(),
+                rgb: mark.map_or_else(|| hsl_rgb(hue(&p.label), 0.45, 0.45), |m| m.rgb),
+                name: p.label.clone(),
+                detail: String::new(),
+                value: match sort {
+                    Sort::Memory => format_bytes(p.mem_bytes),
+                    Sort::Processor => cpu_text(p.cpu_pct),
+                },
+                frac: (amount(p) / top).clamp(0.0, 1.0) as f32,
+                path: None,
+                agent: p.agent,
+                count: if p.count > 1 {
+                    format!("\u{d7}{}", p.count)
+                } else {
+                    String::new()
+                },
+                group_end: false,
+                mark,
+            }
+        })
+        .collect()
 }
 
 /// The "Top apps" rows for the chosen sort: the apps, the WSL row when WSL
@@ -521,32 +598,7 @@ pub fn app_rows(snap: &Snapshot, sort: Sort) -> Vec<AppView> {
         let is_wsl_row = row.kind == RowKind::Wsl;
         rows.push(row);
         if let (true, Some(w)) = (is_wsl_row, wsl) {
-            let top = w
-                .procs
-                .iter()
-                .map(|p| p.mem_bytes)
-                .max()
-                .unwrap_or(1)
-                .max(1);
-            for p in &w.procs {
-                rows.push(AppView {
-                    kind: RowKind::Sub,
-                    letter: p.label.chars().next().map(String::from).unwrap_or_default(),
-                    rgb: hsl_rgb(hue(&p.label), 0.45, 0.45),
-                    name: p.label.clone(),
-                    detail: String::new(),
-                    value: format_bytes(p.mem_bytes),
-                    frac: (p.mem_bytes as f64 / top as f64) as f32,
-                    path: None,
-                    agent: p.agent,
-                    count: if p.count > 1 {
-                        format!("\u{d7}{}", p.count)
-                    } else {
-                        String::new()
-                    },
-                    group_end: false,
-                });
-            }
+            rows.extend(sub_rows(w, sort));
             if let Some(last) = rows.last_mut().filter(|r| r.kind == RowKind::Sub) {
                 last.group_end = true;
             }
@@ -953,6 +1005,169 @@ mod tests {
         let w = rows.iter().find(|r| r.kind == RowKind::Wsl).unwrap();
         assert_eq!(w.detail, "Linux virtual machine");
         assert!(rows.iter().all(|r| !r.group_end));
+    }
+
+    fn subs(rows: &[AppView]) -> Vec<&AppView> {
+        rows.iter().filter(|r| r.kind == RowKind::Sub).collect()
+    }
+
+    #[test]
+    fn linux_rows_follow_the_sort_like_every_other_row() {
+        let mut snap = sample();
+        // The sample's figures move with its clock: pin them.
+        for p in &mut snap.wsl.as_mut().unwrap().procs {
+            p.cpu_pct = match p.label.as_str() {
+                "next-server (v16.4.6)" => 0.9,
+                "chrome-headless-shell" => 0.6,
+                "Claude Code" => 0.4,
+                _ => 0.05,
+            };
+        }
+        let w = snap.wsl.as_ref().unwrap();
+        // Memory sort: sizes, biggest first (unchanged).
+        let mem = app_rows(&snap, Sort::Memory);
+        let m = subs(&mem);
+        assert!(m.iter().all(|r| r.value.ends_with("MB")), "{m:?}");
+        let by_mem: Vec<&str> = {
+            let mut p: Vec<_> = w.procs.iter().collect();
+            p.sort_by_key(|p| std::cmp::Reverse(p.mem_bytes));
+            p.iter().map(|p| p.label.as_str()).collect()
+        };
+        assert_eq!(
+            m.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            by_mem
+        );
+        // Processor sort: percent with one decimal, busiest first.
+        let cpu = app_rows(&snap, Sort::Processor);
+        let c = subs(&cpu);
+        assert_eq!(c.len(), w.procs.len());
+        assert!(c.iter().all(|r| r.value.ends_with('%')), "{c:?}");
+        let by_cpu: Vec<&str> = {
+            let mut p: Vec<_> = w.procs.iter().collect();
+            p.sort_by(|a, b| b.cpu_pct.total_cmp(&a.cpu_pct));
+            p.iter().map(|p| p.label.as_str()).collect()
+        };
+        assert_eq!(
+            c.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            by_cpu
+        );
+        assert_eq!(c[0].name, "next-server (v16.4.6)");
+        assert_eq!(c[0].value, "0.9%");
+        assert_eq!(c[1].value, "0.6%");
+        // Bars are scaled to at least 1% of the machine.
+        assert!((c[0].frac - 0.9).abs() < 1e-5, "{}", c[0].frac);
+        // The group still closes with its hairline.
+        assert!(c.last().unwrap().group_end);
+    }
+
+    #[test]
+    fn linux_processor_ties_fall_back_to_memory_and_bars_have_a_floor() {
+        let mut snap = sample();
+        let w = snap.wsl.as_mut().unwrap();
+        for p in &mut w.procs {
+            p.cpu_pct = 0.0;
+        }
+        let rows = app_rows(&snap, Sort::Processor);
+        let c = subs(&rows);
+        assert_eq!(c[0].name, "Claude Code");
+        assert!(c.iter().all(|r| r.value == "0.0%" && r.frac == 0.0));
+        // A busy 2% program fills the bar by itself; 0.5% against it is a quarter.
+        let w = snap.wsl.as_mut().unwrap();
+        w.procs[0].cpu_pct = 2.0;
+        w.procs[1].cpu_pct = 0.5;
+        let rows = app_rows(&snap, Sort::Processor);
+        let c = subs(&rows);
+        assert!((c[0].frac - 1.0).abs() < 1e-6);
+        assert!((c[1].frac - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn only_six_linux_rows_are_shown_in_either_sort() {
+        let mut snap = sample();
+        let w = snap.wsl.as_mut().unwrap();
+        for i in 0..4u8 {
+            w.procs.push(WslProc {
+                label: format!("tool{i}"),
+                mem_bytes: 1 << 20,
+                // The smallest in memory but the busiest.
+                cpu_pct: 5.0 + f32::from(i),
+                ..WslProc::default()
+            });
+        }
+        let mem = app_rows(&snap, Sort::Memory);
+        assert_eq!(subs(&mem).len(), SUB_ROWS);
+        assert!(subs(&mem).iter().all(|r| !r.name.starts_with("tool")));
+        let cpu = app_rows(&snap, Sort::Processor);
+        let c = subs(&cpu);
+        assert_eq!(c.len(), SUB_ROWS);
+        assert_eq!(
+            c.iter()
+                .take(4)
+                .map(|r| r.name.as_str())
+                .collect::<Vec<_>>(),
+            ["tool3", "tool2", "tool1", "tool0"]
+        );
+    }
+
+    #[test]
+    fn linux_rows_get_their_mark_or_keep_the_letter() {
+        let mut snap = sample();
+        snap.wsl.as_mut().unwrap().procs = [
+            "Claude Code",
+            "VS Code server",
+            "Codex CLI",
+            "next-server (v16.4.6)",
+            "chrome-headless-shell",
+            "rust-analyzer",
+            "Editor server",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, l)| WslProc {
+            label: (*l).into(),
+            mem_bytes: (100 - i as u64) << 20,
+            ..WslProc::default()
+        })
+        .collect();
+        let rows = app_rows(&snap, Sort::Memory);
+        let find = |n: &str| rows.iter().find(|r| r.name == n).unwrap().clone();
+        let claude = find("Claude Code");
+        assert_eq!(claude.mark.map(|m| m.slug), Some("claude"));
+        assert_eq!(claude.rgb, [0xD9, 0x77, 0x57]);
+        assert_eq!(
+            find("next-server (v16.4.6)").mark.map(|m| m.slug),
+            Some("nextdotjs")
+        );
+        assert_eq!(
+            find("chrome-headless-shell").mark.map(|m| m.slug),
+            Some("googlechrome")
+        );
+        for (name, slug) in [
+            ("VS Code server", "visualstudiocode"),
+            ("Codex CLI", "openai"),
+            ("rust-analyzer", "rust"),
+        ] {
+            assert_eq!(find(name).mark.map(|m| m.slug), Some(slug), "{name}");
+        }
+        // Cursor's and Windsurf's server has no mark: the letter tile stays,
+        // in the hashed colour. (Only the first six rows by memory are shown.)
+        snap.wsl.as_mut().unwrap().procs[0].mem_bytes = 1;
+        let rows2 = app_rows(&snap, Sort::Memory);
+        let r = rows2.iter().find(|r| r.name == "Editor server").unwrap();
+        assert!(r.mark.is_none());
+        assert_eq!(r.rgb, hsl_rgb(hue("Editor server"), 0.45, 0.45));
+        assert_eq!(r.letter, "E");
+        // App rows never carry one, and the sort does not change the marks.
+        assert!(
+            rows.iter()
+                .filter(|r| r.kind != RowKind::Sub)
+                .all(|r| r.mark.is_none())
+        );
+        let cpu = app_rows(&snap, Sort::Processor);
+        assert_eq!(
+            subs(&cpu).iter().filter(|r| r.mark.is_some()).count(),
+            subs(&rows2).iter().filter(|r| r.mark.is_some()).count()
+        );
     }
 
     #[test]
