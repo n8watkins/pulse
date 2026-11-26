@@ -18,13 +18,12 @@ pub fn animations_enabled() -> bool {
 
 #[cfg(windows)]
 mod imp {
-    use windows_sys::Win32::Foundation::BOOL;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         SPI_GETCLIENTAREAANIMATION, SystemParametersInfoW,
     };
 
     pub fn animations_enabled() -> bool {
-        let mut on: BOOL = 1;
+        let mut on: i32 = 1;
         // SAFETY: SPI_GETCLIENTAREAANIMATION writes one BOOL through the pointer.
         let ok = unsafe {
             SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, (&raw mut on).cast(), 0)
