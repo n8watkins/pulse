@@ -8,7 +8,7 @@ pub mod single;
 
 mod settings;
 
-pub use settings::{Appearance, PanelView, Settings, Sort, settings_path};
+pub use settings::{Appearance, GroupsOpen, PanelView, Settings, Sort, settings_path};
 
 /// Whether the user wants animations (Windows "Animation effects" setting).
 /// True off Windows.

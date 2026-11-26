@@ -33,8 +33,13 @@ export global Theme {
 }
 
 export struct AppItem {
-    // 0 app, 1 WSL, 2 Linux program inside WSL, 3 "Reading apps..." placeholder.
+    // 0 app, 1 head of a group (WSL), 2 sub item of a group (Linux program),
+    // 3 "Reading apps..." placeholder.
     kind: int,
+    // A head with sub items: the group's id, and 0 no sub items (no chevron),
+    // 1 closed, 2 open.
+    group: string,
+    fold: int,
     letter: string,
     color: color,
     name: string,
@@ -69,8 +74,7 @@ component Ring inherits Rectangle {
 }
 
 // Sizes that both views share with src/view.rs (`row_height` and the compact
-// and expanded heights). Kinds: 0 app, 1 WSL, 2 Linux program, 3 reading,
-// 4 and 5 the compact view's Linux row (closed, open).
+// and expanded heights). Kinds: 0 app, 1 group head, 2 sub item, 3 reading.
 global Metrics {
     pure public function row-h(kind: int, compact: bool) -> length {
         if (compact) {
@@ -700,14 +704,40 @@ component AppIcon inherits Rectangle {
     }
 }
 
+// The chevron of a row with sub items: down when closed, up when open. The
+// box is 28 px; the whole row is the hit area.
+component FoldChevron inherits Rectangle {
+    in property <bool> open;
+    width: 28px;
+    height: 28px;
+    Path {
+        x: 7px;
+        y: 7px;
+        width: 14px;
+        height: 14px;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        commands: root.open ? "M6 15 L12 9 L18 15" : "M6 9 L12 15 L18 9";
+        stroke: Theme.mute;
+        stroke-width: 1.6px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+    }
+}
+
 component AppRow inherits Rectangle {
     in property <AppItem> item;
     in property <bool> last;
     in property <color> bar;
     // The compact view's rows are one line high.
     in property <bool> compact;
-    // The compact view's Linux row was clicked (or Space or Enter pressed).
-    callback toggled;
+    // A row with sub items was clicked (or Space or Enter pressed): its group id.
+    callback toggled(string);
+    // A group head with sub items: chevron, summary when closed, the toggle.
+    property <bool> foldable: root.item.kind == 1 && root.item.fold != 0;
+    property <bool> is-open: root.item.fold == 2;
     height: Metrics.row-h(root.item.kind, root.compact);
 
     // Before the first scan of the apps has finished.
@@ -723,6 +753,15 @@ component AppRow inherits Rectangle {
         vertical-alignment: center;
     }
 
+    // Pointer over a row that opens and closes.
+    Rectangle {
+        visible: root.foldable && ta.has-hover;
+        y: 1px;
+        height: root.height - 2px;
+        border-radius: 6px;
+        background: Theme.soft;
+    }
+
     // Expanded view: apps and the WSL machine, two lines.
     if !root.compact && root.item.kind < 2: Rectangle {
         AppIcon {
@@ -734,10 +773,12 @@ component AppRow inherits Rectangle {
             img: 22px;
         }
 
-        Text {
+        nm := Text {
             x: 36px;
             y: 5px;
-            width: root.width - 36px - 2px - val.preferred-width - 10px;
+            width: root.foldable
+                ? min(self.preferred-width, root.width - 36px - 2px - val.preferred-width - 10px - 28px)
+                : root.width - 36px - 2px - val.preferred-width - 10px;
             height: 20px;
             text: root.item.name;
             font-family: "Inter";
@@ -746,6 +787,12 @@ component AppRow inherits Rectangle {
             color: Theme.ink;
             vertical-alignment: center;
             overflow: elide;
+        }
+
+        if root.foldable: FoldChevron {
+            x: 36px + nm.width - 3px;
+            y: 1px;
+            open: root.is-open;
         }
 
         val := Text {
@@ -797,7 +844,7 @@ component AppRow inherits Rectangle {
 
         Rectangle {
             y: 52px;
-            height: (root.last || root.item.kind == 1) ? 0px : 1px;
+            height: (root.last || root.is-open) ? 0px : 1px;
             background: Theme.line;
         }
     }
@@ -870,20 +917,10 @@ component AppRow inherits Rectangle {
         }
     }
 
-    // Compact view: the Linux row. With programs inside it is a button that
-    // opens and closes the list (chevron on the right); a bare machine is a
-    // plain row.
-    if root.compact && (root.item.kind == 1 || root.item.kind >= 4): Rectangle {
-        property <bool> fold: root.item.kind >= 4;
-        property <length> tail: fold ? 26px : 0px;
-
-        Rectangle {
-            visible: fold && ta.has-hover;
-            y: 1px;
-            height: root.height - 2px;
-            border-radius: 6px;
-            background: Theme.soft;
-        }
+    // Compact view: a group head (the Linux row). With sub items it opens and
+    // closes them (chevron on the right); a bare machine is a plain row.
+    if root.compact && root.item.kind == 1: Rectangle {
+        property <length> tail: root.foldable ? 26px : 0px;
 
         AppIcon {
             x: 2px;
@@ -936,56 +973,16 @@ component AppRow inherits Rectangle {
             vertical-alignment: center;
         }
 
-        if fold: Path {
-            x: root.width - 2px - 18px + 2px;
-            y: 7px;
-            width: 14px;
-            height: 14px;
-            viewbox-x: 0;
-            viewbox-y: 0;
-            viewbox-width: 24;
-            viewbox-height: 24;
-            commands: root.item.kind == 5 ? "M6 15 L12 9 L18 15" : "M6 9 L12 15 L18 9";
-            stroke: Theme.mute;
-            stroke-width: 1.6px;
-            stroke-line-cap: round;
-            stroke-line-join: round;
+        if root.foldable: FoldChevron {
+            x: root.width - 28px;
+            y: 0.5px;
+            open: root.is-open;
         }
 
         Rectangle {
             y: 28px;
             height: root.last ? 0px : 1px;
             background: Theme.line;
-        }
-
-        fs := FocusScope {
-            enabled: fold;
-            accessible-role: button;
-            accessible-label: root.item.name + ", " + root.item.detail;
-            accessible-expandable: true;
-            accessible-expanded: root.item.kind == 5;
-            accessible-action-default => {
-                root.toggled();
-            }
-            key-pressed(e) => {
-                if (e.text == " " || e.text == "\n") {
-                    root.toggled();
-                    return accept;
-                }
-                return reject;
-            }
-        }
-
-        ta := TouchArea {
-            enabled: fold;
-            clicked => {
-                root.toggled();
-            }
-        }
-
-        Ring {
-            active: fold && fs.has-focus;
-            radius: 6px;
         }
     }
 
@@ -1119,6 +1116,42 @@ component AppRow inherits Rectangle {
             height: (root.item.group-end && !root.compact) ? 1px : 0px;
             background: Theme.line;
         }
+    }
+
+    // A row with sub items is one button: click anywhere on it, or Space or
+    // Enter while it has the keyboard focus, opens or closes the list. Nothing
+    // else on a row is clickable, so the whole row can be the target.
+    fs := FocusScope {
+        enabled: root.foldable;
+        accessible-role: button;
+        accessible-label: (root.is-open ? "Collapse " : "Expand ") + root.item.name;
+        accessible-description: root.item.detail;
+        accessible-expandable: true;
+        accessible-expanded: root.is-open;
+        accessible-action-default => {
+            root.toggled(root.item.group);
+        }
+        key-pressed(e) => {
+            if (e.text == " " || e.text == "\n") {
+                root.toggled(root.item.group);
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.foldable;
+        clicked => {
+            root.toggled(root.item.group);
+        }
+    }
+
+    Ring {
+        y: 1px;
+        height: root.height - 2px;
+        active: root.foldable && fs.has-focus;
+        radius: 6px;
     }
 }
 
@@ -1304,8 +1337,8 @@ export component PanelWindow inherits Window {
     callback settings-hidden;
     // The header button: switch between the expanded and the compact view.
     callback view-toggled;
-    // The compact view's Linux row: open or close its list.
-    callback wsl-toggled;
+    // A row with sub items (its group id): open or close its list.
+    callback group-toggled(string);
 
     // The standard widgets (the About Slint badge) follow the panel's theme.
     property <bool> is-dark: Theme.dark;
@@ -1539,8 +1572,8 @@ export component PanelWindow inherits Window {
                 last: i == root.apps.length - 1;
                 bar: root.bar;
                 compact: root.compact;
-                toggled => {
-                    root.wsl-toggled();
+                toggled(group) => {
+                    root.group-toggled(group);
                 }
             }
         }

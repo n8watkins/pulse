@@ -4,7 +4,7 @@
 use crate::logic::{self, ClickAction, Pending, PendingAction, Throttle, Toggle};
 use crate::record::{self, Mods, Pressed, Step};
 use crate::tray;
-use crate::view::{self, Dot, History, RowKind};
+use crate::view::{self, Dot, Fold, History, RowKind};
 use crate::win::{self, Hwnd};
 use pulse_platform::hotkey::{Combo, Listener};
 use pulse_platform::{Appearance, PanelView, Settings, Sort, autostart, single};
@@ -48,7 +48,7 @@ struct Config {
     open_settings: bool,
     /// PULSE_VIEW=compact|expanded: start in that view whatever the settings file says.
     view: Option<PanelView>,
-    /// PULSE_WSL_OPEN=0|1: start with the compact view's Linux list closed or open.
+    /// PULSE_WSL_OPEN=0|1: start with the Linux list closed or open, in both views.
     wsl_open: Option<bool>,
     /// PULSE_DEMO_SHORTCUT=recording|keys|taken|failed|invalid: show that state of the
     /// shortcut field without any key press (for screenshots).
@@ -334,7 +334,7 @@ impl Panel {
             &l.extra,
             &l.hist,
             self.sample,
-            mode,
+            &mode,
             Instant::now(),
             l.apps_at,
         );
@@ -391,8 +391,12 @@ impl Panel {
                         RowKind::Wsl => 1,
                         RowKind::Sub => 2,
                         RowKind::Reading => 3,
-                        RowKind::WslClosed => 4,
-                        RowKind::WslOpen => 5,
+                    },
+                    group: a.group.into(),
+                    fold: match a.fold {
+                        Fold::None => 0,
+                        Fold::Closed => 1,
+                        Fold::Open => 2,
                     },
                     has_icon: icon.is_some(),
                     icon: icon.unwrap_or_default(),
@@ -434,7 +438,7 @@ impl Panel {
         view::Mode {
             sort: s.sort,
             view: s.view,
-            wsl_open: s.wsl_open,
+            open: s.groups_open.clone(),
         }
     }
 
@@ -465,11 +469,13 @@ impl Panel {
         self.apply_latest();
     }
 
-    /// The compact view's Linux row: open or close its list, and remember it.
-    fn toggle_wsl(&self) {
+    /// A row with sub items (its group id): open or close its list in the
+    /// current view, and remember it.
+    fn toggle_group(&self, id: &str) {
         {
             let mut s = self.settings.borrow_mut();
-            s.wsl_open = !s.wsl_open;
+            let view = s.view;
+            s.groups_open.toggle(view, id);
         }
         self.save();
         self.apply_latest();
@@ -1082,7 +1088,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         settings.view = v;
     }
     if let Some(open) = cfg.wsl_open {
-        settings.wsl_open = open;
+        for view in [PanelView::Expanded, PanelView::Compact] {
+            settings.groups_open.set(view, view::GROUP_WSL, open);
+        }
     }
 
     // Owns the panel so it is never a taskbar or Alt+Tab window, not even
@@ -1229,7 +1237,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         .ui
         .on_settings_hidden(|| with_panel(|p| p.close_settings()));
     panel.ui.on_view_toggled(|| with_panel(|p| p.toggle_view()));
-    panel.ui.on_wsl_toggled(|| with_panel(|p| p.toggle_wsl()));
+    panel
+        .ui
+        .on_group_toggled(|id| with_panel(|p| p.toggle_group(&id)));
     panel.ui.on_sort_picked(|i| {
         with_panel(|p| {
             p.set_sort(if i == 1 {
