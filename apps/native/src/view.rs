@@ -1,8 +1,8 @@
-//! Turns readings into the strings, colours and sparkline paths the panel shows.
+//! Turns readings into the strings, colors and sparkline paths the panel shows.
 //! No toolkit types here, so it is plain code and unit tested on any machine.
 
 use crate::marks::{self, Mark};
-use pulse_platform::Sort;
+use pulse_platform::{PanelView, Sort};
 use pulse_readings::{AppRow, Snapshot, Wsl, WslProc};
 use std::collections::VecDeque;
 use std::fmt::Write as _;
@@ -20,17 +20,44 @@ pub const APPS_STALE: Duration = Duration::from_secs(10);
 const FIG_W: f32 = 149.0;
 const FIG_H: f32 = 34.0;
 
-/// Logical height of the panel when everything fits, and the vertical pitch of
-/// one "Top apps" row (the rows start at 262.4 in the design).
-pub const PANEL_H: f32 = 700.0;
-const ROW_PITCH: f32 = 60.15;
+/// Logical height of the expanded view when everything fits (380 x 580, the
+/// "B Tighter" layout), and the vertical pitch of one two-line "Top apps" row.
+/// The sizes here and in `ui/panel.slint` (`Metrics`) are the same numbers.
+pub const EXPANDED_H: f32 = 580.0;
+const ROW_PITCH: f32 = 53.0;
 /// Rows shown at full height, without and with the battery strip.
-const ROWS_FULL: usize = 5;
-const ROWS_FULL_BATTERY: usize = 4;
+const ROWS_FULL: usize = 4;
+const ROWS_FULL_BATTERY: usize = 3;
 /// The list never gives up more than this: two rows always stay.
 pub const MIN_ROWS: usize = 2;
 
-/// How the panel fits a work area that may be shorter than [`PANEL_H`].
+/// The compact view ("A Mini tiles"): the part above the list (header 43,
+/// Processor and Memory tiles 49, a gap of 8, the "Top apps" line 34), the
+/// 4 px under the list, the footer row (one line 32, with the battery line
+/// 51) and the panel's own bottom border.
+const COMPACT_ABOVE_LIST: f32 = 134.0;
+const COMPACT_BELOW_LIST: f32 = 4.0;
+const COMPACT_FOOT_1: f32 = 32.0;
+const COMPACT_FOOT_2: f32 = 51.0;
+const COMPACT_BORDER: f32 = 1.0;
+/// The compact panel never grows beyond this, then the list scrolls.
+pub const COMPACT_MAX_H: f32 = 620.0;
+/// The compact view lists this many apps before the Linux row.
+pub const COMPACT_APPS: usize = 3;
+
+/// Height of one list row in the given view.
+pub fn row_height(kind: RowKind, compact: bool) -> f32 {
+    match (kind, compact) {
+        (RowKind::App | RowKind::Wsl | RowKind::WslClosed | RowKind::WslOpen, false) => ROW_PITCH,
+        (RowKind::Sub, false) => 24.0,
+        (RowKind::Reading, false) => 40.0,
+        (RowKind::App | RowKind::Wsl | RowKind::WslClosed | RowKind::WslOpen, true) => 29.0,
+        (RowKind::Sub, true) => 22.0,
+        (RowKind::Reading, true) => 36.0,
+    }
+}
+
+/// How the expanded panel fits a work area that may be shorter than [`EXPANDED_H`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Layout {
     /// "Top apps" rows that fit at full size (the list scrolls beyond them).
@@ -43,7 +70,30 @@ pub struct Layout {
 
 impl Layout {
     pub fn height(self) -> f32 {
-        PANEL_H - self.shrink
+        EXPANDED_H - self.shrink
+    }
+}
+
+/// Height of the compact panel: what the rows need, never more than
+/// [`COMPACT_MAX_H`] or the room (`avail_h`), never less than two rows.
+/// The battery adds a second line to the footer row.
+pub fn compact_height(rows: &[AppView], battery: bool, avail_h: f32) -> f32 {
+    let list: f32 = rows.iter().map(|r| row_height(r.kind, true)).sum();
+    let foot = if battery {
+        COMPACT_FOOT_2
+    } else {
+        COMPACT_FOOT_1
+    };
+    let chrome = COMPACT_ABOVE_LIST + COMPACT_BELOW_LIST + foot + COMPACT_BORDER;
+    let least = chrome + MIN_ROWS as f32 * row_height(RowKind::App, true);
+    (chrome + list).min(COMPACT_MAX_H).min(avail_h).max(least)
+}
+
+/// The height of the view itself (no Settings sheet).
+pub fn view_height(view: PanelView, rows: &[AppView], battery: bool, avail_h: f32) -> f32 {
+    match view {
+        PanelView::Expanded => fit(avail_h, battery).height(),
+        PanelView::Compact => compact_height(rows, battery, avail_h),
     }
 }
 
@@ -111,6 +161,11 @@ pub enum RowKind {
     Sub,
     /// "Reading apps..." before the first scan has finished.
     Reading,
+    /// Compact view: the Linux row that opens and closes the list of Linux
+    /// programs under it (closed, with a chevron pointing down).
+    WslClosed,
+    /// The same row with its list open (chevron up).
+    WslOpen,
 }
 
 /// One row of "Top apps", ready to draw.
@@ -125,7 +180,7 @@ pub struct AppView {
     pub value: String,
     /// Bar length, 0 to 1, scaled to the top row.
     pub frac: f32,
-    /// Executable path, for the real icon; `None` shows the coloured letter.
+    /// Executable path, for the real icon; `None` shows the colored letter.
     pub path: Option<String>,
     /// Sub rows: a coding agent.
     pub agent: bool,
@@ -143,7 +198,7 @@ pub struct View {
     pub status: Status,
     pub cpu_big: String,
     pub cpu_sub: String,
-    /// Uptime reached a week: " \u{b7} restart?" follows in the warning colour.
+    /// Uptime reached a week: " \u{b7} restart?" follows in the warning color.
     pub cpu_restart: bool,
     pub cpu_line: String,
     pub cpu_fill: String,
@@ -155,7 +210,7 @@ pub struct View {
     pub tiles: Tiles,
 }
 
-/// The line under the title and its dot colour.
+/// The line under the title and its dot color.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Status {
     pub text: String,
@@ -174,12 +229,15 @@ pub struct Tiles {
     pub drive_frac: f32,
     pub net_big: String,
     pub net_sub: String,
+    /// The compact footer's figures: no space after the arrow.
+    pub net_down: String,
+    pub net_up: String,
     pub battery: Option<BatteryView>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BatteryView {
-    /// On battery at or under [`BATTERY_LOW`] percent: the bar takes the warning colour.
+    /// On battery at or under [`BATTERY_LOW`] percent: the bar takes the warning color.
     pub low: bool,
     pub big: String,
     pub sub: String,
@@ -607,16 +665,94 @@ pub fn app_rows(snap: &Snapshot, sort: Sort) -> Vec<AppView> {
     rows
 }
 
+/// What the panel is asked to show: the sort, the view, and (compact view)
+/// whether the Linux list is open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Mode {
+    pub sort: Sort,
+    pub view: PanelView,
+    pub wsl_open: bool,
+}
+
+#[cfg(test)]
+impl Mode {
+    /// The expanded view sorted by `sort` (its Linux list is always open).
+    pub fn expanded(sort: Sort) -> Self {
+        Self {
+            sort,
+            view: PanelView::Expanded,
+            wsl_open: true,
+        }
+    }
+}
+
+/// "14 programs · 5 agents": the Linux programs counted by their process
+/// count, and the coding agents among them. No agents: just the programs;
+/// nothing running inside: empty.
+pub fn wsl_summary(w: &Wsl) -> String {
+    let programs: u32 = w.procs.iter().map(|p| p.count.max(1)).sum();
+    let agents: u32 = w.procs.iter().filter(|p| p.agent).map(|p| p.count).sum();
+    let noun = |n: u32, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    match (programs, agents) {
+        (0, _) => String::new(),
+        (p, 0) => noun(p, "program", "programs"),
+        (p, a) => format!(
+            "{} \u{b7} {}",
+            noun(p, "program", "programs"),
+            noun(a, "agent", "agents")
+        ),
+    }
+}
+
+/// The compact view's rows: the three biggest apps for the sort, then one
+/// Linux row (always last, with its counts and a chevron) and, when the list
+/// is open, the Linux programs under it. Built from [`app_rows`], so the
+/// values, bars and the Linux rows are the same as in the expanded view.
+pub fn compact_rows(snap: &Snapshot, sort: Sort, wsl_open: bool) -> Vec<AppView> {
+    let mut apps = Vec::new();
+    let mut head = None;
+    let mut subs = Vec::new();
+    for r in app_rows(snap, sort) {
+        match r.kind {
+            RowKind::Wsl => head = Some(r),
+            RowKind::Sub => subs.push(r),
+            _ => apps.push(r),
+        }
+    }
+    apps.truncate(COMPACT_APPS.max(1));
+    if let Some(mut h) = head {
+        let summary = snap.wsl.as_ref().map(wsl_summary).unwrap_or_default();
+        if !summary.is_empty() {
+            h.kind = if wsl_open {
+                RowKind::WslOpen
+            } else {
+                RowKind::WslClosed
+            };
+            h.detail = summary;
+        }
+        let open = h.kind == RowKind::WslOpen;
+        apps.push(h);
+        if open {
+            for s in &mut subs {
+                s.group_end = false;
+            }
+            apps.extend(subs);
+        }
+    }
+    apps
+}
+
 #[allow(clippy::cast_precision_loss)]
 pub fn build(
     snap: &Snapshot,
     extra: &Extra,
     hist: &History,
     sample: bool,
-    sort: Sort,
+    mode: Mode,
     now: Instant,
     apps_at: Instant,
 ) -> View {
+    let sort = mode.sort;
     let used = snap.mem_used as f64;
     let total = snap.mem_total as f64;
     let (cpu_line, cpu_fill) = sparkline(&hist.cpu, now);
@@ -647,7 +783,10 @@ pub fn build(
         ),
         mem_line,
         mem_fill,
-        apps: app_rows(snap, sort),
+        apps: match mode.view {
+            PanelView::Expanded => app_rows(snap, sort),
+            PanelView::Compact => compact_rows(snap, sort, mode.wsl_open),
+        },
         tiles: tiles(extra),
     }
 }
@@ -674,6 +813,8 @@ fn tiles(x: &Extra) -> Tiles {
         drive_frac: used_share as f32,
         net_big: format!("\u{2193} {}/s", format_bytes(x.net_down_bps)),
         net_sub: format!("\u{2191} {}/s", format_bytes(x.net_up_bps)),
+        net_down: format!("\u{2193}{}/s", format_bytes(x.net_down_bps)),
+        net_up: format!("\u{2191}{}/s", format_bytes(x.net_up_bps)),
         battery: x.battery.map(|(pct, plugged)| BatteryView {
             low: !plugged && pct <= BATTERY_LOW,
             big: format!("{pct}%"),
@@ -900,7 +1041,7 @@ mod tests {
             &Extra::from_snapshot(&snap),
             &h,
             true,
-            Sort::Memory,
+            Mode::expanded(Sort::Memory),
             now,
             now,
         );
@@ -1150,7 +1291,7 @@ mod tests {
             assert_eq!(find(name).mark.map(|m| m.slug), Some(slug), "{name}");
         }
         // Cursor's and Windsurf's server has no mark: the letter tile stays,
-        // in the hashed colour. (Only the first six rows by memory are shown.)
+        // in the hashed color. (Only the first six rows by memory are shown.)
         snap.wsl.as_mut().unwrap().procs[0].mem_bytes = 1;
         let rows2 = app_rows(&snap, Sort::Memory);
         let r = rows2.iter().find(|r| r.name == "Editor server").unwrap();
@@ -1213,7 +1354,7 @@ mod tests {
                 &Extra::default(),
                 &History::default(),
                 false,
-                Sort::Memory,
+                Mode::expanded(Sort::Memory),
                 Instant::now(),
                 Instant::now()
             )
@@ -1225,7 +1366,7 @@ mod tests {
             &Extra::default(),
             &History::default(),
             false,
-            Sort::Memory,
+            Mode::expanded(Sort::Memory),
             Instant::now(),
             Instant::now(),
         );
@@ -1283,24 +1424,24 @@ mod tests {
     #[test]
     fn a_tall_work_area_shows_everything() {
         let l = fit(1000.0, false);
-        assert_eq!((l.rows, l.shrink, l.height()), (5, 0.0, 700.0));
-        assert_eq!(fit(700.0, false).rows, 5);
-        assert_eq!(fit(1000.0, true).rows, 4);
-        assert_eq!(fit(700.0, true).height(), 700.0);
+        assert_eq!((l.rows, l.shrink, l.height()), (4, 0.0, 580.0));
+        assert_eq!(fit(580.0, false).rows, 4);
+        assert_eq!(fit(1000.0, true).rows, 3);
+        assert_eq!(fit(580.0, true).height(), 580.0);
     }
 
     #[test]
     fn a_short_work_area_gives_up_rows_and_keeps_the_footer() {
-        // One row less frees 60 px.
-        let l = fit(680.0, false);
-        assert_eq!((l.rows, l.height()), (4, 640.0));
-        let l = fit(600.0, false);
-        assert_eq!((l.rows, l.height()), (3, 580.0));
-        let l = fit(520.0, false);
-        assert_eq!((l.rows, l.height()), (2, 520.0));
+        // One row less frees 53 px.
+        let l = fit(560.0, false);
+        assert_eq!((l.rows, l.height()), (3, 527.0));
+        let l = fit(500.0, false);
+        assert_eq!((l.rows, l.height()), (2, 474.0));
+        let l = fit(400.0, false);
+        assert_eq!((l.rows, l.height()), (2, 474.0), "two rows always stay");
         for h in (300..900).map(|h| h as f32) {
             let l = fit(h, h as i32 % 2 == 0);
-            assert!(l.rows >= MIN_ROWS && l.rows <= 5);
+            assert!(l.rows >= MIN_ROWS && l.rows <= ROWS_FULL);
             // Either it fits, or it is at the minimum.
             assert!(l.height() <= h || l.rows == MIN_ROWS, "{h}");
         }
@@ -1308,11 +1449,211 @@ mod tests {
 
     #[test]
     fn the_battery_strip_costs_a_row() {
-        assert_eq!(fit(1000.0, true).rows, 4);
-        assert_eq!(fit(640.0, true).rows, 3);
-        assert_eq!(fit(639.0, true).rows, 2);
+        assert_eq!(fit(1000.0, true).rows, 3);
+        assert_eq!(fit(580.0, true).rows, 3);
+        assert_eq!(fit(579.0, true).rows, 2);
         let l = fit(300.0, true);
         assert_eq!(l.rows, MIN_ROWS);
+    }
+
+    fn compact_of(snap: &Snapshot, sort: Sort, open: bool) -> Vec<AppView> {
+        compact_rows(snap, sort, open)
+    }
+
+    #[test]
+    fn compact_lists_three_apps_then_one_closed_linux_row() {
+        let snap = sample();
+        for sort in [Sort::Memory, Sort::Processor] {
+            let rows = compact_of(&snap, sort, false);
+            assert_eq!(rows.len(), COMPACT_APPS + 1, "{sort:?}");
+            assert!(rows[..COMPACT_APPS].iter().all(|r| r.kind == RowKind::App));
+            let head = rows.last().unwrap();
+            assert_eq!(head.kind, RowKind::WslClosed);
+            assert_eq!(head.name, "WSL (Linux)");
+            assert!(head.path.as_deref().is_some_and(|p| p.ends_with("wsl.exe")));
+        }
+        // The apps are the biggest ones for the sort, in the sort's order.
+        let by_mem = compact_of(&snap, Sort::Memory, false);
+        let names: Vec<&str> = snap
+            .apps
+            .iter()
+            .take(COMPACT_APPS)
+            .map(|a| a.name.as_str())
+            .collect();
+        assert_eq!(
+            by_mem[..COMPACT_APPS]
+                .iter()
+                .map(|r| r.name.as_str())
+                .collect::<Vec<_>>(),
+            names
+        );
+        let by_cpu = compact_of(&snap, Sort::Processor, false);
+        assert_eq!(by_cpu[0].name, snap.apps_by_cpu[0].name);
+        assert!(by_cpu[0].value.ends_with('%') && by_mem[0].value.ends_with('B'));
+        // The Linux row's value follows the sort too.
+        assert!(by_cpu.last().unwrap().value.ends_with('%'));
+        assert!(by_mem.last().unwrap().value.ends_with('B'));
+    }
+
+    #[test]
+    fn the_closed_linux_row_counts_programs_and_agents() {
+        let snap = sample();
+        let w = snap.wsl.as_ref().unwrap();
+        let programs: u32 = w.procs.iter().map(|p| p.count.max(1)).sum();
+        let agents: u32 = w.procs.iter().filter(|p| p.agent).map(|p| p.count).sum();
+        let rows = compact_of(&snap, Sort::Memory, false);
+        let head = rows.last().unwrap();
+        assert_eq!(
+            head.detail,
+            format!("{programs} programs \u{b7} {agents} agents")
+        );
+        // The sample: Claude Code x3 and Codex CLI x2 are agents.
+        assert_eq!((programs, agents), (18, 5));
+        assert_eq!(head.detail, "18 programs \u{b7} 5 agents");
+    }
+
+    #[test]
+    fn the_summary_handles_one_none_and_no_agents() {
+        let w = |procs: Vec<(bool, u32)>| Wsl {
+            mem_bytes: 1 << 30,
+            cpu_pct: 1.0,
+            procs: procs
+                .into_iter()
+                .map(|(agent, count)| wsl_proc("x", agent, count, 10, 0.0))
+                .collect(),
+        };
+        assert_eq!(wsl_summary(&w(vec![])), "");
+        assert_eq!(wsl_summary(&w(vec![(false, 1)])), "1 program");
+        assert_eq!(wsl_summary(&w(vec![(true, 1)])), "1 program \u{b7} 1 agent");
+        assert_eq!(wsl_summary(&w(vec![(false, 4), (false, 2)])), "6 programs");
+        assert_eq!(
+            wsl_summary(&w(vec![(true, 5), (false, 9)])),
+            "14 programs \u{b7} 5 agents"
+        );
+    }
+
+    #[test]
+    fn opening_the_linux_row_adds_its_programs_below_it() {
+        let snap = sample();
+        let n = snap.wsl.as_ref().unwrap().procs.len();
+        let closed = compact_of(&snap, Sort::Memory, false);
+        let open = compact_of(&snap, Sort::Memory, true);
+        assert_eq!(open.len(), closed.len() + n);
+        assert_eq!(open[COMPACT_APPS].kind, RowKind::WslOpen);
+        assert!(
+            open[COMPACT_APPS + 1..]
+                .iter()
+                .all(|r| r.kind == RowKind::Sub)
+        );
+        assert_eq!(open[..COMPACT_APPS], closed[..COMPACT_APPS]);
+        // No closing hairline: the Linux list is the end of the compact list.
+        assert!(open.iter().all(|r| !r.group_end));
+        // The expanded rows are not changed by any of this: the Linux list is open there.
+        let full = app_rows(&snap, Sort::Memory);
+        assert!(full.iter().any(|r| r.kind == RowKind::Sub));
+        assert!(
+            full.iter()
+                .all(|r| !matches!(r.kind, RowKind::WslOpen | RowKind::WslClosed))
+        );
+    }
+
+    #[test]
+    fn compact_keeps_the_linux_row_last_even_when_it_is_the_biggest() {
+        let mut snap = sample();
+        snap.wsl.as_mut().unwrap().mem_bytes = 20 << 30;
+        let rows = compact_of(&snap, Sort::Memory, false);
+        assert_eq!(rows.len(), COMPACT_APPS + 1);
+        assert_eq!(rows.last().unwrap().kind, RowKind::WslClosed);
+        assert!(rows[..COMPACT_APPS].iter().all(|r| r.kind == RowKind::App));
+    }
+
+    #[test]
+    fn compact_without_linux_or_apps() {
+        let mut snap = sample();
+        snap.wsl = None;
+        let rows = compact_of(&snap, Sort::Memory, true);
+        assert_eq!(rows.len(), COMPACT_APPS);
+        assert!(rows.iter().all(|r| r.kind == RowKind::App));
+        // A machine with nothing running inside has no chevron and no list.
+        snap.wsl = Some(Wsl {
+            mem_bytes: 1 << 30,
+            cpu_pct: 0.5,
+            procs: Vec::new(),
+        });
+        let rows = compact_of(&snap, Sort::Memory, true);
+        assert_eq!(rows.last().unwrap().kind, RowKind::Wsl);
+        assert_eq!(rows.len(), COMPACT_APPS + 1);
+        // Reading apps.
+        snap.apps.clear();
+        snap.apps_by_cpu.clear();
+        snap.wsl = None;
+        let rows = compact_of(&snap, Sort::Memory, false);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, RowKind::Reading);
+    }
+
+    #[test]
+    fn the_compact_panel_is_about_287_tall_with_the_linux_list_closed() {
+        let snap = sample();
+        let rows = compact_of(&snap, Sort::Memory, false);
+        let h = compact_height(&rows, false, 1000.0);
+        assert!((h - 287.0).abs() < 0.5, "{h}");
+        // The battery adds a line to the footer row.
+        assert!((compact_height(&rows, true, 1000.0) - h - 19.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_compact_panel_grows_with_the_linux_list_up_to_its_cap_and_the_room() {
+        let snap = sample();
+        let closed = compact_height(&compact_of(&snap, Sort::Memory, false), false, 1000.0);
+        let open_rows = compact_of(&snap, Sort::Memory, true);
+        let open = compact_height(&open_rows, false, 1000.0);
+        let n = snap.wsl.as_ref().unwrap().procs.len() as f32;
+        assert!((open - closed - n * row_height(RowKind::Sub, true)).abs() < 0.01);
+        // A long list stops at the cap, then scrolls.
+        let mut long = open_rows.clone();
+        long.extend(open_rows.iter().cloned().cycle().take(40));
+        assert_eq!(compact_height(&long, false, 1000.0), COMPACT_MAX_H);
+        // A short screen limits it as well, but never below two rows.
+        assert_eq!(compact_height(&long, false, 400.0), 400.0);
+        let least = compact_height(&long, false, 10.0);
+        assert!(least > 150.0 && least < 250.0, "{least}");
+        assert_eq!(compact_height(&[], false, 10.0), least);
+    }
+
+    #[test]
+    fn each_view_has_its_own_height_and_settings_never_changes_it() {
+        let snap = sample();
+        let rows = compact_of(&snap, Sort::Memory, false);
+        assert_eq!(view_height(PanelView::Expanded, &[], false, 1000.0), 580.0);
+        let c = view_height(PanelView::Compact, &rows, false, 1000.0);
+        assert!((c - 287.0).abs() < 0.5);
+        // The Settings sheet has a compact form for the compact panel, so there is
+        // no separate height for it: the panel keeps the height of its view.
+        // A short screen limits both.
+        assert_eq!(view_height(PanelView::Expanded, &[], false, 540.0), 527.0);
+        assert_eq!(view_height(PanelView::Compact, &rows, false, 250.0), 250.0);
+    }
+
+    #[test]
+    fn row_heights_are_the_ones_the_panel_draws() {
+        // These are the Metrics of ui/panel.slint.
+        assert_eq!(row_height(RowKind::App, false), 53.0);
+        assert_eq!(row_height(RowKind::Wsl, false), 53.0);
+        assert_eq!(row_height(RowKind::Sub, false), 24.0);
+        assert_eq!(row_height(RowKind::App, true), 29.0);
+        assert_eq!(row_height(RowKind::WslClosed, true), 29.0);
+        assert_eq!(row_height(RowKind::Sub, true), 22.0);
+    }
+
+    #[test]
+    fn the_footer_shows_arrows_without_a_space_and_the_battery_only_when_there_is_one() {
+        let x = Extra::stress();
+        let t = tiles(&x);
+        assert_eq!(t.net_down, "\u{2193}999 KB/s");
+        assert_eq!(t.net_up, "\u{2191}99.9 MB/s");
+        assert!(t.battery.is_some());
+        assert!(tiles(&Extra::default()).battery.is_none());
     }
 
     #[test]
@@ -1488,7 +1829,7 @@ mod tests {
                 &Extra::default(),
                 &History::default(),
                 false,
-                sort,
+                Mode::expanded(sort),
                 at(now, age),
                 now,
             )

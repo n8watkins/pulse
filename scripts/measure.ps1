@@ -11,6 +11,8 @@
 #   PULSE_SELFTEST=1 PULSE_REPORT=<path>
 #                                 open and close the panel 5 times, write
 #                                 {"shell":..., "open_ms":[...]} and keep running
+# -View expanded|compact (and -WslOpen 0|1) start every run in that view, for
+# comparing the views' memory with PULSE_VIEW and PULSE_WSL_OPEN.
 # Every start also gets its own PULSE_SETTINGS_DIR (a scratch folder under -Out)
 # and PULSE_INSTANCE_NAME (a unique name), so measuring never touches the real
 # settings, the running Pulse or the Run key.
@@ -27,7 +29,11 @@ param(
   [Parameter(Mandatory)] [string]$Out,
   [int]$IdleSeconds = 90,
   [int]$SettleSeconds = 20,
-  [int]$LimitSeconds = 1800
+  [int]$LimitSeconds = 1800,
+  # "expanded" or "compact": start every run in that view (PULSE_VIEW); empty leaves the default.
+  [string]$View = "",
+  # "0" or "1": the compact view's Linux list closed or open (PULSE_WSL_OPEN).
+  [string]$WslOpen = ""
 )
 $ErrorActionPreference = "Stop"
 $exe = (Resolve-Path $Exe).Path
@@ -90,8 +96,10 @@ function Descendants([int]$root) {
 $all_started = New-Object System.Collections.Generic.List[int]
 $runs = 0
 function Start-Shell([hashtable]$envVars) {
-  foreach ($k in @("PULSE_SAMPLE", "PULSE_SHOW", "PULSE_THEME", "PULSE_SELFTEST", "PULSE_REPORT", "PULSE_NOTRIM", "PULSE_SETTINGS_DIR", "PULSE_INSTANCE_NAME")) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+  foreach ($k in @("PULSE_SAMPLE", "PULSE_SHOW", "PULSE_THEME", "PULSE_SELFTEST", "PULSE_REPORT", "PULSE_NOTRIM", "PULSE_SETTINGS_DIR", "PULSE_INSTANCE_NAME", "PULSE_VIEW", "PULSE_WSL_OPEN")) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
   foreach ($k in $envVars.Keys) { Set-Item "env:$k" $envVars[$k] }
+  if ($View) { $env:PULSE_VIEW = $View }
+  if ($WslOpen) { $env:PULSE_WSL_OPEN = $WslOpen }
   # A scratch settings folder and a unique instance name for every start.
   $runNo = $script:runs + 1
   $env:PULSE_SETTINGS_DIR = Join-Path $out "settings\run$runNo"
@@ -103,7 +111,7 @@ function Start-Shell([hashtable]$envVars) {
   $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $out "profiles\run$($script:runs)"
   try { $p = Start-Process $exe -PassThru } finally {
     foreach ($k in $envVars.Keys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
-    Remove-Item env:PULSE_SETTINGS_DIR, env:PULSE_INSTANCE_NAME -ErrorAction SilentlyContinue
+    Remove-Item env:PULSE_SETTINGS_DIR, env:PULSE_INSTANCE_NAME, env:PULSE_VIEW, env:PULSE_WSL_OPEN -ErrorAction SilentlyContinue
     Remove-Item env:WEBVIEW2_USER_DATA_FOLDER -ErrorAction SilentlyContinue
   }
   $all_started.Add($p.Id); Add-Content $pidFile $p.Id

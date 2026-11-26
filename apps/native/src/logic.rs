@@ -1,9 +1,23 @@
 //! Small decisions of the tray app as plain functions, with no toolkit or
 //! Windows types, so they are unit tested on any machine.
 
+use pulse_platform::Appearance;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+
+/// The panel's forced theme for the UI: 0 follows the system, 1 light, 2 dark.
+/// `PULSE_THEME` (a test override, `env` 1 or 2) wins over the setting.
+pub fn theme_force(env: i32, appearance: Appearance) -> i32 {
+    if env == 1 || env == 2 {
+        return env;
+    }
+    match appearance {
+        Appearance::System => 0,
+        Appearance::Light => 1,
+        Appearance::Dark => 2,
+    }
+}
 
 /// Runs `save` and, if it fails, once more. True when it ended up saved.
 pub fn save_with_retry<E>(mut save: impl FnMut() -> Result<(), E>) -> bool {
@@ -162,6 +176,19 @@ pub fn parse_battery(v: &str) -> Option<(u8, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_test_override_wins_over_the_appearance_setting() {
+        for a in [Appearance::System, Appearance::Light, Appearance::Dark] {
+            assert_eq!(theme_force(1, a), 1);
+            assert_eq!(theme_force(2, a), 2);
+        }
+        assert_eq!(theme_force(0, Appearance::System), 0);
+        assert_eq!(theme_force(0, Appearance::Light), 1);
+        assert_eq!(theme_force(0, Appearance::Dark), 2);
+        // Anything else is no override.
+        assert_eq!(theme_force(7, Appearance::Dark), 2);
+    }
 
     #[test]
     fn the_battery_hook_parses() {
