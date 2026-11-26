@@ -1,5 +1,5 @@
 <meta name="claude:viewport-fit-sides" content="cover">
-<title>Pulse Density Picker</title>
+<title>Pulse default and compact views</title>
 <style>
 /* LAYOUT: a fixed stage (panel at real size above a tray bar) with a view switch on top, beside (sideways) or above (upright) a scrolling list of grouped options. The page itself never scrolls. */
 :root{color-scheme:light;
@@ -14,7 +14,7 @@
   --bg:#0d0f0e;--ink:#f1f4f2;--mute:#98a19d;--line:#232926;--soft:#161a18;--heroBg:#12231a;--heroInk:#b8f5d0;--hot:#ff9b6b;--busy:#4ade80;--idle:#5d6662}
 *{box-sizing:border-box;min-width:0}
 html,body{height:100%}
-body{margin:0;background:var(--pg);color:var(--pink);font:14px/1.45 var(--text);overflow:hidden;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:10px}
+body{touch-action:manipulation;margin:0;background:var(--pg);color:var(--pink);font:14px/1.45 var(--text);overflow:hidden;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:10px}
 button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
 button:focus-visible,.opt:focus-visible{outline:2px solid var(--pick);outline-offset:2px;border-radius:8px}
 .wrap{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr);gap:8px;max-width:1100px;margin:0 auto}
@@ -23,7 +23,7 @@ button:focus-visible,.opt:focus-visible{outline:2px solid var(--pick);outline-of
 .head h1{margin:0;font:700 18px/1.15 var(--display);text-wrap:balance}
 .head p{margin:2px 0 0;font-size:13px;color:var(--pmute)}
 .theme{flex:none;border:1px solid var(--pline);background:var(--card);border-radius:8px;padding:5px 10px;font-size:13px;font-weight:600;min-height:34px}
-.body{display:grid;grid-template-rows:minmax(0,56%) minmax(0,1fr);gap:10px}
+.body{display:grid;grid-template-rows:minmax(0,60%) minmax(0,1fr);gap:10px}
 .left{display:grid;grid-template-rows:auto minmax(0,1fr);gap:6px}
 
 /* view bar and stage */
@@ -31,8 +31,9 @@ button:focus-visible,.opt:focus-visible{outline:2px solid var(--pick);outline-of
 .vseg{flex:none;display:flex;background:var(--card);border:1px solid var(--pline);border-radius:8px;padding:2px}
 .vseg button{font-size:13px;padding:4px 10px;border-radius:6px;color:var(--pmute);min-height:30px;font-weight:500}
 .vseg [aria-pressed=true]{background:var(--pink);color:var(--pg);font-weight:600}
-.read{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
-.read small{font-weight:400;color:var(--pmute)}
+.read{font-size:12.5px;font-weight:600;white-space:nowrap;flex:1;display:flex;gap:6px;align-items:baseline;overflow:hidden}
+.read .rn{overflow:hidden;text-overflow:ellipsis;flex:0 1 auto}
+.read small{font-weight:400;color:var(--pmute);flex:none}
 .stage{position:relative;overflow:hidden;border-radius:14px;background:var(--wall);border:1px solid var(--pline)}
 .taskbar{position:absolute;left:0;right:0;bottom:0;height:36px;background:var(--bar);border-top:1px solid var(--pline);display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:0 8px;z-index:3}
 .taskbar .hint{margin-right:auto;font-size:12px;color:var(--pmute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -65,6 +66,7 @@ button:focus-visible,.opt:focus-visible{outline:2px solid var(--pick);outline-of
 .picks{background:var(--card);border:1px solid var(--pline);border-radius:12px;padding:10px 12px;display:grid;gap:8px}
 .picks p{margin:0;font-size:13px}
 .picks button{background:var(--pink);color:var(--pg);font-weight:600;border-radius:8px;padding:8px 14px;min-height:38px;justify-self:start}
+.credit{margin:0;padding:0 2px 6px;font-size:12px;line-height:1.4;color:var(--pmute)}
 .picks textarea{width:100%;font:13px/1.4 var(--text);border:1px solid var(--pline);border-radius:8px;padding:8px;background:var(--pg);color:var(--pink);resize:none}
 
 @media (min-width:700px),(orientation:landscape){
@@ -82,7 +84,8 @@ button:focus-visible,.opt:focus-visible{outline:2px solid var(--pick);outline-of
   #tray{width:24px;height:24px}
   .holder{bottom:36px}
 }
-@media (orientation:landscape) and (max-height:340px){.read{display:none}}
+@media (orientation:landscape) and (max-height:340px),(max-width:430px){.read .rn{display:none}}
+@media (orientation:landscape) and (max-height:340px){.read .dm{display:none}.read small::before{content:"shown "}}
 @media (max-height:700px) and (orientation:portrait){.head p{display:none}}
 
 /* the Pulse panel, drawn from data. Defaults are today's values. */
@@ -189,7 +192,7 @@ button:focus-visible,.opt:focus-visible{outline:2px solid var(--pick);outline-of
   <header class="head">
     <div>
       <h1>Pulse panel: density and layout</h1>
-      <p>Tap an option to see it in the panel. Star what you want to keep. Heights are measured from the drawing.</p>
+      <p>Tap an option to see it. Star what you want to keep.</p>
     </div>
     <button class="theme" id="theme" type="button">Dark</button>
   </header>
@@ -231,15 +234,15 @@ const D = {
     { name: 'OBS Studio', exe: 'obs64.exe', procs: 1, mem: 420, cpu: 1.5 },
     { name: 'Spotify', exe: 'Spotify.exe', procs: 5, mem: 340, cpu: .8 }
   ],
-  wsl: { name: 'WSL (Linux)', mem: 3480, cpu: 1.2, items: [
-    { kind: 'Claude Code', mark: 'claude', agent: 1, proj: 'pulse', mem: 260, cpu: 12, up: '2h 14m' },
+  wsl: { name: 'WSL (Linux)', mem: 3480, cpu: 9.9, items: [
+    { kind: 'Claude Code', mark: 'claude', agent: 1, proj: 'pulse', mem: 260, cpu: 2.6, up: '2h 14m' },
     { kind: 'Claude Code', mark: 'claude', agent: 1, proj: 'n8-tray', mem: 190, cpu: 0, up: '5h 02m' },
-    { kind: 'Claude Code', mark: 'claude', agent: 1, proj: 'scribe', mem: 190, cpu: 4, up: '41m' },
+    { kind: 'Claude Code', mark: 'claude', agent: 1, proj: 'scribe', mem: 190, cpu: 2.1, up: '41m' },
     { kind: 'Codex CLI', agent: 1, proj: 'ops', mem: 110, cpu: 0, up: '1h 20m' },
-    { kind: 'Codex CLI', agent: 1, proj: 'party-games', mem: 126, cpu: 7, up: '12m' },
-    { kind: 'Docker', mark: 'docker', proj: 'pulse', n: 2, mem: 174, cpu: 1, note: 'test containers it started' },
-    { kind: 'node: next-server', mark: 'nextdotjs', proj: 'scribe', mem: 318, cpu: 3, note: 'dev server it started' },
-    { kind: 'Editor server', mark: 'nodedotjs', proj: null, n: 6, mem: 512, cpu: 2 }
+    { kind: 'Codex CLI', agent: 1, proj: 'party-games', mem: 126, cpu: 3.4, up: '12m' },
+    { kind: 'Docker', mark: 'docker', proj: 'pulse', n: 2, mem: 174, cpu: .4, note: 'test containers it started' },
+    { kind: 'node: next-server', mark: 'nextdotjs', proj: 'scribe', mem: 318, cpu: .9, note: 'dev server it started' },
+    { kind: 'Editor server', mark: 'nodedotjs', proj: null, n: 6, mem: 512, cpu: .5 }
   ] }
 };
 const series = (seed, end, n = 60) => Array.from({ length: n }, (_, i) => { const t = i / (n - 1), w = Math.sin(seed + i / 5) * 16 + Math.sin(seed * 2 + i / 2.3) * 7; return Math.max(3, Math.min(97, end + w * (1 - t * .9))); });
@@ -391,7 +394,7 @@ const GROUPS = [
     { id: 'top3', title: 'Top 3 inside', d: 'The three biggest Linux items, then "+N more" which opens the rest.' },
     { id: 'open', title: 'Always open', d: 'Every Linux item, always shown. Tallest.' }] },
   { id: 'g4', title: '4. Seeing what agents are doing', blurb: 'Pulse can read, from outside and at no cost: each session on its own, its project folder, processor and memory, how long it has run, busy or idle right now, and the programs it started. It cannot read what an agent is thinking or which step it is on, so none of these shows that. Tapping one opens the Linux list.', rec: '<b>My pick: B, grouped by project folder.</b> It answers "what is each agent doing" best: the dev server or test containers an agent started sit right under it. A is the lighter version and reads well in compact. C is today.', opts: [
-    { id: 'lines', title: 'A One line per session', d: 'Claude Code · pulse, busy 12%, 260 MB. One row for each session, agents first.' },
+    { id: 'lines', title: 'A One line per session', d: 'Claude Code · pulse, busy 2.6%, 260 MB. One row for each session, agents first.' },
     { id: 'grouped', title: 'B Grouped by project folder', d: 'A folder row, then its agents with how long they ran and the programs they started.', tag: 'My pick' },
     { id: 'same', title: 'C Today: "Claude Code ×3"', d: 'Sessions are lumped together by program, as now.' }] },
   { id: 'g5', title: '5. How to switch views', blurb: 'Tap each one, then try it in the panel.', rec: '<b>My pick: the small button in the header.</b> One tap, easy to find, no hidden gesture. A setting alone is the slowest. Double-click can be added later as a shortcut on top of the button, so you can star both.', opts: [
@@ -414,7 +417,7 @@ function measure(over) {
 const optsEl = $('#opts');
 const STAR = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.8z"/></svg>';
 optsEl.innerHTML = GROUPS.map(g => `<div class="grp"><div class="gh"><h2>${g.title}</h2><p>${g.blurb}</p></div><div class="rec">${g.rec}</div>${g.opts.map(o => `<article class="opt" tabindex="0" role="button" data-g="${g.id}" data-o="${o.id}" aria-pressed="false"><div class="ot"><h3>${o.title}</h3>${o.tag ? `<span class="tag">${o.tag}</span>` : ''}<button class="star" type="button" data-star="${g.id}.${o.id}" aria-pressed="false" aria-label="Star ${esc(o.title)}: keep this one">${STAR}</button></div><p class="d">${o.d}</p><p class="px" data-px="${g.id}.${o.id}"></p></article>`).join('')}</div>`).join('') +
-  `<div class="picks"><p id="pickLine">Star what you want to keep. Unstarred ones are dropped.</p><button type="button" id="copy">Copy my picks</button><textarea id="copyOut" rows="4" readonly hidden aria-label="Your picks, to copy"></textarea></div>`;
+  `<div class="picks"><p id="pickLine">Star what you want to keep. Unstarred ones are dropped.</p><button type="button" id="copy">Copy my picks</button><textarea id="copyOut" rows="4" readonly hidden aria-label="Your picks, to copy"></textarea></div><p class="credit">The Claude, Next.js, Node.js, Chrome and Docker marks in the sample panel come from Simple Icons (version 16, CC0 1.0). The marks themselves are trademarks of their owners and are used here only to show what the list looks like. Names and numbers in the panel are sample data.</p>`;
 
 function px(id, html) { const e = optsEl.querySelector(`[data-px="${id}"]`); if (e && e.innerHTML !== html) e.innerHTML = html; }
 function stats() {
@@ -438,7 +441,7 @@ function fit() {
   const s = Math.min(1, (W - 20) / pw, (H - tb - 18) / ph);
   h.style.setProperty('--s', Math.max(.1, s).toFixed(4)); h.style.bottom = (tb + 10) + 'px';
   const L = P_of().L;
-  $('#read').innerHTML = `${esc(L.name)} <small>${pw} × ${ph} px · ${Math.round(s * 100)}%</small>`;
+  $('#read').innerHTML = `<span class="rn">${esc(L.name)}</span><small><span class="dm">${pw} × ${ph} px </span>at ${Math.round(s * 100)}%</small>`;
 }
 function draw() {
   const P = P_of(), p = $('#pulse'), l = p.querySelector('.lst'), keep = l ? l.scrollTop : 0;
