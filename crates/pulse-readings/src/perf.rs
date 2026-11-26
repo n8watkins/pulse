@@ -1,6 +1,7 @@
 //! Graphics, drive, network and battery readings, Windows only.
 
 use crate::Battery;
+use crate::net::Counters;
 use core::ffi::c_void;
 use core::ptr::null_mut;
 use std::time::{Duration, Instant};
@@ -22,6 +23,9 @@ const MIN_SPAN: Duration = Duration::from_millis(250);
 /// The graphics counter's instances are fixed when it is added: add it again
 /// this often so new processes' engines show up.
 const GPU_REFRESH_READS: u32 = 15;
+
+/// The per-process 3D engine counter, one instance per (process, engine).
+const GPU_COUNTER: &str = r"\GPU Engine(*engtype_3D)\Utilization Percentage";
 
 const IF_TYPE_ETHERNET: u32 = 6;
 const IF_TYPE_WIFI: u32 = 71;
@@ -78,9 +82,10 @@ impl Query {
         }
     }
 
-    /// The sum of every instance of a wildcard counter, and how many there were.
-    fn sum(&self, i: usize) -> Option<(f64, u32)> {
-        // SAFETY: the buffer is sized by the first call; items stay inside it.
+    /// Every instance of a wildcard counter: (name, value, valid).
+    fn instances(&self, i: usize) -> Option<Vec<(String, f64, bool)>> {
+        // SAFETY: the buffer is sized by the first call; items and the names
+        // they point to stay inside it.
         unsafe {
             let (mut size, mut count) = (0u32, 0u32);
             let r = PdhGetFormattedCounterArrayW(
@@ -108,12 +113,28 @@ impl Query {
                 buf.as_ptr().cast::<PDH_FMT_COUNTERVALUE_ITEM_W>(),
                 count as usize,
             );
-            let sum = items
-                .iter()
-                .filter(|it| matches!(it.FmtValue.CStatus, 0 | 1))
-                .map(|it| it.FmtValue.Anonymous.doubleValue)
-                .sum();
-            Some((sum, count))
+            let base = buf.as_ptr() as usize;
+            let end = base + buf.len() * 8;
+            Some(
+                items
+                    .iter()
+                    .map(|it| {
+                        let mut name = String::new();
+                        let at = it.szName as usize;
+                        if at >= base && at < end {
+                            let max = (end - at) / 2;
+                            let units = core::slice::from_raw_parts(it.szName, max);
+                            let n = units.iter().position(|&u| u == 0).unwrap_or(max);
+                            name = String::from_utf16_lossy(&units[..n]);
+                        }
+                        (
+                            name,
+                            it.FmtValue.Anonymous.doubleValue,
+                            matches!(it.FmtValue.CStatus, 0 | 1),
+                        )
+                    })
+                    .collect(),
+            )
         }
     }
 }
@@ -148,7 +169,7 @@ pub(crate) struct Extras {
     gpu_last: Option<f32>,
     disk: Option<Query>,
     disk_last: (u64, u64),
-    net: Option<(Instant, u64, u64)>,
+    net: Option<(Instant, Counters)>,
     net_last: (u64, u64),
     space: Option<(Instant, u64, u64)>,
     battery: Option<(Instant, Option<Battery>)>,
@@ -157,7 +178,7 @@ pub(crate) struct Extras {
 impl Extras {
     pub fn new() -> Self {
         Self {
-            gpu: Query::new(&[r"\GPU Engine(*engtype_3D)\Utilization Percentage"]),
+            gpu: Query::new(&[GPU_COUNTER]),
             gpu_reads: 0,
             gpu_last: None,
             disk: Query::new(&[
@@ -192,16 +213,18 @@ impl Extras {
     fn gpu(&mut self) -> Option<f32> {
         self.gpu_reads += 1;
         if self.gpu_reads.is_multiple_of(GPU_REFRESH_READS) {
-            self.gpu = Query::new(&[r"\GPU Engine(*engtype_3D)\Utilization Percentage"]);
+            self.gpu = Query::new(&[GPU_COUNTER]);
             return self.gpu_last;
         }
         let q = self.gpu.as_ref()?;
         if !q.collect() {
             return self.gpu_last;
         }
-        if let Some((sum, count)) = q.sum(0) {
-            // No 3D engine at all means the PC does not report one.
-            self.gpu_last = (count > 0).then(|| sum.clamp(0.0, 100.0) as f32);
+        if let Some(items) = q.instances(0) {
+            // No valid 3D engine at all means the PC does not report one.
+            self.gpu_last =
+                crate::gpu::busiest(items.iter().map(|(n, v, ok)| (n.as_str(), *v, *ok)))
+                    .map(|v| v as f32);
         }
         self.gpu_last
     }
@@ -219,24 +242,22 @@ impl Extras {
     /// Bytes per second since the previous read, over real adapters only.
     fn network(&mut self) -> (u64, u64) {
         let now = Instant::now();
-        let Some((down, up)) = octets() else {
+        let Some(cur) = octets() else {
             return self.net_last;
         };
-        match self.net {
-            Some((t, pd, pu)) => {
-                let dt = now.duration_since(t);
+        match &self.net {
+            Some((t, prev)) => {
+                let dt = now.duration_since(*t);
                 if dt < MIN_SPAN {
                     return self.net_last;
                 }
+                let (down, up) = crate::net::delta(prev, &cur);
                 let secs = dt.as_secs_f64();
-                self.net_last = (
-                    (down.saturating_sub(pd) as f64 / secs) as u64,
-                    (up.saturating_sub(pu) as f64 / secs) as u64,
-                );
+                self.net_last = ((down as f64 / secs) as u64, (up as f64 / secs) as u64);
             }
             None => self.net_last = (0, 0),
         }
-        self.net = Some((now, down, up));
+        self.net = Some((now, cur));
         self.net_last
     }
 
@@ -278,10 +299,11 @@ impl Extras {
     }
 }
 
-/// Total bytes received and sent over real adapters: Ethernet and Wi-Fi that
-/// are up, hardware, with a connector, and not filter interfaces (virtual
-/// adapters and filters would count the same traffic twice).
-fn octets() -> Option<(u64, u64)> {
+/// Lifetime bytes (received, sent) of each real adapter, by `InterfaceLuid`.
+/// Real means Ethernet or Wi-Fi that is up, hardware, with a connector, and not
+/// a filter interface (virtual adapters and filters would count the same
+/// traffic twice).
+fn octets() -> Option<Counters> {
     // SAFETY: the table is read inside its NumEntries and freed once.
     unsafe {
         let mut table: *mut MIB_IF_TABLE2 = null_mut();
@@ -289,7 +311,7 @@ fn octets() -> Option<(u64, u64)> {
             return None;
         }
         let rows = (&raw const (*table).Table).cast::<MIB_IF_ROW2>();
-        let (mut down, mut up) = (0u64, 0u64);
+        let mut out = Counters::new();
         for i in 0..(*table).NumEntries as usize {
             let r = &*rows.add(i);
             let flags = r.InterfaceAndOperStatusFlags._bitfield;
@@ -302,11 +324,10 @@ fn octets() -> Option<(u64, u64)> {
                 && connector
                 && !filter
             {
-                down += r.InOctets;
-                up += r.OutOctets;
+                out.insert(r.InterfaceLuid.Value, (r.InOctets, r.OutOctets));
             }
         }
         FreeMibTable(table.cast());
-        Some((down, up))
+        Some(out)
     }
 }

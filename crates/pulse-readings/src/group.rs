@@ -14,7 +14,37 @@ const FRIENDLY: &[(&str, &str)] = &[
     ("dwm", "Desktop Window Manager"),
     ("explorer", "Windows Explorer"),
     ("vmmemwsl", "WSL (Linux)"),
+    // Plain `vmmem` is the memory of Hyper-V, Windows Sandbox or Docker VMs.
+    ("vmmem", "Virtual machine"),
 ];
+
+/// Icon sources for rows that have no real file or whose own file has no
+/// useful icon. Keys are lowercase image names without `.exe`; values are
+/// files under `%SystemRoot%\System32` whose icon reads well at 24 px.
+pub(crate) const STAND_INS: &[(&str, &str)] = &[
+    // The penguin: only the WSL 2 VM.
+    ("vmmemwsl", "wsl.exe"),
+    // Other virtual machines: a neutral icon, not the penguin.
+    ("vmmem", "taskmgr.exe"),
+    // The Windows Security shield.
+    ("msmpeng", "SecurityHealthSystray.exe"),
+    // The services icon, for the shared service hosts.
+    ("svchost", "services.exe"),
+    // The memory rows: Task Manager's icon.
+    ("memory compression", "taskmgr.exe"),
+    ("system", "taskmgr.exe"),
+    ("registry", "taskmgr.exe"),
+    ("secure system", "taskmgr.exe"),
+];
+
+/// The stand-in file name for an image name, if it has one.
+pub(crate) fn stand_in_file(image: &str) -> Option<&'static str> {
+    let s = stem(image);
+    STAND_INS
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(s))
+        .map(|(_, f)| *f)
+}
 
 fn stem(image: &str) -> &str {
     let lower_ends_exe = image.len() > 4
@@ -92,9 +122,18 @@ mod tests {
         assert_eq!(friendly("svchost.exe"), "Windows services");
         assert_eq!(friendly("MsMpEng.exe"), "Microsoft Defender");
         assert_eq!(friendly("vmmemWSL"), "WSL (Linux)");
+        assert_eq!(friendly("vmmem"), "Virtual machine");
         assert_eq!(friendly("chrome.exe"), "chrome");
         assert_eq!(friendly("Registry"), "Registry");
         assert!(is_builtin("SVCHOST.EXE") && !is_builtin("chrome.exe"));
+    }
+
+    #[test]
+    fn only_vmmemwsl_gets_the_penguin() {
+        assert_eq!(stand_in_file("vmmemWSL"), Some("wsl.exe"));
+        assert_eq!(stand_in_file("vmmem"), Some("taskmgr.exe"));
+        assert_eq!(stand_in_file("Vmmem.exe"), Some("taskmgr.exe"));
+        assert_eq!(stand_in_file("chrome.exe"), None);
     }
 
     #[test]

@@ -4,13 +4,23 @@
 //! uptime from `GetTickCount64`, and the apps from one
 //! `NtQuerySystemInformation(SystemProcessInformation)` call per read.
 
+use crate::known::{Known, Probe};
 use crate::{AppRow, Snapshot, Source, group, icon, perf};
-use std::collections::HashMap;
+use std::time::Instant;
 use windows_sys::Win32::Foundation::FILETIME;
 use windows_sys::Win32::System::SystemInformation::{
-    GetSystemInfo, GetTickCount64, GlobalMemoryStatusEx, MEMORYSTATUSEX, SYSTEM_INFO,
+    GetTickCount64, GlobalMemoryStatusEx, MEMORYSTATUSEX,
 };
-use windows_sys::Win32::System::Threading::GetSystemTimes;
+use windows_sys::Win32::System::Threading::{GetActiveProcessorCount, GetSystemTimes};
+
+// The offsets below are those of 64-bit Windows.
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!(
+    "pulse-readings reads SYSTEM_PROCESS_INFORMATION at 64-bit offsets: build for a 64-bit Windows target"
+);
+
+/// `ALL_PROCESSOR_GROUPS`: count the cores of every processor group.
+const ALL_PROCESSOR_GROUPS: u16 = 0xFFFF;
 
 const SYSTEM_PROCESS_INFORMATION: u32 = 5;
 const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xC000_0004_u32 as i32;
@@ -36,36 +46,31 @@ const MIN_ENTRY: usize = 88;
 /// Shortest span (100 ns units, per core) a processor figure is taken over: 250 ms.
 const MIN_SPAN: u64 = 2_500_000;
 
-/// Icon sources for rows that have no real file or whose own file has no
-/// useful icon. Keys are lowercase image names without `.exe`; values are
-/// files under `%SystemRoot%\System32` whose icon reads well at 24 px.
-const STAND_INS: &[(&str, &str)] = &[
-    // The penguin.
-    ("vmmemwsl", "wsl.exe"),
-    ("vmmem", "wsl.exe"),
-    // The Windows Security shield.
-    ("msmpeng", "SecurityHealthSystray.exe"),
-    // The services icon, for the shared service hosts.
-    ("svchost", "services.exe"),
-    // The memory rows: Task Manager's icon.
-    ("memory compression", "taskmgr.exe"),
-    ("system", "taskmgr.exe"),
-    ("registry", "taskmgr.exe"),
-    ("secure system", "taskmgr.exe"),
-];
-
 fn system32(file: &str) -> Option<String> {
     let root = std::env::var("SystemRoot").ok()?;
     let p = std::path::Path::new(&root).join("System32").join(file);
     p.is_file().then(|| p.to_string_lossy().into_owned())
 }
 
-/// The stand-in icon file for an image name, when there is one on this PC.
-fn stand_in(image: &str) -> Option<String> {
-    let lower = image.to_ascii_lowercase();
-    let stem = lower.strip_suffix(".exe").unwrap_or(&lower);
-    let (_, file) = STAND_INS.iter().find(|(k, _)| *k == stem)?;
-    system32(file)
+/// The real machine, for the cache of icon paths.
+struct Machine;
+
+impl Probe for Machine {
+    fn process_path(&self, pid: u32) -> Option<String> {
+        icon::process_path(pid)
+    }
+    fn stand_in(&self, exe: &str) -> Option<String> {
+        system32(group::stand_in_file(exe)?)
+    }
+    fn system32(&self, exe: &str) -> Option<String> {
+        system32(exe)
+    }
+    fn exists(&self, path: &str) -> bool {
+        std::path::Path::new(path).is_file()
+    }
+    fn description(&self, path: &str) -> Option<String> {
+        icon::file_description(path)
+    }
 }
 
 pub struct Windows {
@@ -75,24 +80,20 @@ pub struct Windows {
     /// u64 storage so the buffer is 8-byte aligned.
     buf: Vec<u64>,
     /// Per lowercase exe name: the path found and the friendly name from its version info.
-    known: HashMap<String, (String, Option<String>)>,
+    known: Known,
     extras: perf::Extras,
 }
 
 impl Windows {
     pub fn new() -> Self {
-        // SAFETY: a valid out pointer.
-        let cores = unsafe {
-            let mut si: SYSTEM_INFO = core::mem::zeroed();
-            GetSystemInfo(&mut si);
-            si.dwNumberOfProcessors.max(1)
-        };
+        // SAFETY: no pointers.
+        let cores = unsafe { GetActiveProcessorCount(ALL_PROCESSOR_GROUPS) }.max(1);
         let mut w = Self {
             last: None,
             pct: 0.0,
             cores,
             buf: vec![0; (1 << 20) / 8],
-            known: HashMap::new(),
+            known: Known::default(),
             extras: perf::Extras::new(),
         };
         w.cpu_pct();
@@ -133,33 +134,14 @@ impl Windows {
     }
 
     /// Adds the path of one process and the file's own description as the name
-    /// (the built-in names win), cached per exe name once found.
+    /// (the built-in names win), cached per exe name; see [`Known`].
     fn resolve(&mut self, mut row: AppRow, pids: &[u32]) -> AppRow {
-        let key = row.exe.to_ascii_lowercase();
-        if !self.known.contains_key(&key) {
-            // 1. The built-in stand-ins, for rows with no real file or whose
-            //    own file has no useful icon. They never rename the row.
-            // 2. The group's own processes (protected ones cannot be opened,
-            //    so try several).
-            // 3. The same name in System32 (svchost, dwm, csrss).
-            let found = stand_in(&row.exe).map(|p| (p, None)).or_else(|| {
-                let path = pids
-                    .iter()
-                    .find_map(|&p| icon::process_path(p))
-                    .or_else(|| system32(&row.exe))?;
-                let desc = icon::file_description(&path);
-                Some((path, desc))
-            });
-            if let Some(found) = found {
-                self.known.insert(key.clone(), found);
-            }
-        }
-        if let Some((path, desc)) = self.known.get(&key) {
-            row.path = Some(path.clone());
+        if let Some((path, desc)) = self.known.resolve(&Machine, &row.exe, pids, Instant::now()) {
+            row.path = Some(path);
             if let Some(d) = desc
                 && !group::is_builtin(&row.exe)
             {
-                row.name.clone_from(d);
+                row.name = d;
             }
         }
         row
@@ -256,6 +238,7 @@ impl Source for Windows {
         // SAFETY: no arguments.
         let uptime_s = unsafe { GetTickCount64() } / 1000;
         let apps = if with_apps {
+            self.known.begin_read();
             let rows = group::top_apps(self.processes());
             rows.into_iter()
                 .map(|(row, pids)| self.resolve(row, &pids))
@@ -303,7 +286,7 @@ mod tests {
     #[test]
     fn every_stand_in_has_an_icon() {
         let mut checked = 0;
-        for (key, file) in STAND_INS {
+        for (key, file) in group::STAND_INS {
             let Some(path) = system32(file) else { continue };
             let img =
                 crate::icon_rgba(&path, 32).unwrap_or_else(|| panic!("{key}: no icon from {path}"));

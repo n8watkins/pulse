@@ -7,12 +7,21 @@
 
 use serde::Serialize;
 
+// The pure logic builds everywhere so its tests run on Linux too.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod gpu;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod group;
 #[cfg(windows)]
 mod icon;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod known;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod net;
 #[cfg(windows)]
 mod perf;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod scale;
 #[cfg(windows)]
 mod win;
 
@@ -90,6 +99,42 @@ pub fn icon_rgba(path: &str, size: u32) -> Option<IconImage> {
     {
         let _ = (path, size);
         None
+    }
+}
+
+/// Keeps COM initialised on the calling thread while it is alive.
+///
+/// A thread that calls [`icon_rgba`] repeatedly (a worker) creates one at
+/// start, so the per-call initialisation inside `icon_rgba` is a cheap no-op.
+/// It does nothing off Windows.
+#[must_use = "COM is uninitialised again when this is dropped"]
+pub struct IconThread {
+    #[cfg(windows)]
+    com: bool,
+}
+
+impl IconThread {
+    /// Initialises COM (single-threaded apartment) for this thread.
+    pub fn init() -> Self {
+        #[cfg(windows)]
+        {
+            Self {
+                com: icon::com_init(),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            Self {}
+        }
+    }
+}
+
+impl Drop for IconThread {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        if self.com {
+            icon::com_uninit();
+        }
     }
 }
 
