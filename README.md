@@ -3,6 +3,14 @@
 A native Windows tray app that shows live system health in a small panel.
 It lives only in the system tray: no taskbar button and no Alt+Tab entry.
 
+## Install
+
+Download `Pulse-<version>-setup.exe` from the [latest release](https://github.com/n8watkins/pulse/releases/latest) and run it.
+It installs for the current user only and needs no administrator rights.
+The installer is not code signed, so Windows SmartScreen may say "Windows protected your PC": choose "More info", then "Run anyway".
+Pulse then sits in the system tray; click its icon or press Alt+Shift+P to open the panel.
+To remove it, use "Installed apps" in Windows Settings.
+
 ## Status
 
 The panel is drawn natively with Slint (software Skia renderer), with no webview.
