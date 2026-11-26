@@ -1,17 +1,19 @@
 //! The tray app: window life cycle, tray icon and menu, settings, shortcut,
 //! reader thread and test hooks.
 
+use crate::logic::{self, ClickAction, Pending, PendingAction, Throttle, Toggle};
 use crate::record::{self, Mods, Pressed, Step};
 use crate::tray;
 use crate::view::{self, History, RowKind};
 use crate::win::{self, Hwnd};
-use pulse_platform::hotkey::{Combo, HotkeyError, Key as HotKey, Listener};
+use pulse_platform::hotkey::{Combo, Listener};
 use pulse_platform::{Settings, Sort, Theme as ThemeSetting, autostart, single};
 use pulse_readings::{AppRow, IconImage, Sample, Snapshot, Source, Wsl, icon_rgba};
 use slint::winit_030::winit::dpi::PhysicalPosition;
 use slint::winit_030::winit::event::{ElementState, WindowEvent};
-use slint::winit_030::winit::keyboard::{Key, NamedKey};
+use slint::winit_030::winit::keyboard::{Key, NamedKey, PhysicalKey};
 use slint::winit_030::winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+use slint::winit_030::winit::platform::windows::WindowAttributesExtWindows;
 use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::winit_030::{EventResult, WinitWindowAccessor};
 use slint::{CloseRequestResponse, ComponentHandle, Model, SharedString, VecModel};
@@ -31,6 +33,8 @@ slint::include_modules!();
 const TICK: Duration = Duration::from_secs(2);
 /// A tray click this soon after a blur-hide is the click that caused the blur.
 const REOPEN_GUARD: Duration = Duration::from_millis(300);
+/// The tooltip is refreshed when the pointer is over the tray icon, at most this often.
+const TIP_EVERY: Duration = Duration::from_secs(1);
 /// The choices of "Refresh while hidden", in seconds.
 const REFRESH_CHOICES: [u8; 3] = [2, 5, 10];
 
@@ -41,8 +45,8 @@ struct Config {
     selftest_report: Option<String>,
     /// PULSE_OPEN=settings: start with the Settings screen open.
     open_settings: bool,
-    /// Any of PULSE_SAMPLE, PULSE_SHOW or PULSE_SELFTEST is set: a test run,
-    /// which never touches the Run key.
+    /// Any of PULSE_SAMPLE, PULSE_SHOW, PULSE_SELFTEST, PULSE_SETTINGS_DIR or
+    /// PULSE_INSTANCE_NAME is set: a test run, which never touches the Run key.
     test_run: bool,
 }
 
@@ -61,7 +65,11 @@ impl Config {
             selftest_report: on("PULSE_SELFTEST")
                 .then(|| std::env::var("PULSE_REPORT").unwrap_or_default()),
             open_settings: std::env::var("PULSE_OPEN").is_ok_and(|v| v == "settings"),
-            test_run: set("PULSE_SAMPLE") || set("PULSE_SHOW") || set("PULSE_SELFTEST"),
+            test_run: set("PULSE_SAMPLE")
+                || set("PULSE_SHOW")
+                || set("PULSE_SELFTEST")
+                || set("PULSE_SETTINGS_DIR")
+                || set("PULSE_INSTANCE_NAME"),
         }
     }
 }
@@ -72,6 +80,8 @@ struct Latest {
     extra: view::Extra,
     hist: History,
     at: Instant,
+    /// When the app rows in `snap` were scanned.
+    apps_at: Instant,
 }
 
 enum ReaderCmd {
@@ -83,31 +93,23 @@ type Measure = Arc<Mutex<Option<(Instant, Sender<f64>)>>>;
 
 /// Executable icons: `icon_rgba` runs on a worker thread (it touches the shell
 /// and can be slow). A found icon is kept for the session; a failed lookup is
-/// retried on later reader ticks, up to `ICON_TRIES` times, before the letter stays.
+/// asked again no sooner than `ICON_RETRY_AFTER` later, `ICON_TRIES` tries in all,
+/// before the letter stays.
 struct Icons {
-    /// Lookups the worker has finished, shared with it.
-    done: Arc<Mutex<HashMap<String, IconSlot>>>,
-    /// Paths with a request in flight.
+    /// Lookups the worker has finished and the UI has not taken yet.
+    done: Arc<Mutex<HashMap<String, Option<IconImage>>>>,
+    /// Paths with a request in flight (cleared when its result is taken).
     pending: RefCell<HashSet<String>>,
-    /// Slint images built from `done`, on the UI thread.
+    /// Lookups started per path, and when the last one started.
+    tries: RefCell<HashMap<String, (u8, Instant)>>,
+    /// Slint images built from found icons, on the UI thread.
     images: RefCell<HashMap<String, slint::Image>>,
     to_worker: Sender<String>,
 }
 
-struct IconSlot {
-    /// `None` = the lookup failed.
-    img: Option<IconImage>,
-    tries: u8,
-    at: Instant,
-}
-
-const ICON_TRIES: u8 = 3;
-/// Failed lookups wait for a later tick (the reader ticks every 2 s).
-const ICON_RETRY_AFTER: Duration = Duration::from_millis(1500);
-
 impl Icons {
     fn spawn() -> Self {
-        let done: Arc<Mutex<HashMap<String, IconSlot>>> = Arc::default();
+        let done: Arc<Mutex<HashMap<String, Option<IconImage>>>> = Arc::default();
         let (to_worker, rx) = mpsc::channel::<String>();
         let shared = done.clone();
         std::thread::spawn(move || {
@@ -115,20 +117,10 @@ impl Icons {
             let _com = pulse_readings::IconThread::init();
             while let Ok(path) = rx.recv() {
                 let img = icon_rgba(&path, 32);
-                {
-                    let mut map = shared
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    let tries = map.get(&path).map_or(0, |s| s.tries) + 1;
-                    map.insert(
-                        path,
-                        IconSlot {
-                            img,
-                            tries,
-                            at: Instant::now(),
-                        },
-                    );
-                }
+                shared
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(path, img);
                 let _ = slint::invoke_from_event_loop(|| {
                     with_panel(|p| {
                         if p.visible.get() {
@@ -141,31 +133,27 @@ impl Icons {
         Self {
             done,
             pending: RefCell::default(),
+            tries: RefCell::default(),
             images: RefCell::default(),
             to_worker,
         }
     }
 
-    fn request(&self, path: &str) {
-        if self.pending.borrow_mut().insert(path.to_owned()) {
-            let _ = self.to_worker.send(path.to_owned());
-        }
-    }
-
     /// The icon if it is ready; otherwise asks the worker (again, if an earlier
-    /// try failed and there are tries left) and returns `None`.
+    /// try failed and the policy allows) and returns `None`.
     fn get(&self, path: &str) -> Option<slint::Image> {
         if let Some(i) = self.images.borrow().get(path) {
             return Some(i.clone());
         }
-        let ready = self
+        let result = self
             .done
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(path)
-            .map(|s| (s.img.clone(), s.tries, s.at));
-        match ready {
-            Some((Some(img), ..)) => {
+            .remove(path);
+        if let Some(found) = result {
+            // The request is answered: it is no longer in flight.
+            self.pending.borrow_mut().remove(path);
+            if let Some(img) = found {
                 let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
                     &img.rgba, img.width, img.height,
                 );
@@ -173,20 +161,24 @@ impl Icons {
                 self.images
                     .borrow_mut()
                     .insert(path.to_owned(), image.clone());
-                Some(image)
-            }
-            Some((None, tries, at)) => {
-                if tries < ICON_TRIES && at.elapsed() >= ICON_RETRY_AFTER {
-                    self.pending.borrow_mut().remove(path);
-                    self.request(path);
-                }
-                None
-            }
-            None => {
-                self.request(path);
-                None
+                return Some(image);
             }
         }
+        if !self.pending.borrow().contains(path) {
+            let (n, since) = self
+                .tries
+                .borrow()
+                .get(path)
+                .map_or((0, None), |&(n, at)| (n, Some(at.elapsed())));
+            if logic::icon_try_due(n, since) {
+                self.tries
+                    .borrow_mut()
+                    .insert(path.to_owned(), (n + 1, Instant::now()));
+                self.pending.borrow_mut().insert(path.to_owned());
+                let _ = self.to_worker.send(path.to_owned());
+            }
+        }
+        None
     }
 }
 
@@ -194,6 +186,7 @@ struct TrayState {
     icon: TrayIcon,
     /// What the icon currently shows; it is redrawn only when this changes.
     key: Cell<Option<tray::Key>>,
+    /// The tooltip text last set; refreshed while the pointer is over the icon.
     tip: RefCell<String>,
     keep: CheckMenuItem,
     auto: CheckMenuItem,
@@ -228,8 +221,17 @@ struct Panel {
     ago: slint::Timer,
     /// Seconds between readings while hidden, read by the reader thread.
     refresh: Arc<AtomicU8>,
+    /// The Neutral theme is on (the tray icon's colours), read by the reader thread.
+    neutral: Arc<AtomicBool>,
     tray: RefCell<Option<TrayState>>,
+    /// At mouse-down on the tray icon: the panel counted as open.
+    click_was_open: Cell<bool>,
 }
+
+/// A second start or `--quit` that arrived before the window existed.
+static PENDING: Pending = Pending::new();
+/// Throttles the tooltip refresh while the pointer moves over the tray icon.
+static TIP_THROTTLE: Throttle = Throttle::new(TIP_EVERY);
 
 thread_local! {
     static PANEL: RefCell<Option<Rc<Panel>>> = const { RefCell::new(None) };
@@ -249,43 +251,30 @@ fn refresh_index(secs: u8) -> i32 {
         .map_or(0, |i| i as i32)
 }
 
-/// What one key press means to the recorder.
+/// What one key press means to the recorder: the physical key (so digit rows
+/// and non-Latin layouts work) plus the layout's letter, see
+/// [`record::pressed_from_code`].
 fn pressed_from(ev: &slint::winit_030::winit::event::KeyEvent) -> Pressed {
-    if let Key::Named(n) = &ev.logical_key {
-        match n {
-            NamedKey::Escape => return Pressed::Escape,
-            NamedKey::Shift
-            | NamedKey::Control
-            | NamedKey::Alt
-            | NamedKey::AltGraph
-            | NamedKey::Super
-            | NamedKey::Meta => return Pressed::Modifier,
-            _ => {}
+    let PhysicalKey::Code(code) = ev.physical_key else {
+        return Pressed::Other;
+    };
+    let latin = match ev.key_without_modifiers() {
+        Key::Character(s) => s.chars().next().filter(char::is_ascii_alphabetic),
+        _ => None,
+    };
+    // winit's `KeyCode` names are the variant names (`KeyA`, `Digit1`, `F5`).
+    record::pressed_from_code(&format!("{code:?}"), latin)
+}
+
+/// Applies a request that arrived before the window existed, once it does.
+fn apply_pending() {
+    with_panel(|p| match PENDING.take(p.hwnd.get().is_some()) {
+        Some(PendingAction::Quit) => {
+            let _ = slint::quit_event_loop();
         }
-    }
-    match ev.key_without_modifiers() {
-        Key::Named(n) => match n {
-            NamedKey::Space => Pressed::Main(HotKey::Space),
-            NamedKey::ArrowUp => Pressed::Main(HotKey::Up),
-            NamedKey::ArrowDown => Pressed::Main(HotKey::Down),
-            NamedKey::ArrowLeft => Pressed::Main(HotKey::Left),
-            NamedKey::ArrowRight => Pressed::Main(HotKey::Right),
-            other => {
-                // The F keys are named F1 to F35.
-                let name = format!("{other:?}");
-                name.strip_prefix('F')
-                    .and_then(|n| n.parse::<u8>().ok())
-                    .filter(|n| (1..=24).contains(n))
-                    .map_or(Pressed::Other, |n| Pressed::Main(HotKey::F(n)))
-            }
-        },
-        Key::Character(s) => s
-            .chars()
-            .next()
-            .and_then(record::key_from_char)
-            .map_or(Pressed::Other, Pressed::Main),
-        _ => Pressed::Other,
-    }
+        Some(PendingAction::Show) => p.present(),
+        None => {}
+    });
 }
 
 impl Panel {
@@ -299,8 +288,12 @@ impl Panel {
             .flatten()
     }
 
+    fn is_foreground(&self) -> bool {
+        self.hwnd.get().is_some_and(win::is_foreground)
+    }
+
     fn blur_hides(&self) -> bool {
-        self.base_blur && !self.settings.borrow().keep_open && !self.recording.get()
+        self.base_blur && !self.settings.borrow().keep_open
     }
 
     fn apply_latest(&self) {
@@ -311,7 +304,15 @@ impl Panel {
         let Some(l) = guard.as_ref() else { return };
         let lay = view::fit(self.avail_h.get(), l.extra.battery.is_some());
         let sort = self.settings.borrow().sort;
-        let v = view::build(&l.snap, &l.extra, &l.hist, self.sample, sort);
+        let v = view::build(
+            &l.snap,
+            &l.extra,
+            &l.hist,
+            self.sample,
+            sort,
+            Instant::now(),
+            l.apps_at,
+        );
         self.reading_at.set(l.at);
         drop(guard);
         let ui = &self.ui;
@@ -359,6 +360,7 @@ impl Panel {
                         RowKind::App => 0,
                         RowKind::Wsl => 1,
                         RowKind::Sub => 2,
+                        RowKind::Reading => 3,
                     },
                     has_icon: icon.is_some(),
                     icon: icon.unwrap_or_default(),
@@ -389,7 +391,7 @@ impl Panel {
         self.ui.set_ago(view::updated_ago(secs).into());
     }
 
-    /// A new reading: the tray follows it whether or not the panel is shown.
+    /// A new reading while the panel is shown: the panel and the tray follow it.
     fn on_reading(&self) {
         self.update_tray();
         if self.visible.get() {
@@ -397,8 +399,8 @@ impl Panel {
         }
     }
 
-    /// Redraws the tray icon only when its picture changes, and its tooltip
-    /// only when the text changes.
+    /// Redraws the tray icon when its picture changes. The tooltip is not
+    /// touched here (see `refresh_tooltip`).
     fn update_tray(&self) {
         let guard = self
             .latest
@@ -407,17 +409,9 @@ impl Panel {
         let Some(l) = guard.as_ref() else { return };
         let tray = self.tray.borrow();
         let Some(t) = tray.as_ref() else { return };
-        #[allow(clippy::cast_precision_loss)]
-        let mem = if l.snap.mem_total == 0 {
-            0.0
-        } else {
-            (l.snap.mem_used as f64 / l.snap.mem_total as f64) as f32
-        };
-        let key = tray::Key::new(
-            tray::size_for_dpi(win::system_dpi()),
-            l.snap.cpu_pct / 100.0,
-            mem,
-            view::status(&l.snap, false).warn,
+        let key = tray::key_for(
+            &l.snap,
+            win::system_dpi(),
             self.settings.borrow().theme == ThemeSetting::Neutral,
         );
         if t.key.get() != Some(key)
@@ -426,6 +420,19 @@ impl Panel {
         {
             t.key.set(Some(key));
         }
+    }
+
+    /// Puts the newest figures into the tooltip, when the pointer is over the
+    /// tray icon (the text includes network rates, so it is not kept fresh on
+    /// every reading).
+    fn refresh_tooltip(&self) {
+        let guard = self
+            .latest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(l) = guard.as_ref() else { return };
+        let tray = self.tray.borrow();
+        let Some(t) = tray.as_ref() else { return };
         let tip = view::tooltip(&l.snap);
         if *t.tip.borrow() != tip && t.icon.set_tooltip(Some(&tip)).is_ok() {
             *t.tip.borrow_mut() = tip;
@@ -438,6 +445,8 @@ impl Panel {
         let ui = &self.ui;
         ui.global::<Theme>()
             .set_neutral(s.theme == ThemeSetting::Neutral);
+        self.neutral
+            .store(s.theme == ThemeSetting::Neutral, Ordering::Relaxed);
         ui.set_sort_cpu(s.sort == Sort::Processor);
         ui.set_keep_open(s.keep_open);
         ui.set_refresh(refresh_index(s.hidden_refresh_s));
@@ -453,13 +462,17 @@ impl Panel {
         let (cap, foot) = view::footer_hint(shown);
         ui.set_cap(cap.into());
         ui.set_foot(foot.into());
+        ui.set_foot_short(view::FOOT_SHORT.into());
         if let Some(t) = self.tray.borrow().as_ref() {
             t.keep.set_checked(s.keep_open);
         }
     }
 
+    /// Saves, once more if the first try fails; Settings says so when it
+    /// still fails, until a save works again.
     fn save(&self) {
-        let _ = self.settings.borrow().save();
+        let ok = logic::save_with_retry(|| self.settings.borrow().save());
+        self.ui.set_save_failed(!ok);
     }
 
     fn set_note(&self, text: &str, warn: bool) {
@@ -485,6 +498,10 @@ impl Panel {
         self.settings.borrow_mut().keep_open = v;
         self.save();
         self.sync_settings_ui();
+        // Shown but not in front: nothing would ever blur it now.
+        if logic::hide_on_keep_off(v, self.visible.get(), self.is_foreground(), self.base_blur) {
+            self.hide(false);
+        }
     }
 
     fn toggle_keep_open(&self) {
@@ -505,11 +522,16 @@ impl Panel {
         self.set_autostart(v);
     }
 
+    /// Shows what the Run key says: on only when it starts this exe; when it
+    /// starts another existing copy the switch is off and says so.
     fn show_real_autostart(&self) {
-        let real = autostart::is_enabled();
-        self.ui.set_autostart(real);
+        let reg = autostart::registered();
+        let this = reg == autostart::Registered::ThisCopy;
+        self.ui.set_autostart(this);
+        self.ui
+            .set_autostart_other(reg == autostart::Registered::OtherCopy);
         if let Some(t) = self.tray.borrow().as_ref() {
-            t.auto.set_checked(real);
+            t.auto.set_checked(this);
         }
     }
 
@@ -532,7 +554,7 @@ impl Panel {
 
     fn close_settings(&self) {
         if self.recording.get() {
-            self.stop_recording();
+            self.cancel_recording();
         }
         self.ui.set_settings_open(false);
     }
@@ -550,22 +572,34 @@ impl Panel {
         let _ = self.hotkey.set(None);
     }
 
-    /// Ends recording and puts the saved shortcut back.
-    fn stop_recording(&self) {
+    /// Ends recording and puts the saved shortcut back. When that cannot be
+    /// registered any more, returns the note to show (and the footer stops
+    /// naming the shortcut).
+    fn stop_recording(&self) -> Option<String> {
         self.recording.set(false);
         self.ui.set_recording(false);
         self.mods.set(Mods::default());
+        let mut failed = None;
         let ok = match self.saved_combo() {
-            Some(c) => self.hotkey.set(Some(c)).is_ok(),
+            Some(c) => match self.hotkey.set(Some(c)) {
+                Ok(()) => true,
+                Err(e) => {
+                    failed = Some(record::error_note(e, c));
+                    false
+                }
+            },
             None => false,
         };
         self.hotkey_ok.set(ok);
         self.sync_settings_ui();
+        failed
     }
 
     fn cancel_recording(&self) {
-        self.stop_recording();
-        self.set_note("", false);
+        match self.stop_recording() {
+            Some(note) => self.set_note(&note, true),
+            None => self.set_note("", false),
+        }
     }
 
     fn turn_off_shortcut(&self) {
@@ -585,6 +619,7 @@ impl Panel {
                 Step::Cancel => self.cancel_recording(),
                 Step::NeedTwo => self.set_note(record::HOLD_TWO, true),
                 Step::BadKey => self.set_note(record::BAD_KEY, true),
+                Step::CtrlAlt => self.set_note(record::CTRL_ALT, true),
                 Step::Try(combo) => self.try_combo(combo),
             }
             return true;
@@ -613,11 +648,10 @@ impl Panel {
                 self.sync_settings_ui();
             }
             Err(e) => {
-                self.stop_recording();
-                let text = match e {
-                    HotkeyError::InUse => record::in_use(combo),
-                    HotkeyError::Failed => record::FAILED.to_owned(),
-                };
+                let mut text = record::error_note(e, combo);
+                if self.stop_recording().is_some() {
+                    text.push_str(" Your saved shortcut is not active either.");
+                }
                 self.set_note(&text, true);
             }
         }
@@ -689,21 +723,44 @@ impl Panel {
         }
     }
 
-    /// Opens or closes the panel. A tray click just after a blur-hide is the
-    /// click that caused the blur, so it is ignored (`guard`).
-    fn toggle(&self, guard: bool) {
-        if guard
-            && self
-                .last_blur_hide
-                .get()
-                .is_some_and(|t| t.elapsed() < REOPEN_GUARD)
-        {
-            return;
-        }
-        if self.visible.get() {
-            self.hide(false);
-        } else {
+    /// Opens the panel, or brings an open one to the foreground.
+    fn present(&self) {
+        if !self.visible.get() {
             self.show(true, None);
+        } else if let Some(h) = self.hwnd.get()
+            && !win::is_foreground(h)
+        {
+            win::show_active(h);
+        }
+    }
+
+    /// The global shortcut: opens, focuses an open panel that is not in
+    /// front, or (a second press) closes it.
+    fn on_shortcut(&self) {
+        match logic::shortcut_action(self.visible.get(), self.is_foreground()) {
+            Toggle::Open => self.show(true, None),
+            Toggle::Focus => self.present(),
+            Toggle::Close => self.hide(false),
+        }
+    }
+
+    /// Mouse-down on the tray icon: note whether the panel counts as open.
+    /// The blur that this click causes arrives before the click is released.
+    fn click_down(&self) {
+        let since = self.last_blur_hide.get().map(|t| t.elapsed());
+        self.click_was_open.set(logic::open_at_click(
+            self.visible.get(),
+            since,
+            REOPEN_GUARD,
+        ));
+    }
+
+    /// Mouse-up on the tray icon: open or close, as decided at mouse-down.
+    fn click_up(&self) {
+        match logic::click_action(self.click_was_open.replace(false), self.visible.get()) {
+            ClickAction::Open => self.present(),
+            ClickAction::Close => self.hide(false),
+            ClickAction::Nothing => {}
         }
     }
 }
@@ -715,6 +772,7 @@ fn spawn_reader(
     latest: Arc<Mutex<Option<Latest>>>,
     shown: Arc<AtomicBool>,
     refresh: Arc<AtomicU8>,
+    neutral: Arc<AtomicBool>,
     rx: mpsc::Receiver<ReaderCmd>,
 ) {
     std::thread::spawn(move || {
@@ -729,10 +787,16 @@ fn spawn_reader(
         // Rows from the last scan, kept for readings taken while hidden.
         let mut rows: CachedRows = Default::default();
         let mut force_apps = false;
+        // When the rows were scanned (they are kept while hidden between scans).
+        let mut apps_at = Instant::now();
+        // The tray picture last sent to the UI thread.
+        let mut tray_key: Option<tray::Key> = None;
         if sample {
-            // Like the reference page, which starts with 60 samples of history.
-            for _ in 0..60 {
-                hist.push(&src.read(false));
+            // Like the reference page, which starts with 60 samples, 2 s apart.
+            let now = Instant::now();
+            for i in 0..60u32 {
+                let at = now.checked_sub(TICK * (60 - i)).unwrap_or(now);
+                hist.push(&src.read(false), at);
             }
         }
         loop {
@@ -748,6 +812,7 @@ fn spawn_reader(
                     snap.apps_by_cpu.clone(),
                     snap.wsl.clone(),
                 );
+                apps_at = Instant::now();
             }
             if warn {
                 // A development knob: shows the warning colours.
@@ -755,7 +820,9 @@ fn spawn_reader(
                 snap.uptime_s = 9 * 86_400;
             }
             force_apps = false;
-            hist.push(&snap);
+            let now = Instant::now();
+            hist.push(&snap, now);
+            let key = tray::key_for(&snap, win::system_dpi(), neutral.load(Ordering::Relaxed));
             let mut extra = view::Extra::from_snapshot(&snap);
             if stress {
                 extra = view::Extra::stress();
@@ -766,11 +833,18 @@ fn spawn_reader(
                 snap,
                 extra,
                 hist: hist.clone(),
-                at: Instant::now(),
+                at: now,
+                apps_at,
             });
-            // The UI thread hears of every reading: the tray icon follows it
-            // even while hidden; the panel itself only redraws while shown.
-            let _ = slint::invoke_from_event_loop(|| with_panel(|p| p.on_reading()));
+            // Shown: the UI thread hears of every reading. Hidden: only of a
+            // change of the tray picture, so a hidden Pulse wakes the UI
+            // thread as rarely as it can.
+            if visible {
+                let _ = slint::invoke_from_event_loop(|| with_panel(|p| p.on_reading()));
+            } else if tray_key != Some(key) {
+                let _ = slint::invoke_from_event_loop(|| with_panel(|p| p.update_tray()));
+            }
+            tray_key = Some(key);
             let wait = if visible {
                 TICK
             } else {
@@ -799,49 +873,54 @@ fn initial_tray_icon() -> Icon {
 #[allow(clippy::too_many_lines)]
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // `--quit` (the installer): ask the running app to quit, do not start one.
-    if std::env::args().any(|a| a == "--quit") {
+    if std::env::args_os().any(|a| a == "--quit") {
         let gone = single::request_quit(Duration::from_secs(5));
         std::process::exit(i32::from(!gone));
     }
     let cfg = Config::from_env();
     let settings = Settings::load();
 
-    // A second start opens the first one's panel and exits quietly.
-    let Some(_instance) = single::Instance::acquire_with(
-        || {
-            let _ = slint::invoke_from_event_loop(|| {
-                with_panel(|p| {
-                    if !p.visible.get() {
-                        p.show(true, None);
-                    }
-                });
-            });
-        },
-        // The same path as the tray's Exit: the loop ends and `run` removes the icon.
-        || {
-            let _ = slint::invoke_from_event_loop(|| {
-                let _ = slint::quit_event_loop();
-            });
-        },
-    ) else {
-        return Ok(());
-    };
-    if !cfg.test_run && settings.autostart != autostart::is_enabled() {
-        let _ = autostart::set(settings.autostart);
-    }
-
     slint::BackendSelector::new()
         .backend_name("winit".into())
         .renderer_name(std::env::var("PULSE_RENDERER").unwrap_or_else(|_| "skia-software".into()))
         .with_winit_window_attributes_hook(|a| {
-            // Created hidden offscreen, never activated, fixed size: the real
-            // position and visibility come from `Panel::show`.
+            // Offscreen, never activated, fixed size, no taskbar button: the
+            // real position and visibility come from `Panel::show`. Slint
+            // makes the window visible itself when it is shown, so it cannot
+            // be created invisible here (`with_visible(false)` is overridden
+            // by `Window::show`); the timer below hides it as soon as it exists.
             a.with_active(false)
                 .with_resizable(false)
                 .with_transparent(true)
+                .with_skip_taskbar(true)
                 .with_position(PhysicalPosition::new(-32000, -32000))
         })
         .select()?;
+
+    // One running copy. Taken once the backend is selected, so a second start
+    // or `--quit` that arrives from here on is kept (`PENDING`) until the
+    // window exists, not dropped. A second start opens the first one's panel
+    // and exits quietly.
+    let Some(instance) = single::Instance::acquire_with(
+        || {
+            PENDING.request_show();
+            let _ = slint::invoke_from_event_loop(apply_pending);
+        },
+        // The same path as the tray's Exit: the loop ends and `run` removes the icon.
+        || {
+            PENDING.request_quit();
+            let _ = slint::invoke_from_event_loop(apply_pending);
+        },
+    ) else {
+        return Ok(());
+    };
+    // Start with Windows follows the setting only for the installed exe
+    // (`Pulse.exe`; development builds are `pulse-native.exe`) and never in a
+    // test run; it never takes the value over from another existing copy.
+    let exe = std::env::current_exe().unwrap_or_default();
+    if autostart::auto_sync_allowed(&exe, cfg.test_run) {
+        let _ = autostart::sync(settings.autostart);
+    }
 
     let ui = PanelWindow::new()?;
     ui.global::<Theme>().set_force(cfg.theme);
@@ -854,19 +933,21 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let latest = Arc::new(Mutex::new(None));
     let shown = Arc::new(AtomicBool::new(false));
     let refresh = Arc::new(AtomicU8::new(settings.hidden_refresh_s));
+    let neutral = Arc::new(AtomicBool::new(settings.theme == ThemeSetting::Neutral));
     let (tx, rx) = mpsc::channel();
     spawn_reader(
         cfg.sample,
         latest.clone(),
         shown.clone(),
         refresh.clone(),
+        neutral.clone(),
         rx,
     );
 
     // The global shortcut: registered from the saved settings; if it is
     // taken or invalid the app still starts and Settings says so.
     let hotkey = Listener::spawn(|| {
-        let _ = slint::invoke_from_event_loop(|| with_panel(|p| p.toggle(false)));
+        let _ = slint::invoke_from_event_loop(|| with_panel(|p| p.on_shortcut()));
     });
     let mut hotkey_note = None;
     let mut hotkey_ok = false;
@@ -874,8 +955,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         match Combo::parse(&settings.hotkey) {
             Some(c) => match hotkey.set(Some(c)) {
                 Ok(()) => hotkey_ok = true,
-                Err(HotkeyError::InUse) => hotkey_note = Some(record::in_use(c)),
-                Err(HotkeyError::Failed) => hotkey_note = Some(record::FAILED.to_owned()),
+                Err(e) => hotkey_note = Some(record::error_note(e, c)),
             },
             None => {
                 hotkey_note = Some("The saved shortcut is not valid. Choose a new one.".to_owned());
@@ -908,7 +988,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         reading_at: Cell::new(Instant::now()),
         ago: slint::Timer::default(),
         refresh,
+        neutral,
         tray: RefCell::new(None),
+        click_was_open: Cell::new(false),
     });
     PANEL.with(|p| *p.borrow_mut() = Some(panel.clone()));
     panel.sync_settings_ui();
@@ -1011,15 +1093,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         };
         let _ = slint::invoke_from_event_loop(move || {
             with_panel(|p| match which {
-                0 => {
-                    if !p.visible.get() {
-                        p.show(true, None);
-                    }
-                }
+                0 => p.present(),
                 1 => p.toggle_keep_open(),
                 2 => p.toggle_autostart(),
                 3 => {
-                    p.show(true, None);
+                    p.present();
                     p.open_settings();
                 }
                 _ => {
@@ -1028,15 +1106,28 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             });
         });
     })));
-    TrayIconEvent::set_event_handler(Some(|e: TrayIconEvent| {
-        if let TrayIconEvent::Click {
+    TrayIconEvent::set_event_handler(Some(|e: TrayIconEvent| match e {
+        TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Down,
+            ..
+        } => {
+            let _ = slint::invoke_from_event_loop(|| with_panel(|p| p.click_down()));
+        }
+        TrayIconEvent::Click {
             button: MouseButton::Left,
             button_state: MouseButtonState::Up,
             ..
-        } = e
-        {
-            let _ = slint::invoke_from_event_loop(|| with_panel(|p| p.toggle(true)));
+        } => {
+            let _ = slint::invoke_from_event_loop(|| with_panel(|p| p.click_up()));
         }
+        // The tooltip is brought up to date when the pointer reaches the icon.
+        TrayIconEvent::Enter { .. } | TrayIconEvent::Move { .. }
+            if TIP_THROTTLE.allow(Instant::now()) =>
+        {
+            let _ = slint::invoke_from_event_loop(|| with_panel(|p| p.refresh_tooltip()));
+        }
+        _ => {}
     }));
     let tray_icon = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
@@ -1079,6 +1170,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     WindowEvent::Focused(false) => {
                         with_panel(|p| {
+                            // Recording ends when the panel loses focus, and the
+                            // saved shortcut comes back.
+                            if p.recording.get() {
+                                p.cancel_recording();
+                            }
                             if p.blur_hides() {
                                 p.hide(true);
                             }
@@ -1124,15 +1220,24 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(report) = selftest.clone() {
                     spawn_selftest(report, selftest_tx.clone());
                 }
+                // A second start or `--quit` that came in while starting.
+                apply_pending();
             });
         },
     );
 
     slint::run_event_loop_until_quit()?;
-    // Drop the tray icon now (the panel lives on in a thread-local), so it
-    // leaves the notification area when the app quits.
+    // Take the panel apart here, while the other threads are alive: the tray
+    // icon leaves the notification area, the shortcut listener and the single
+    // instance thread are joined. Left to the thread-local's destructor at
+    // process exit it would join them during teardown, where that can panic
+    // (and a panic aborts). Then leave without running destructors.
     drop(panel.tray.borrow_mut().take());
-    Ok(())
+    let in_tls = PANEL.with(|p| p.borrow_mut().take());
+    drop(in_tls);
+    drop(panel);
+    drop(instance);
+    std::process::exit(0);
 }
 
 /// PULSE_SELFTEST: after 3 s open and close the panel five times without

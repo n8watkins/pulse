@@ -36,7 +36,7 @@ export global Theme {
 }
 
 export struct AppItem {
-    // 0 app, 1 WSL, 2 Linux program inside WSL.
+    // 0 app, 1 WSL, 2 Linux program inside WSL, 3 "Reading apps..." placeholder.
     kind: int,
     letter: string,
     color: color,
@@ -481,10 +481,23 @@ component AppRow inherits Rectangle {
     in property <AppItem> item;
     in property <bool> last;
     in property <color> bar;
-    height: root.item.kind == 2 ? 30px : 60px;
+    height: root.item.kind == 2 ? 30px : (root.item.kind == 3 ? 44px : 60px);
+
+    // Before the first scan of the apps has finished.
+    if root.item.kind == 3: Text {
+        x: 2px;
+        y: 8px;
+        width: root.width - 4px;
+        height: 28px;
+        text: root.item.name;
+        font-family: "Inter";
+        font-size: 13px;
+        color: Theme.mute;
+        vertical-alignment: center;
+    }
 
     // Apps and the WSL machine.
-    if root.item.kind != 2: Rectangle {
+    if root.item.kind < 2: Rectangle {
         if root.item.has-icon: Image {
             x: 4px;
             y: 18px;
@@ -746,6 +759,8 @@ export component PanelWindow inherits Window {
     // Footer: the shortcut's key cap (empty when off), the words after it, and the age.
     in property <string> cap: "";
     in property <string> foot: "";
+    // Used instead of `foot` when a long key cap leaves it no room.
+    in property <string> foot-short: "";
     in property <string> ago: "";
     // Height given up when the work area is short (the Top apps list gets shorter).
     in property <length> shrink: 0px;
@@ -759,6 +774,10 @@ export component PanelWindow inherits Window {
     in property <bool> recording: false;
     in property <bool> keep-open: false;
     in property <bool> autostart: false;
+    // The Run value starts another copy of Pulse.
+    in property <bool> autostart-other: false;
+    // The last attempt to save the settings failed.
+    in property <bool> save-failed: false;
     in property <int> refresh: 0;
     in property <string> version: "";
     callback close-clicked;
@@ -1074,7 +1093,7 @@ export component PanelWindow inherits Window {
         y: root.height - 30px;
         width: 262px - self.x;
         height: 19px;
-        text: root.foot;
+        text: (root.cap != "" && foot-measure.preferred-width > self.width) ? root.foot-short : root.foot;
         font-family: "Inter";
         font-size: 13px;
         color: Theme.mute;
@@ -1093,6 +1112,14 @@ export component PanelWindow inherits Window {
         color: Theme.mute;
         horizontal-alignment: right;
         vertical-alignment: center;
+    }
+
+    // Width of the full sentence, to see whether it fits next to the key cap.
+    foot-measure := Text {
+        visible: false;
+        text: root.foot;
+        font-family: "Inter";
+        font-size: 13px;
     }
 
     // Width of the key cap's text, for placing the words after it.
@@ -1137,6 +1164,27 @@ export component PanelWindow inherits Window {
                 y: 0px;
                 width: sc.width - 10px;
                 alignment: start;
+                // Shown only after a save failed twice.
+                if root.save-failed: Rectangle {
+                    height: save-note.preferred-height + 22px;
+                    save-note := Text {
+                        x: 0;
+                        y: 12px;
+                        width: parent.width;
+                        text: "Couldn't save settings. Changes will be lost when Pulse closes.";
+                        wrap: word-wrap;
+                        font-family: "Inter";
+                        font-size: 13px;
+                        font-weight: 600;
+                        color: Theme.warn;
+                    }
+
+                    Rectangle {
+                        y: parent.height - 1px;
+                        height: 1px;
+                        background: Theme.line;
+                    }
+                }
                 // Shortcut: the combination, Change and Turn off, then the note.
                 Rectangle {
                     height: 14px + 20px + 8px + 32px + 6px + shortcut-note.preferred-height + 12px;
@@ -1239,7 +1287,7 @@ export component PanelWindow inherits Window {
 
                 SRow {
                     name: "Start with Windows";
-                    note: "Opens in the tray when you sign in.";
+                    note: root.autostart-other ? "Another copy of Pulse starts with Windows." : "Opens in the tray when you sign in.";
                     ctl-w: 40px;
                     PSwitch {
                         checked: root.autostart;
