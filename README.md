@@ -39,6 +39,10 @@ Environment hooks, for tests and screenshots:
 - `PULSE_BATTERY=<percent>,<plugged 0|1>` replaces the battery reading (for example `12,0` or `80,1`), to see the Battery tile on a desktop PC.
 - `PULSE_WORK_H=<logical px>` pretends the work area is that tall, to check the panel on a short display.
 - `PULSE_OPEN=settings` starts with the Settings screen open (for screenshots).
+- `PULSE_DEMO_SHORTCUT=recording|keys|taken|failed|invalid` (with `PULSE_OPEN=settings`) shows one state of the shortcut field without any key press: `recording` (waiting for keys), `keys` (Alt and Shift held, with the "hold two" warning), `taken` (another app has it), `failed`, `invalid`.
+  It registers nothing.
+  The off state needs no hook: a `settings.json` with `"hotkey": ""` and `"hotkey_last": "Ctrl+Shift+F20"` shows the switch off with the combination dimmed.
+  Screenshots of a test copy should use F20 to F24 shortcuts, never the owner's real one.
 - `PULSE_WARN=1` makes the reader report 92% processor and 9 days of uptime, to see the warning colours and "restart?".
 - `PULSE_NOAPPS=1` makes the reader report no apps, to see the "Reading apps..." row.
 - `PULSE_SETTINGS_DIR=<folder>` keeps `settings.json` in that folder instead of `%APPDATA%\Pulse` (test runs use it).

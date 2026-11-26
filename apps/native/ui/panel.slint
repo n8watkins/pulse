@@ -1293,7 +1293,7 @@ export component PanelWindow inherits Window {
 
                 SRow {
                     name: "Colours";
-                    note: "Neutral gives each tile its own colour.";
+                    note: "Neutral colours each tile.";
                     ctl-w: 150px;
                     Seg {
                         labels: ["Mint", "Neutral"];
@@ -1328,7 +1328,7 @@ export component PanelWindow inherits Window {
 
                 SRow {
                     name: "Refresh while hidden";
-                    note: "Check rate while closed. It is 2 s when open.";
+                    note: "While closed. Open is 2 s.";
                     ctl-w: 136px;
                     Seg {
                         labels: ["2 s", "5 s", "10 s"];
@@ -1342,7 +1342,7 @@ export component PanelWindow inherits Window {
                 // About: the version, and Slint's own attribution widget (its
                 // Royalty-free licence asks for it on an About screen), scaled down.
                 Rectangle {
-                    height: 54px;
+                    height: 62px;
                     Text {
                         x: 0;
                         y: 0;
@@ -1358,17 +1358,19 @@ export component PanelWindow inherits Window {
                     }
 
                     Rectangle {
-                        x: parent.width - 140px;
+                        // The widget centres its logo in 128 px; push that box
+                        // right so the logo ends near the switches' edge.
+                        x: parent.width - 92px;
                         y: 4px;
-                        width: 140px;
-                        height: 46px;
+                        width: 128px;
+                        height: 54px;
                         clip: true;
                         AboutSlint {
                             x: 0;
                             y: 0;
                             width: 256px;
-                            height: 84px;
-                            transform-scale: 0.55;
+                            height: 108px;
+                            transform-scale: 0.5;
                             transform-origin: { x: 0px, y: 0px };
                         }
                     }

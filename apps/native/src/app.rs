@@ -649,7 +649,8 @@ impl Panel {
     /// PULSE_DEMO_SHORTCUT: puts the shortcut field into one state for a
     /// screenshot. Registers nothing and reads no keys.
     fn demo_shortcut(&self, what: &str) {
-        let combo = Combo::parse("Alt+Shift+P").unwrap_or(Combo {
+        let saved = self.settings.borrow().remembered_hotkey().to_owned();
+        let combo = Combo::parse(&saved).unwrap_or(Combo {
             ctrl: false,
             alt: true,
             shift: true,
