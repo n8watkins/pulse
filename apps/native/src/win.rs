@@ -13,10 +13,10 @@ use windows_sys::Win32::UI::HiDpi::{
     GetDpiForMonitor, GetDpiForSystem, GetDpiForWindow, MDT_EFFECTIVE_DPI,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, GWL_EXSTYLE, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW,
-    GetWindowThreadProcessId, HWND_TOPMOST, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetWindowLongPtrW,
-    SetWindowPos, ShowWindow, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    BringWindowToTop, CreateWindowExW, GWL_EXSTYLE, GetCursorPos, GetForegroundWindow,
+    GetWindowLongPtrW, GetWindowThreadProcessId, HWND_TOPMOST, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 /// Logical size of the panel and its distance from the work-area edges.
@@ -45,6 +45,33 @@ pub struct Hwnd(pub isize);
 impl Hwnd {
     fn raw(self) -> HWND {
         self.0 as HWND
+    }
+}
+
+/// A hidden, never shown window to own the panel. winit gives a window with
+/// no owner `WS_EX_APPWINDOW` (a taskbar button and an Alt+Tab entry the
+/// moment it is visible), and Slint can only create the panel by showing it
+/// once, offscreen, before it is hidden again. An owned window gets neither,
+/// from its first millisecond on. Returns 0 when Windows refuses.
+pub fn create_owner() -> isize {
+    // "STATIC" is a window class every process has.
+    let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+    // SAFETY: a never-visible zero-size popup, owned by nobody.
+    unsafe {
+        CreateWindowExW(
+            WS_EX_TOOLWINDOW,
+            class.as_ptr(),
+            class.as_ptr().add(6),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null(),
+        ) as isize
     }
 }
 

@@ -903,20 +903,29 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = Config::from_env();
     let settings = Settings::load();
 
+    // Owns the panel so it is never a taskbar or Alt+Tab window, not even
+    // while Slint shows it once to create it (see `win::create_owner`).
+    let owner = win::create_owner();
     slint::BackendSelector::new()
         .backend_name("winit".into())
         .renderer_name(std::env::var("PULSE_RENDERER").unwrap_or_else(|_| "skia-software".into()))
-        .with_winit_window_attributes_hook(|a| {
+        .with_winit_window_attributes_hook(move |a| {
             // Offscreen, never activated, fixed size, no taskbar button: the
             // real position and visibility come from `Panel::show`. Slint
             // makes the window visible itself when it is shown, so it cannot
             // be created invisible here (`with_visible(false)` is overridden
             // by `Window::show`); the timer below hides it as soon as it exists.
-            a.with_active(false)
+            let a = a
+                .with_active(false)
                 .with_resizable(false)
                 .with_transparent(true)
                 .with_skip_taskbar(true)
-                .with_position(PhysicalPosition::new(-32000, -32000))
+                .with_position(PhysicalPosition::new(-32000, -32000));
+            if owner == 0 {
+                a
+            } else {
+                a.with_owner_window(owner)
+            }
         })
         .select()?;
 
