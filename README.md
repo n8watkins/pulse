@@ -35,6 +35,13 @@ Environment hooks, for tests and screenshots:
 - `PULSE_RENDERER=skia` uses the GPU renderer (about 108 MB; the default software renderer is the reason memory stays low).
 - `PULSE_STRESS=1` feeds worst-case tile values, to check nothing is clipped.
 - `PULSE_WORK_H=<logical px>` pretends the work area is that tall, to check the panel on a short display.
+- `PULSE_OPEN=settings` starts with the Settings screen open (for screenshots).
+- `PULSE_WARN=1` makes the reader report 92% processor and 9 days of uptime, to see the warning colours and "restart?".
+- `PULSE_SETTINGS_DIR=<folder>` keeps `settings.json` in that folder instead of `%APPDATA%\Pulse` (test runs use it).
+- `PULSE_INSTANCE_NAME=<name>` gives a test run its own single-instance name, so it never pokes the real panel.
+- `PULSE_AUTOSTART_NAME=<name>` names the Run-key value a test run would write.
+- With any of `PULSE_SAMPLE`, `PULSE_SHOW` or `PULSE_SELFTEST` set, the app does not bring the Run key in line with the setting at start.
+- `--quit` as an argument asks the running app to quit and exits (0 when it is gone, 1 after 5 s); the installer uses it.
 
 Measure with `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\measure.ps1 -Exe <exe> -Out <folder>`.
 It sends no keys, makes no clicks, does not touch the clipboard and never takes focus.

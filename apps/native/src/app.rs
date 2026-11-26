@@ -798,19 +798,32 @@ fn initial_tray_icon() -> Icon {
 
 #[allow(clippy::too_many_lines)]
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+    // `--quit` (the installer): ask the running app to quit, do not start one.
+    if std::env::args().any(|a| a == "--quit") {
+        let gone = single::request_quit(Duration::from_secs(5));
+        std::process::exit(i32::from(!gone));
+    }
     let cfg = Config::from_env();
     let settings = Settings::load();
 
     // A second start opens the first one's panel and exits quietly.
-    let Some(_instance) = single::Instance::acquire(|| {
-        let _ = slint::invoke_from_event_loop(|| {
-            with_panel(|p| {
-                if !p.visible.get() {
-                    p.show(true, None);
-                }
+    let Some(_instance) = single::Instance::acquire_with(
+        || {
+            let _ = slint::invoke_from_event_loop(|| {
+                with_panel(|p| {
+                    if !p.visible.get() {
+                        p.show(true, None);
+                    }
+                });
             });
-        });
-    }) else {
+        },
+        // The same path as the tray's Exit: the loop ends and `run` removes the icon.
+        || {
+            let _ = slint::invoke_from_event_loop(|| {
+                let _ = slint::quit_event_loop();
+            });
+        },
+    ) else {
         return Ok(());
     };
     if !cfg.test_run && settings.autostart != autostart::is_enabled() {
@@ -1116,6 +1129,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     slint::run_event_loop_until_quit()?;
+    // Drop the tray icon now (the panel lives on in a thread-local), so it
+    // leaves the notification area when the app quits.
+    drop(panel.tray.borrow_mut().take());
     Ok(())
 }
 
