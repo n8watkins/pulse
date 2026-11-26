@@ -37,7 +37,7 @@ fn embed_windows_resources() {
     let rc = format!(
         r#"#include <winver.h>
 1 ICON "{icon}"
-1 RT_MANIFEST "{manifest}"
+1 24 "{manifest}"
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION {major},{minor},{patch},0
 PRODUCTVERSION {major},{minor},{patch},0

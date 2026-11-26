@@ -45,3 +45,24 @@ Lint and tests, from WSL:
 - `cargo clippy -p pulse-native -p pulse-readings --all-targets --target x86_64-pc-windows-msvc -- -D warnings`
 - `cargo test --workspace`
 - The Windows-only reader tests run with `cargo.exe test -p pulse-readings`.
+
+## Release
+
+The version is the workspace version in the root `Cargo.toml`; the exe, its version details and the installer name all take it from there.
+
+1. Build the exe with the Windows toolchain: `cargo.exe build --release -p pulse-native`, with `--target-dir` pointing at a Windows folder when the source is inside WSL.
+   `apps/native/build.rs` embeds the icon (`apps/native/assets/pulse.ico`), the version details (ProductName and FileDescription "Pulse", company "n8builds.dev") and a manifest (per-monitor-v2 DPI, Windows 10 and 11) through `rc.exe`.
+   The resource step runs only when the build host is Windows, so `cargo clippy --target x86_64-pc-windows-msvc` from WSL needs no resource tools.
+2. The icon is generated, not drawn by hand: `python3 scripts/make-icon.py` (needs Python 3 and Pillow) rewrites `apps/native/assets/pulse.ico` with 16, 20, 24, 32, 48, 64 and 256 px images in the style of `apps/native/ui/logo.svg`.
+3. `THIRD-PARTY-NOTICES.md` is generated from `cargo metadata` for the Windows target: `python3 scripts/gen-notices.py` (hand-written part in `scripts/notices-head.md`).
+   Regenerate it after dependency changes; the script prints any crate whose licence is copyleft-only or unclear.
+4. Build the installer on Windows: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-installer.ps1 -Exe <pulse-native.exe> -Out <folder>` writes `Pulse-<version>-setup.exe`.
+   It uses the `makensis.exe` of the NSIS that Tauri downloaded (`%LOCALAPPDATA%\tauri\NSIS`), or one on PATH, or `-Makensis <path>`.
+   `-TestName "Pulse Test"` builds an installer that uses that name for the folder, shortcut, uninstall entry, Run-key value and settings folder, so it never touches a real Pulse install.
+
+The installer is per-user (no administrator rights): it installs to `%LOCALAPPDATA%\Programs\Pulse`, adds a Start menu shortcut and an Add/Remove Programs entry under HKCU, and asks a running Pulse from that folder to close first (matched by full path, so a copy running from another folder is left alone).
+Silent install: `/S` (starts Pulse at the end unless `/NORUN` is given).
+Uninstall keeps the settings in `%APPDATA%\Pulse` unless you answer yes (a silent uninstall always keeps them).
+"Start with Windows" is owned by the app; the uninstaller only removes its Run value when it points into the install folder.
+
+The installer and the exe are not code signed, so Windows SmartScreen will warn ("Windows protected your PC") on first run; choose "More info", then "Run anyway".
