@@ -89,6 +89,8 @@ global Metrics {
 component IconBtn inherits Rectangle {
     in property <image> source;
     in property <bool> on: true;
+    // Drawn pressed in: the gear while Settings is open.
+    in property <bool> active: false;
     in property <length> size: 34px;
     // The accessible name (there is no tooltip).
     in property <string> label;
@@ -96,7 +98,7 @@ component IconBtn inherits Rectangle {
     width: root.size;
     height: root.size;
     border-radius: 8px;
-    background: ta.has-hover && root.on ? Theme.soft : transparent;
+    background: (ta.has-hover || root.active) && root.on ? Theme.soft : transparent;
     accessible-role: button;
     accessible-label: root.label;
     accessible-action-default => {
@@ -106,7 +108,7 @@ component IconBtn inherits Rectangle {
         width: root.size >= 34px ? 18px : 16px;
         height: self.width;
         source: root.source;
-        colorize: ta.has-hover ? Theme.ink : Theme.mute;
+        colorize: ta.has-hover || root.active ? Theme.ink : Theme.mute;
     }
 
     fs := FocusScope {
@@ -1816,6 +1818,31 @@ export component PanelWindow inherits Window {
             vertical-alignment: center;
         }
 
+        // Closing sits where the pointer already is: the gear that opened
+        // Settings stays in place and closes it, and so does the x beside it.
+        IconBtn {
+            x: root.close-x - 2px - root.ib;
+            y: 9px;
+            size: root.ib;
+            source: @image-url("settings.svg");
+            label: "Close settings";
+            active: true;
+            clicked => {
+                root.settings-hidden();
+            }
+        }
+
+        IconBtn {
+            x: root.close-x;
+            y: 9px;
+            size: root.ib;
+            source: @image-url("close.svg");
+            label: "Close settings";
+            clicked => {
+                root.settings-hidden();
+            }
+        }
+
         sc := Scroll {
             x: 17px;
             y: 54px;
@@ -1959,7 +1986,7 @@ export component PanelWindow inherits Window {
 
                 SRow {
                     name: "Appearance";
-                    note: "Follows your PC.";
+                    note: "Light or dark.";
                     icon: @image-url("sun.svg");
                     ctl-w: 204px;
                     Seg {
@@ -2106,6 +2133,30 @@ export component PanelWindow inherits Window {
             font-weight: 700;
             color: Theme.ink;
             vertical-alignment: center;
+        }
+
+        // The same two buttons as the expanded sheet, where the pointer is.
+        IconBtn {
+            x: root.close-x - 2px - root.ib;
+            y: 9px;
+            size: root.ib;
+            source: @image-url("settings.svg");
+            label: "Close settings";
+            active: true;
+            clicked => {
+                root.settings-hidden();
+            }
+        }
+
+        IconBtn {
+            x: root.close-x;
+            y: 9px;
+            size: root.ib;
+            source: @image-url("close.svg");
+            label: "Close settings";
+            clicked => {
+                root.settings-hidden();
+            }
         }
 
         Rectangle {
