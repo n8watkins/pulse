@@ -15,6 +15,9 @@ The owner chose this on 2026-11-25 after comparing it with a Tauri webview shell
 
 The webview shell is parked, not deleted: branch `spike/webview`, tag `parked/webview`.
 
+Two views: the expanded one (380 x 580, the "B Tighter" layout) and a compact one (380 wide, about 287 tall: Processor and Memory as mini tiles, three one-line apps, a collapsible Linux row with its program and agent counts, one footer row of figures).
+The Settings sheet has a one-line-per-setting form in the compact view and never changes the panel's height.
+
 Built: tray icon with live bars and a tooltip, open and close by click or a global shortcut, Processor and Memory tiles with sparklines, Top apps with real icons sorted by memory or processor, the WSL breakdown with coding agents marked, Graphics, Drive, Network and Battery tiles, Settings, start with Windows, Mint and Neutral colours in light and dark, and a per-user installer (`scripts/build-installer.ps1`).
 
 Slint is used under its royalty-free desktop licence, which requires an "About Slint" notice in the app or the Slint badge on a public download page.
@@ -28,7 +31,11 @@ Environment hooks, for tests and screenshots:
 
 - `PULSE_SAMPLE=1` uses the sample readings instead of the real reader.
 - `PULSE_SHOW=1` shows the panel at start without activating it and keeps it open on blur.
-- `PULSE_THEME=light|dark` forces the theme.
+- `PULSE_THEME=light|dark` forces the theme for that run.
+  It wins over the Appearance setting (System, Light, Dark, saved as `appearance` in `settings.json`; System follows the window's light or dark state, which winit reports on every platform).
+- `PULSE_VIEW=compact|expanded` starts in that view whatever `settings.json` says (the saved field is `view`, expanded by default).
+  The header button switches between the views and saves the choice.
+- `PULSE_WSL_OPEN=0|1` starts the compact view with its Linux (WSL) list closed or open (the saved field is `wsl_open`, closed by default; the expanded view always shows the list).
 - `PULSE_SELFTEST=1` with `PULSE_REPORT=<path>` opens and closes the panel five times and writes `{"shell":"native","open_ms":[...]}`.
 - `PULSE_NOTRIM=1` turns off the working-set trim on hide.
 - `PULSE_RENDERER=skia` uses the GPU renderer (about 108 MB; the default software renderer is the reason memory stays low).
