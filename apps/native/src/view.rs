@@ -1535,8 +1535,8 @@ mod tests {
             format!("{programs} programs \u{b7} {agents} agents")
         );
         // The sample: Claude Code x3 and Codex CLI x2 are agents.
-        assert_eq!((programs, agents), (14, 5));
-        assert_eq!(head.detail, "14 programs \u{b7} 5 agents");
+        assert_eq!((programs, agents), (18, 5));
+        assert_eq!(head.detail, "18 programs \u{b7} 5 agents");
     }
 
     #[test]
@@ -1546,7 +1546,7 @@ mod tests {
             cpu_pct: 1.0,
             procs: procs
                 .into_iter()
-                .map(|(agent, count)| wsl_proc("x", agent, count, 10))
+                .map(|(agent, count)| wsl_proc("x", agent, count, 10, 0.0))
                 .collect(),
         };
         assert_eq!(wsl_summary(&w(vec![])), "");
