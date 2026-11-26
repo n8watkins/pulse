@@ -5,13 +5,6 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Theme {
-    Mint,
-    Neutral,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum Sort {
     Memory,
     Processor,
@@ -74,7 +67,6 @@ pub struct Settings {
     /// The combination to bring back when the shortcut is switched on again.
     /// Always equal to `hotkey` while the shortcut is on; kept while it is off.
     pub hotkey_last: String,
-    pub theme: Theme,
     pub keep_open: bool,
     pub autostart: bool,
     /// Seconds between refreshes while the panel is hidden: 2, 5 or 10.
@@ -94,7 +86,6 @@ impl Default for Settings {
         Self {
             hotkey: DEFAULT_HOTKEY.to_owned(),
             hotkey_last: DEFAULT_HOTKEY.to_owned(),
-            theme: Theme::Mint,
             keep_open: false,
             autostart: true,
             hidden_refresh_s: 2,
@@ -212,12 +203,6 @@ impl Settings {
         if !out.hotkey.is_empty() {
             out.hotkey_last.clone_from(&out.hotkey);
         }
-        if let Some(v) = map
-            .get("theme")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-        {
-            out.theme = v;
-        }
         if let Some(b) = map.get("keep_open").and_then(Value::as_bool) {
             out.keep_open = b;
         }
@@ -270,7 +255,6 @@ mod tests {
     fn defaults() {
         let s = Settings::default();
         assert_eq!(s.hotkey, "Alt+Shift+P");
-        assert_eq!(s.theme, Theme::Mint);
         assert!(!s.keep_open);
         assert!(s.autostart);
         assert_eq!(s.hidden_refresh_s, 2);
@@ -286,7 +270,6 @@ mod tests {
         let s = Settings {
             hotkey: String::new(),
             hotkey_last: "Ctrl+Shift+K".to_owned(),
-            theme: Theme::Neutral,
             keep_open: true,
             autostart: false,
             hidden_refresh_s: 10,
@@ -298,12 +281,35 @@ mod tests {
         s.save_to(&path).unwrap();
         assert!(!dir.join("settings.json.tmp").exists());
         assert_eq!(Settings::load_from(&path), s);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"dark\"") && text.contains("\"compact\""));
         assert!(
-            std::fs::read_to_string(&path)
-                .unwrap()
-                .contains("\"neutral\"")
+            !text.contains("theme"),
+            "the removed color theme is not written"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_removed_color_theme_in_an_old_file_is_ignored_and_dropped_on_save() {
+        for old in [
+            r#"{"hotkey":"Alt+Shift+P","theme":"mint","sort":"processor"}"#,
+            r#"{"hotkey":"Alt+Shift+P","theme":"neutral","sort":"processor"}"#,
+            r#"{"hotkey":"Alt+Shift+P","theme":42,"sort":"processor"}"#,
+        ] {
+            let s = Settings::from_json(old);
+            assert_eq!(s.sort, Sort::Processor, "{old}");
+            assert_eq!(s.hotkey, "Alt+Shift+P");
+            let dir = temp("oldtheme");
+            let path = dir.join("settings.json");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(&path, old).unwrap();
+            let loaded = Settings::load_from(&path);
+            assert_eq!(loaded, s);
+            loaded.save_to(&path).unwrap();
+            assert!(!std::fs::read_to_string(&path).unwrap().contains("theme"));
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     #[test]
@@ -327,7 +333,6 @@ mod tests {
     #[test]
     fn unknown_ignored_missing_defaulted() {
         let s = Settings::from_json(r#"{"theme":"neutral","future":{"a":1}}"#);
-        assert_eq!(s.theme, Theme::Neutral);
         assert_eq!(s.hotkey, "Alt+Shift+P");
         assert_eq!(s.hidden_refresh_s, 2);
     }
@@ -335,7 +340,6 @@ mod tests {
     #[test]
     fn bad_field_values_fall_back_individually() {
         let s = Settings::from_json(r#"{"theme":"pink","sort":"processor","keep_open":"yes"}"#);
-        assert_eq!(s.theme, Theme::Mint);
         assert_eq!(s.sort, Sort::Processor);
         assert!(!s.keep_open);
     }
@@ -347,7 +351,6 @@ mod tests {
         let s = Settings::from_json(old);
         assert_eq!(s.view, PanelView::Expanded);
         assert!(!s.wsl_open);
-        assert_eq!(s.theme, Theme::Neutral);
         assert_eq!(s.sort, Sort::Processor);
         assert_eq!(s.hidden_refresh_s, 5);
         assert!(s.keep_open && !s.autostart);
@@ -386,7 +389,6 @@ mod tests {
         // A bad value falls back on its own, the rest of the file still loads.
         let s = Settings::from_json(r#"{"appearance":"sepia","theme":"neutral"}"#);
         assert_eq!(s.appearance, Appearance::System);
-        assert_eq!(s.theme, Theme::Neutral);
     }
 
     #[test]

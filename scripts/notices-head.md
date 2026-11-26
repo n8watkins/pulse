@@ -141,7 +141,7 @@ Each mark with its title, source and license as Simple Icons lists them (no lice
 
 ## Icons
 
-The line icons in the header and in Settings (monitor, sun, moon, keyboard, palette, pin, power, refresh, info, settings, maximize, minimize, x, chevron) are from [Lucide](https://lucide.dev) (<https://github.com/lucide-icons/lucide>, icon data as in lucide-react 0.453.0), embedded as SVG files in `apps/native/ui/` and drawn at 16 px in the panel's text color.
+The line icons in the header and in Settings (monitor, sun, moon, keyboard, pin, power, refresh, info, settings, maximize, minimize, x, chevron) are from [Lucide](https://lucide.dev) (<https://github.com/lucide-icons/lucide>, icon data as in lucide-react 0.453.0), embedded as SVG files in `apps/native/ui/` and drawn at 16 px in the panel's text color.
 Lucide is released under the ISC license; the icons derived from the Feather project (info, monitor, moon, power, x, chevrons, minimize-2 and others) are also covered by the MIT license of Feather.
 Both texts follow.
 

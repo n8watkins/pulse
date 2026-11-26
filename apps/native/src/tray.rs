@@ -37,12 +37,11 @@ pub struct Key {
     pub cpu: u32,
     pub mem: u32,
     pub warn: bool,
-    pub neutral: bool,
 }
 
 impl Key {
     /// `cpu` and `mem` are 0 to 1.
-    pub fn new(size: u32, cpu: f32, mem: f32, warn: bool, neutral: bool) -> Self {
+    pub fn new(size: u32, cpu: f32, mem: f32, warn: bool) -> Self {
         let q = |f: f32| {
             let design = (TRACK_H * f.clamp(0.0, 1.0)).max(MIN_FILL);
             (design * size as f32 / SPACE * 2.0).round() as u32
@@ -52,14 +51,13 @@ impl Key {
             cpu: q(cpu),
             mem: q(mem),
             warn,
-            neutral,
         }
     }
 }
 
 /// The picture a reading asks for, at the tray size for `dpi`.
 #[allow(clippy::cast_precision_loss)]
-pub fn key_for(snap: &Snapshot, dpi: u32, neutral: bool) -> Key {
+pub fn key_for(snap: &Snapshot, dpi: u32) -> Key {
     let mem = if snap.mem_total == 0 {
         0.0
     } else {
@@ -70,18 +68,14 @@ pub fn key_for(snap: &Snapshot, dpi: u32, neutral: bool) -> Key {
         snap.cpu_pct / 100.0,
         mem,
         crate::view::status(snap, false, true).warn,
-        neutral,
     )
 }
 
 const WARN: [u8; 3] = [0xff, 0x9b, 0x6b];
 
 fn colors(k: &Key) -> [[u8; 3]; 2] {
-    let [cpu, mem] = if k.neutral {
-        [[0x60, 0xa5, 0xfa], [0xa7, 0x8b, 0xfa]]
-    } else {
-        [[184, 245, 208], [255, 255, 255]]
-    };
+    // The panel's own accents: blue for the processor, violet for memory.
+    let [cpu, mem] = [[0x60, 0xa5, 0xfa], [0xa7, 0x8b, 0xfa]];
     [if k.warn { WARN } else { cpu }, mem]
 }
 
@@ -156,23 +150,13 @@ mod tests {
     #[test]
     fn a_one_percent_move_does_not_change_the_key() {
         for size in SIZES {
-            let a = Key::new(size, 0.24, 0.43, false, false);
-            let b = Key::new(size, 0.245, 0.435, false, false);
+            let a = Key::new(size, 0.24, 0.43, false);
+            let b = Key::new(size, 0.245, 0.435, false);
             assert_eq!(a, b, "size {size}");
         }
-        assert_ne!(
-            Key::new(16, 0.2, 0.4, false, false),
-            Key::new(16, 0.5, 0.4, false, false)
-        );
-        // A warning or a theme change redraws.
-        assert_ne!(
-            Key::new(16, 0.2, 0.4, false, false),
-            Key::new(16, 0.2, 0.4, true, false)
-        );
-        assert_ne!(
-            Key::new(16, 0.2, 0.4, false, false),
-            Key::new(16, 0.2, 0.4, false, true)
-        );
+        assert_ne!(Key::new(16, 0.2, 0.4, false), Key::new(16, 0.5, 0.4, false));
+        // A warning redraws.
+        assert_ne!(Key::new(16, 0.2, 0.4, false), Key::new(16, 0.2, 0.4, true));
     }
 
     #[test]
@@ -181,28 +165,28 @@ mod tests {
         let mut snap = Sample::default().read(true);
         snap.cpu_pct = 10.0;
         snap.mem_used = snap.mem_total / 2;
-        let calm = key_for(&snap, 96, false);
+        let calm = key_for(&snap, 96);
         assert_eq!(calm.size, 16);
         assert!(!calm.warn);
-        assert_eq!(calm, Key::new(16, 0.1, 0.5, false, false));
+        assert_eq!(calm, Key::new(16, 0.1, 0.5, false));
         snap.cpu_pct = 90.0;
-        let busy = key_for(&snap, 96, true);
-        assert!(busy.warn && busy.neutral);
+        let busy = key_for(&snap, 96);
+        assert!(busy.warn);
         // Net rates change every tick but are not part of the picture.
         let mut other = snap.clone();
         other.net_down_bps += 12_345;
-        assert_eq!(key_for(&snap, 96, true), key_for(&other, 96, true));
+        assert_eq!(key_for(&snap, 96), key_for(&other, 96));
     }
 
     #[test]
     fn empty_bars_keep_a_visible_sliver() {
-        assert!(Key::new(16, 0.0, 0.0, false, false).cpu >= 2);
+        assert!(Key::new(16, 0.0, 0.0, false).cpu >= 2);
     }
 
     #[test]
     fn pixels_have_the_right_size_and_corners_are_clear() {
         for size in SIZES {
-            let px = render(&Key::new(size, 0.5, 0.5, false, false));
+            let px = render(&Key::new(size, 0.5, 0.5, false));
             assert_eq!(px.len(), (size * size * 4) as usize);
             assert_eq!(px[3], 0, "top-left corner is transparent at {size}");
         }
@@ -219,15 +203,12 @@ mod tests {
     }
 
     #[test]
-    fn mint_neutral_and_warning_colors() {
-        let mint = Key::new(32, 0.9, 0.9, false, false);
-        assert_eq!(bar_pixel(&mint, 0), [184, 245, 208]);
-        assert_eq!(bar_pixel(&mint, 1), [255, 255, 255]);
-        let warn = Key::new(32, 0.9, 0.9, true, false);
+    fn accent_and_warning_colors() {
+        let calm = Key::new(32, 0.9, 0.9, false);
+        assert_eq!(bar_pixel(&calm, 0), [0x60, 0xa5, 0xfa]);
+        assert_eq!(bar_pixel(&calm, 1), [0xa7, 0x8b, 0xfa]);
+        let warn = Key::new(32, 0.9, 0.9, true);
         assert_eq!(bar_pixel(&warn, 0), [255, 155, 107]);
-        assert_eq!(bar_pixel(&warn, 1), [255, 255, 255]);
-        let neutral = Key::new(32, 0.9, 0.9, false, true);
-        assert_eq!(bar_pixel(&neutral, 0), [0x60, 0xa5, 0xfa]);
-        assert_eq!(bar_pixel(&neutral, 1), [0xa7, 0x8b, 0xfa]);
+        assert_eq!(bar_pixel(&warn, 1), [0xa7, 0x8b, 0xfa]);
     }
 }

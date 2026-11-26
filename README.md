@@ -18,7 +18,7 @@ The webview shell is parked, not deleted: branch `spike/webview`, tag `parked/we
 Two views: the expanded one (380 x 580, the "B Tighter" layout) and a compact one (380 wide, about 287 tall: Processor and Memory as mini tiles, three one-line apps, a collapsible Linux row with its program and agent counts, one footer row of figures).
 The Settings sheet has a one-line-per-setting form in the compact view and never changes the panel's height.
 
-Built: tray icon with live bars and a tooltip, open and close by click or a global shortcut, Processor and Memory tiles with sparklines, Top apps with real icons sorted by memory or processor, the WSL breakdown with coding agents marked, Graphics, Drive, Network and Battery tiles, Settings, start with Windows, Mint and Neutral colors in light and dark, and a per-user installer (`scripts/build-installer.ps1`).
+Built: tray icon with live bars and a tooltip, open and close by click or a global shortcut, Processor and Memory tiles with sparklines, Top apps with real icons sorted by memory or processor, the WSL breakdown with coding agents marked, Graphics, Drive, Network and Battery tiles, Settings, start with Windows, a light, dark or system appearance, and a per-user installer (`scripts/build-installer.ps1`).
 
 Slint is used under its royalty-free desktop license, which requires an "About Slint" notice in the app or the Slint badge on a public download page.
 Pulse shows the `AboutSlint` widget at the bottom of Settings.

@@ -7,9 +7,7 @@ use crate::tray;
 use crate::view::{self, History, RowKind};
 use crate::win::{self, Hwnd};
 use pulse_platform::hotkey::{Combo, Listener};
-use pulse_platform::{
-    Appearance, PanelView, Settings, Sort, Theme as ThemeSetting, autostart, single,
-};
+use pulse_platform::{Appearance, PanelView, Settings, Sort, autostart, single};
 use pulse_readings::{AppRow, IconImage, Sample, Snapshot, Source, Wsl, icon_rgba};
 use slint::winit_030::winit::dpi::PhysicalPosition;
 use slint::winit_030::winit::event::{ElementState, WindowEvent};
@@ -251,8 +249,6 @@ struct Panel {
     ago: slint::Timer,
     /// Seconds between readings while hidden, read by the reader thread.
     refresh: Arc<AtomicU8>,
-    /// The Neutral theme is on (the tray icon's colors), read by the reader thread.
-    neutral: Arc<AtomicBool>,
     tray: RefCell<Option<TrayState>>,
     /// At mouse-down on the tray icon: the panel counted as open.
     click_was_open: Cell<bool>,
@@ -496,11 +492,7 @@ impl Panel {
         let Some(l) = guard.as_ref() else { return };
         let tray = self.tray.borrow();
         let Some(t) = tray.as_ref() else { return };
-        let key = tray::key_for(
-            &l.snap,
-            win::system_dpi(),
-            self.settings.borrow().theme == ThemeSetting::Neutral,
-        );
+        let key = tray::key_for(&l.snap, win::system_dpi());
         if t.key.get() != Some(key)
             && let Ok(icon) = Icon::from_rgba(tray::render(&key), key.size, key.size)
             && t.icon.set_icon(Some(icon)).is_ok()
@@ -530,10 +522,6 @@ impl Panel {
     fn sync_settings_ui(&self) {
         let s = self.settings.borrow();
         let ui = &self.ui;
-        ui.global::<Theme>()
-            .set_neutral(s.theme == ThemeSetting::Neutral);
-        self.neutral
-            .store(s.theme == ThemeSetting::Neutral, Ordering::Relaxed);
         ui.set_sort_cpu(s.sort == Sort::Processor);
         ui.global::<Theme>()
             .set_force(logic::theme_force(self.theme_override, s.appearance));
@@ -631,13 +619,6 @@ impl Panel {
         self.ui
             .global::<Theme>()
             .set_system_dark(theme == Some(WinitTheme::Dark));
-    }
-
-    fn set_theme(&self, theme: ThemeSetting) {
-        self.settings.borrow_mut().theme = theme;
-        self.save();
-        self.sync_settings_ui();
-        self.update_tray();
     }
 
     fn set_keep_open(&self, v: bool) {
@@ -968,7 +949,6 @@ fn spawn_reader(
     latest: Arc<Mutex<Option<Latest>>>,
     shown: Arc<AtomicBool>,
     refresh: Arc<AtomicU8>,
-    neutral: Arc<AtomicBool>,
     rx: mpsc::Receiver<ReaderCmd>,
 ) {
     std::thread::spawn(move || {
@@ -1036,7 +1016,7 @@ fn spawn_reader(
             force_apps = false;
             let now = Instant::now();
             hist.push(&snap, now);
-            let key = tray::key_for(&snap, win::system_dpi(), neutral.load(Ordering::Relaxed));
+            let key = tray::key_for(&snap, win::system_dpi());
             let mut extra = view::Extra::from_snapshot(&snap);
             if stress {
                 extra = view::Extra::stress();
@@ -1074,13 +1054,7 @@ fn spawn_reader(
 }
 
 fn initial_tray_icon() -> Icon {
-    let key = tray::Key::new(
-        tray::size_for_dpi(win::system_dpi()),
-        0.0,
-        0.0,
-        false,
-        false,
-    );
+    let key = tray::Key::new(tray::size_for_dpi(win::system_dpi()), 0.0, 0.0, false);
     Icon::from_rgba(tray::render(&key), key.size, key.size).expect("valid icon buffer")
 }
 
@@ -1170,14 +1144,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let latest = Arc::new(Mutex::new(None));
     let shown = Arc::new(AtomicBool::new(false));
     let refresh = Arc::new(AtomicU8::new(settings.hidden_refresh_s));
-    let neutral = Arc::new(AtomicBool::new(settings.theme == ThemeSetting::Neutral));
     let (tx, rx) = mpsc::channel();
     spawn_reader(
         cfg.sample,
         latest.clone(),
         shown.clone(),
         refresh.clone(),
-        neutral.clone(),
         rx,
     );
 
@@ -1229,7 +1201,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         reading_at: Cell::new(Instant::now()),
         ago: slint::Timer::default(),
         refresh,
-        neutral,
         tray: RefCell::new(None),
         click_was_open: Cell::new(false),
     });
@@ -1268,15 +1239,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 1 => Appearance::Light,
                 2 => Appearance::Dark,
                 _ => Appearance::System,
-            });
-        });
-    });
-    panel.ui.on_theme_picked(|i| {
-        with_panel(|p| {
-            p.set_theme(if i == 1 {
-                ThemeSetting::Neutral
-            } else {
-                ThemeSetting::Mint
             });
         });
     });
