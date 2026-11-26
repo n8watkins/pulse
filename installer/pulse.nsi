@@ -76,20 +76,28 @@ VIAddVersionKey "LegalCopyright" "Copyright (c) 2026 ${PUBLISHER}"
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 
-; Writes $PLUGINSDIR\close.ps1: asks the copy of the app that runs from -Dir to close, waits for it,
-; and ends it only if it is still there after 6 seconds.
-; The match is on the full executable path, never on the image name alone, so a copy running from
+; Writes $PLUGINSDIR\close.ps1, which stops the copy of the app that runs from -Dir:
+;  1. if the installed exe is version 0.1.0 or later, run it with --quit (hidden) and wait up to 10 s;
+;     if that process is still running after 10 s it is ended by its PID (an exe that does not
+;     understand --quit would have started normally);
+;  2. then, only if a process from that exact folder is still running, end it as a last resort.
+; Processes are matched by full executable path, never by image name alone, so a copy running from
 ; another folder (a dev build, another install) is never touched.
 !macro WriteCloseScript
   InitPluginsDir
   FileOpen $0 "$PLUGINSDIR\close.ps1" w
   FileWrite $0 `param([string]$$Dir)$\r$\n`
   FileWrite $0 `$$exe = Join-Path $$Dir '${EXE_NAME}'$\r$\n`
+  FileWrite $0 `if (Test-Path -LiteralPath $$exe) {$\r$\n`
+  FileWrite $0 `  $$vi = (Get-Item -LiteralPath $$exe).VersionInfo; $$v = $$null$\r$\n`
+  FileWrite $0 `  try { $$v = [version]('{0}.{1}.{2}' -f $$vi.FileMajorPart, $$vi.FileMinorPart, $$vi.FileBuildPart) } catch {}$\r$\n`
+  FileWrite $0 `  if ($$v -and $$v -ge [version]'0.1.0') {$\r$\n`
+  FileWrite $0 `    $$q = Start-Process -FilePath $$exe -ArgumentList '--quit' -WindowStyle Hidden -PassThru$\r$\n`
+  FileWrite $0 `    if (-not $$q.WaitForExit(10000)) { Stop-Process -Id $$q.Id -Force -ErrorAction SilentlyContinue }$\r$\n`
+  FileWrite $0 `  }$\r$\n`
+  FileWrite $0 `}$\r$\n`
   FileWrite $0 `$$mine = @(Get-CimInstance Win32_Process | Where-Object { $$_.ExecutablePath -and ($$_.ExecutablePath -ieq $$exe) })$\r$\n`
-  FileWrite $0 `foreach ($$m in $$mine) { $$p = Get-Process -Id $$m.ProcessId -ErrorAction SilentlyContinue; if ($$p) { [void]$$p.CloseMainWindow() } }$\r$\n`
-  FileWrite $0 `$$deadline = (Get-Date).AddSeconds(6)$\r$\n`
-  FileWrite $0 `while ((Get-Date) -lt $$deadline -and @($$mine | Where-Object { Get-Process -Id $$_.ProcessId -ErrorAction SilentlyContinue }).Count -gt 0) { Start-Sleep -Milliseconds 200 }$\r$\n`
-  FileWrite $0 `foreach ($$m in $$mine) { if (Get-Process -Id $$m.ProcessId -ErrorAction SilentlyContinue) { Stop-Process -Id $$m.ProcessId -Force -ErrorAction SilentlyContinue; Wait-Process -Id $$m.ProcessId -Timeout 5 -ErrorAction SilentlyContinue } }$\r$\n`
+  FileWrite $0 `foreach ($$m in $$mine) { Stop-Process -Id $$m.ProcessId -Force -ErrorAction SilentlyContinue; Wait-Process -Id $$m.ProcessId -Timeout 5 -ErrorAction SilentlyContinue }$\r$\n`
   FileClose $0
   nsExec::Exec `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\close.ps1" -Dir "$INSTDIR"`
   Pop $0
