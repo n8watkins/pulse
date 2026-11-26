@@ -15,11 +15,10 @@ The owner chose this on 2026-11-25 after comparing it with a Tauri webview shell
 
 The webview shell is parked, not deleted: branch `spike/webview`, tag `parked/webview`.
 
-Built so far: tray icon, open and close, Processor and Memory tiles with sparklines, Top apps with real icons, Graphics, Drive and Network tiles, light and dark.
-Not built yet: global shortcut, settings, start with Windows, the WSL breakdown, the tray tooltip and live tray bars, the Neutral colour theme, an installer.
+Built: tray icon with live bars and a tooltip, open and close by click or a global shortcut, Processor and Memory tiles with sparklines, Top apps with real icons sorted by memory or processor, the WSL breakdown with coding agents marked, Graphics, Drive, Network and Battery tiles, Settings, start with Windows, Mint and Neutral colours in light and dark, and a per-user installer (`scripts/build-installer.ps1`).
 
 Slint is used under its royalty-free desktop licence, which requires an "About Slint" notice in the app or the Slint badge on a public download page.
-Neither exists yet; one must be added before the app is shared.
+Pulse shows the `AboutSlint` widget at the bottom of Settings.
 
 ## Build and measure
 
