@@ -7,7 +7,7 @@ use crate::tray;
 use crate::view::{self, History, RowKind};
 use crate::win::{self, Hwnd};
 use pulse_platform::hotkey::{Combo, Listener};
-use pulse_platform::{Settings, Sort, Theme as ThemeSetting, autostart, single};
+use pulse_platform::{PanelView, Settings, Sort, Theme as ThemeSetting, autostart, single};
 use pulse_readings::{AppRow, IconImage, Sample, Snapshot, Source, Wsl, icon_rgba};
 use slint::winit_030::winit::dpi::PhysicalPosition;
 use slint::winit_030::winit::event::{ElementState, WindowEvent};
@@ -45,6 +45,10 @@ struct Config {
     selftest_report: Option<String>,
     /// PULSE_OPEN=settings: start with the Settings screen open.
     open_settings: bool,
+    /// PULSE_VIEW=compact|expanded: start in that view whatever the settings file says.
+    view: Option<PanelView>,
+    /// PULSE_WSL_OPEN=0|1: start with the compact view's Linux list closed or open.
+    wsl_open: Option<bool>,
     /// PULSE_DEMO_SHORTCUT=recording|keys|taken|failed|invalid: show that state of the
     /// shortcut field without any key press (for screenshots).
     demo_shortcut: Option<String>,
@@ -68,6 +72,14 @@ impl Config {
             selftest_report: on("PULSE_SELFTEST")
                 .then(|| std::env::var("PULSE_REPORT").unwrap_or_default()),
             open_settings: std::env::var("PULSE_OPEN").is_ok_and(|v| v == "settings"),
+            view: std::env::var("PULSE_VIEW")
+                .ok()
+                .and_then(|v| PanelView::parse(&v)),
+            wsl_open: match std::env::var("PULSE_WSL_OPEN").as_deref() {
+                Ok("1") => Some(true),
+                Ok("0") => Some(false),
+                _ => None,
+            },
             demo_shortcut: std::env::var("PULSE_DEMO_SHORTCUT")
                 .ok()
                 .filter(|v| !v.is_empty()),
@@ -215,7 +227,10 @@ struct Panel {
     trim: bool,
     /// Logical height the panel may use on the monitor it opens on.
     avail_h: Cell<f32>,
-    layout: Cell<view::Layout>,
+    /// Height of the view itself (no Settings sheet), from the newest reading.
+    own_h: Cell<f32>,
+    /// Height the window has now: `own_h`, or taller while Settings is open.
+    height: Cell<f32>,
     settings: RefCell<Settings>,
     hotkey: Listener,
     /// The saved shortcut is registered (the footer only names a working one).
@@ -312,28 +327,29 @@ impl Panel {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(l) = guard.as_ref() else { return };
-        let lay = view::fit(self.avail_h.get(), l.extra.battery.is_some());
-        let sort = self.settings.borrow().sort;
+        let mode = self.mode();
         let v = view::build(
             &l.snap,
             &l.extra,
             &l.hist,
             self.sample,
-            sort,
+            mode,
             Instant::now(),
             l.apps_at,
         );
+        let battery = l.extra.battery.is_some();
         self.reading_at.set(l.at);
         drop(guard);
         let ui = &self.ui;
-        ui.set_shrink(lay.shrink);
-        if lay != self.layout.replace(lay)
-            && self.visible.get()
-            && let Some(h) = self.hwnd.get()
-        {
-            // The battery strip came or went: the height changed with it.
-            win::place(h, lay.height());
-        }
+        // The view, the Linux list and the battery strip set the height; the
+        // window follows (the panel grows or shrinks upward from the corner).
+        self.own_h.set(view::view_height(
+            mode.view,
+            &v.apps,
+            battery,
+            self.avail_h.get(),
+        ));
+        self.set_height();
         ui.set_status(v.status.text.into());
         ui.set_status_warn(v.status.warn);
         ui.set_cpu_big(v.cpu_big.into());
@@ -354,6 +370,8 @@ impl Panel {
         ui.set_drive_frac(t.drive_frac);
         ui.set_net_big(t.net_big.into());
         ui.set_net_sub(t.net_sub.into());
+        ui.set_net_down(t.net_down.into());
+        ui.set_net_up(t.net_up.into());
         ui.set_has_battery(t.battery.is_some());
         if let Some(b) = t.battery {
             ui.set_bat_big(b.big.into());
@@ -372,6 +390,8 @@ impl Panel {
                         RowKind::Wsl => 1,
                         RowKind::Sub => 2,
                         RowKind::Reading => 3,
+                        RowKind::WslClosed => 4,
+                        RowKind::WslOpen => 5,
                     },
                     has_icon: icon.is_some(),
                     icon: icon.unwrap_or_default(),
@@ -395,6 +415,57 @@ impl Panel {
             self.model.set_vec(rows);
         }
         self.update_ago();
+    }
+
+    /// What the panel shows now: the sort, the view and the Linux list.
+    fn mode(&self) -> view::Mode {
+        let s = self.settings.borrow();
+        view::Mode {
+            sort: s.sort,
+            view: s.view,
+            wsl_open: s.wsl_open,
+        }
+    }
+
+    /// Gives the window the height for the view (taller while Settings is
+    /// open). The property is set before the window is moved, so the content
+    /// and the window change in the same turn of the event loop.
+    fn set_height(&self) {
+        let h = view::settings_height(
+            self.own_h.get(),
+            self.avail_h.get(),
+            self.ui.get_settings_open(),
+        );
+        if (h - self.height.replace(h)).abs() < f32::EPSILON {
+            return;
+        }
+        self.ui.set_panel_h(h);
+        if self.visible.get()
+            && let Some(hwnd) = self.hwnd.get()
+        {
+            win::place(hwnd, h);
+        }
+    }
+
+    /// The header button: the other view, kept in the settings file.
+    fn toggle_view(&self) {
+        {
+            let mut s = self.settings.borrow_mut();
+            s.view = s.view.other();
+        }
+        self.save();
+        self.sync_settings_ui();
+        self.apply_latest();
+    }
+
+    /// The compact view's Linux row: open or close its list, and remember it.
+    fn toggle_wsl(&self) {
+        {
+            let mut s = self.settings.borrow_mut();
+            s.wsl_open = !s.wsl_open;
+        }
+        self.save();
+        self.apply_latest();
     }
 
     fn update_ago(&self) {
@@ -459,6 +530,7 @@ impl Panel {
         self.neutral
             .store(s.theme == ThemeSetting::Neutral, Ordering::Relaxed);
         ui.set_sort_cpu(s.sort == Sort::Processor);
+        ui.set_compact(s.view == PanelView::Compact);
         ui.set_keep_open(s.keep_open);
         ui.set_refresh(refresh_index(s.hidden_refresh_s));
         let shown = if self.hotkey_ok.get() { &s.hotkey } else { "" };
@@ -595,6 +667,8 @@ impl Panel {
     fn open_settings(&self) {
         self.show_real_autostart();
         self.ui.set_settings_open(true);
+        // The sheet needs the expanded height (see `view::settings_height`).
+        self.set_height();
     }
 
     fn close_settings(&self) {
@@ -602,6 +676,7 @@ impl Panel {
             self.cancel_recording();
         }
         self.ui.set_settings_open(false);
+        self.set_height();
     }
 
     /// The saved combination, if there is a valid one.
@@ -762,7 +837,7 @@ impl Panel {
         self.shown.store(true, Ordering::Relaxed);
         self.avail_h.set(win::avail_height(h));
         self.apply_latest();
-        win::place(h, self.layout.get().height());
+        win::place(h, self.height.get());
         if let Some(tx) = measure {
             *self
                 .measure
@@ -776,7 +851,7 @@ impl Panel {
         }
         // Moving between monitors of different scale can resize the window
         // behind our back; place it once more now that it is shown.
-        win::place(h, self.layout.get().height());
+        win::place(h, self.height.get());
         // The footer's age counts up once a second, only while shown.
         self.ago
             .start(slint::TimerMode::Repeated, Duration::from_secs(1), || {
@@ -995,7 +1070,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         unsafe { std::env::set_var("SLINT_SCALE_FACTOR", f.to_string()) };
     }
     let cfg = Config::from_env();
-    let settings = Settings::load();
+    let mut settings = Settings::load();
+    // Test hooks: the view and the Linux list, whatever the file says.
+    if let Some(v) = cfg.view {
+        settings.view = v;
+    }
+    if let Some(open) = cfg.wsl_open {
+        settings.wsl_open = open;
+    }
 
     // Owns the panel so it is never a taskbar or Alt+Tab window, not even
     // while Slint shows it once to create it (see `win::create_owner`).
@@ -1055,6 +1137,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_version(env!("CARGO_PKG_VERSION").into());
     let model = Rc::new(VecModel::<AppItem>::default());
     ui.set_apps(model.clone().into());
+    // Until the first reading: the panel as high as the view is with no rows.
+    let first_h = view::view_height(settings.view, &[], false, f32::MAX);
+    ui.set_panel_h(first_h);
+    ui.set_compact(settings.view == PanelView::Compact);
 
     let latest = Arc::new(Mutex::new(None));
     let shown = Arc::new(AtomicBool::new(false));
@@ -1105,7 +1191,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         icons: Icons::spawn(),
         trim: std::env::var_os("PULSE_NOTRIM").is_none(),
         avail_h: Cell::new(f32::MAX),
-        layout: Cell::new(view::fit(f32::MAX, false)),
+        own_h: Cell::new(first_h),
+        height: Cell::new(first_h),
         settings: RefCell::new(settings.clone()),
         hotkey,
         hotkey_ok: Cell::new(hotkey_ok),
@@ -1138,6 +1225,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     panel
         .ui
         .on_settings_hidden(|| with_panel(|p| p.close_settings()));
+    panel.ui.on_view_toggled(|| with_panel(|p| p.toggle_view()));
+    panel.ui.on_wsl_toggled(|| with_panel(|p| p.toggle_wsl()));
     panel.ui.on_sort_picked(|i| {
         with_panel(|p| {
             p.set_sort(if i == 1 {

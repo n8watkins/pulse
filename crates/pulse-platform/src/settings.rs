@@ -17,6 +17,33 @@ pub enum Sort {
     Processor,
 }
 
+/// Which size the panel has: the full view (default) or the compact one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PanelView {
+    Expanded,
+    Compact,
+}
+
+impl PanelView {
+    /// The other view (what the header button switches to).
+    pub fn other(self) -> Self {
+        match self {
+            Self::Expanded => Self::Compact,
+            Self::Compact => Self::Expanded,
+        }
+    }
+
+    /// `expanded` or `compact` (any case); used by `PULSE_VIEW`.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "expanded" => Some(Self::Expanded),
+            "compact" => Some(Self::Compact),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     /// The active shortcut, canonical text such as `Alt+Shift+P`; empty means
@@ -32,6 +59,11 @@ pub struct Settings {
     /// Seconds between refreshes while the panel is hidden: 2, 5 or 10.
     pub hidden_refresh_s: u8,
     pub sort: Sort,
+    /// The panel view, expanded by default.
+    pub view: PanelView,
+    /// The compact view's Linux (WSL) list is open. Closed by default; the
+    /// expanded view always shows it.
+    pub wsl_open: bool,
 }
 
 impl Default for Settings {
@@ -44,6 +76,8 @@ impl Default for Settings {
             autostart: true,
             hidden_refresh_s: 2,
             sort: Sort::Memory,
+            view: PanelView::Expanded,
+            wsl_open: false,
         }
     }
 }
@@ -178,6 +212,15 @@ impl Settings {
         {
             out.sort = v;
         }
+        if let Some(v) = map
+            .get("view")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+        {
+            out.view = v;
+        }
+        if let Some(b) = map.get("wsl_open").and_then(Value::as_bool) {
+            out.wsl_open = b;
+        }
         out
     }
 }
@@ -202,6 +245,8 @@ mod tests {
         assert!(s.autostart);
         assert_eq!(s.hidden_refresh_s, 2);
         assert_eq!(s.sort, Sort::Memory);
+        assert_eq!(s.view, PanelView::Expanded);
+        assert!(!s.wsl_open);
     }
 
     #[test]
@@ -216,6 +261,8 @@ mod tests {
             autostart: false,
             hidden_refresh_s: 10,
             sort: Sort::Processor,
+            view: PanelView::Compact,
+            wsl_open: true,
         };
         s.save_to(&path).unwrap();
         assert!(!dir.join("settings.json.tmp").exists());
@@ -260,6 +307,43 @@ mod tests {
         assert_eq!(s.theme, Theme::Mint);
         assert_eq!(s.sort, Sort::Processor);
         assert!(!s.keep_open);
+    }
+
+    #[test]
+    fn a_file_from_before_the_views_loads_expanded_with_wsl_closed() {
+        // The exact shape older Pulse versions wrote.
+        let old = r#"{"hotkey":"Alt+Shift+P","hotkey_last":"Alt+Shift+P","theme":"neutral","keep_open":true,"autostart":false,"hidden_refresh_s":5,"sort":"processor"}"#;
+        let s = Settings::from_json(old);
+        assert_eq!(s.view, PanelView::Expanded);
+        assert!(!s.wsl_open);
+        assert_eq!(s.theme, Theme::Neutral);
+        assert_eq!(s.sort, Sort::Processor);
+        assert_eq!(s.hidden_refresh_s, 5);
+        assert!(s.keep_open && !s.autostart);
+    }
+
+    #[test]
+    fn the_view_and_the_wsl_state_are_read_and_bad_values_fall_back() {
+        let s = Settings::from_json(r#"{"view":"compact","wsl_open":true}"#);
+        assert_eq!(s.view, PanelView::Compact);
+        assert!(s.wsl_open);
+        let s = Settings::from_json(r#"{"view":"huge","wsl_open":"yes","sort":"processor"}"#);
+        assert_eq!(s.view, PanelView::Expanded);
+        assert!(!s.wsl_open);
+        assert_eq!(s.sort, Sort::Processor);
+        let v: Value =
+            serde_json::from_str(&serde_json::to_string(&Settings::default()).unwrap()).unwrap();
+        assert_eq!(v["view"], "expanded");
+        assert_eq!(v["wsl_open"], false);
+    }
+
+    #[test]
+    fn views_switch_and_parse() {
+        assert_eq!(PanelView::Expanded.other(), PanelView::Compact);
+        assert_eq!(PanelView::Compact.other(), PanelView::Expanded);
+        assert_eq!(PanelView::parse(" Compact "), Some(PanelView::Compact));
+        assert_eq!(PanelView::parse("expanded"), Some(PanelView::Expanded));
+        assert_eq!(PanelView::parse("tiny"), None);
     }
 
     #[test]
