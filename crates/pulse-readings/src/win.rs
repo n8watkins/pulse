@@ -390,8 +390,23 @@ impl Source for Windows {
 mod tests {
     use super::*;
 
+    /// Tests that need this particular PC (WSL running with a "Claude Code"
+    /// process, the shell icon cache, `explorer.exe` with its English
+    /// description) run only with `PULSE_LIVE_TESTS=1`; a clean CI runner
+    /// has none of that.
+    fn live(test: &str) -> bool {
+        let on = std::env::var_os("PULSE_LIVE_TESTS").is_some_and(|v| v != "0" && !v.is_empty());
+        if !on {
+            println!("skipped {test}: set PULSE_LIVE_TESTS=1 to run it on a real PC");
+        }
+        on
+    }
+
     #[test]
     fn icons_and_names_come_from_the_exe() {
+        if !live("icons_and_names_come_from_the_exe") {
+            return;
+        }
         let path = r"C:\Windows\explorer.exe";
         let img = crate::icon_rgba(path, 32).expect("explorer has an icon");
         assert_eq!((img.width, img.height), (32, 32));
@@ -405,6 +420,9 @@ mod tests {
 
     #[test]
     fn every_stand_in_has_an_icon() {
+        if !live("every_stand_in_has_an_icon") {
+            return;
+        }
         let mut checked = 0;
         for (key, file) in group::STAND_INS {
             let Some(path) = system32(file) else { continue };
@@ -438,6 +456,9 @@ mod tests {
 
     #[test]
     fn live_cpu_ranking_and_wsl() {
+        if !live("live_cpu_ranking_and_wsl") {
+            return;
+        }
         let mut w = Windows::new();
         let first = w.read(true);
         assert!(
