@@ -4,12 +4,96 @@
 
 use pulse_platform::hotkey::{Combo, HotkeyError, Key};
 
-pub const RECORDING: &str = "Press the new keys\u{2026} (Esc cancels)";
-pub const HOLD_TWO: &str = "Hold two of Ctrl, Alt and Shift, then press a key. Esc cancels.";
-pub const BAD_KEY: &str = "Use a letter, digit, F-key, Space or an arrow key. Esc cancels.";
+/// The field's text while recording and no modifier is held.
+pub const PRESS_KEYS: &str = "Press keys\u{2026}";
+/// The help line while recording (the field itself says what is happening).
+pub const RECORDING: &str = "Hold two of Ctrl, Alt, Shift and press a key.";
+pub const IDLE_NOTE: &str = "Press it anywhere to open or close Pulse.";
+pub const OFF_NOTE: &str = "Off. Switch on to use the shortcut.";
+pub const HOLD_TWO: &str = "Hold two of Ctrl, Alt and Shift, then a key.";
+pub const BAD_KEY: &str = "Use a letter, digit, F-key, Space or an arrow.";
 
-pub const CTRL_ALT: &str =
-    "Ctrl+Alt is AltGr on some keyboards. Add Shift, or use Ctrl+Shift or Alt+Shift.";
+pub const CTRL_ALT: &str = "Ctrl+Alt is AltGr on some keyboards. Add Shift.";
+
+/// The hint inside the field: what clicking it does now.
+pub const HINT_IDLE: &str = "Click to change";
+pub const HINT_RECORDING: &str = "Esc to cancel";
+
+/// The field's text while recording: the modifiers held so far, then an
+/// ellipsis, or a prompt when none is held.
+pub fn preview(mods: Mods) -> String {
+    let mut parts = Vec::new();
+    if mods.ctrl {
+        parts.push("Ctrl");
+    }
+    if mods.alt {
+        parts.push("Alt");
+    }
+    if mods.shift {
+        parts.push("Shift");
+    }
+    if parts.is_empty() {
+        PRESS_KEYS.to_owned()
+    } else {
+        format!("{}+\u{2026}", parts.join("+"))
+    }
+}
+
+/// How the shortcut field looks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Field {
+    /// A shortcut that works.
+    Idle,
+    /// The shortcut is switched off: the remembered keys are dimmed.
+    Off,
+    /// Waiting for keys.
+    Recording,
+    /// The last attempt, or the saved shortcut, did not register.
+    Error,
+}
+
+/// `error` is a note that is showing because a shortcut did not register or a
+/// key did not fit; recording wins over everything, then the error.
+pub fn field(on: bool, recording: bool, error: bool) -> Field {
+    if recording {
+        Field::Recording
+    } else if error {
+        Field::Error
+    } else if on {
+        Field::Idle
+    } else {
+        Field::Off
+    }
+}
+
+/// What a click or Space on the field does: start recording, or (while
+/// recording) cancel it, the same toggle as Scribe's.
+pub fn click(recording: bool) -> Click {
+    if recording {
+        Click::Cancel
+    } else {
+        Click::Start
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Click {
+    Start,
+    Cancel,
+}
+
+/// The help line under the field.
+pub fn note(on: bool, recording: bool, message: &str) -> &str {
+    if !message.is_empty() {
+        message
+    } else if recording {
+        RECORDING
+    } else if on {
+        IDLE_NOTE
+    } else {
+        OFF_NOTE
+    }
+}
 
 /// The note for a shortcut that did not register.
 pub fn error_note(e: HotkeyError, combo: Combo) -> String {
@@ -20,10 +104,12 @@ pub fn error_note(e: HotkeyError, combo: Combo) -> String {
 }
 
 pub fn in_use(combo: Combo) -> String {
-    format!("Another app already uses {combo}. Try another.")
+    format!("{combo} is taken by another app. Try another.")
 }
 
-pub const FAILED: &str = "Pulse could not register that shortcut. Try another.";
+pub const NOT_VALID: &str = "The saved shortcut is not valid. Click it to change.";
+
+pub const FAILED: &str = "Pulse could not register that. Try another.";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Mods {
@@ -246,10 +332,7 @@ mod tests {
             step(ctrl_shift, Pressed::Main(Key::Digit('1'))),
             Step::Try(_)
         ));
-        assert_eq!(
-            CTRL_ALT,
-            "Ctrl+Alt is AltGr on some keyboards. Add Shift, or use Ctrl+Shift or Alt+Shift."
-        );
+        assert_eq!(CTRL_ALT, "Ctrl+Alt is AltGr on some keyboards. Add Shift.");
     }
 
     #[test]
@@ -317,19 +400,92 @@ mod tests {
         let c = Combo::parse("Alt+Shift+P").unwrap();
         assert_eq!(
             error_note(HotkeyError::InUse, c),
-            "Another app already uses Alt+Shift+P. Try another."
+            "Alt+Shift+P is taken by another app. Try another."
         );
         assert_eq!(error_note(HotkeyError::Failed, c), FAILED);
     }
 
     #[test]
-    fn messages_match_the_spec() {
-        let c = Combo::parse("Alt+Shift+P").unwrap();
+    fn every_note_fits_one_short_line() {
+        let c = Combo::parse("Ctrl+Alt+Shift+F12").unwrap();
+        for text in [
+            IDLE_NOTE,
+            OFF_NOTE,
+            RECORDING,
+            HOLD_TWO,
+            BAD_KEY,
+            CTRL_ALT,
+            FAILED,
+            &in_use(c),
+        ] {
+            assert!(text.chars().count() <= 58, "{text}");
+        }
+    }
+
+    #[test]
+    fn preview_lists_the_held_modifiers_in_combo_order() {
+        assert_eq!(preview(Mods::default()), PRESS_KEYS);
+        assert_eq!(preview(ALT_SHIFT), "Alt+Shift+\u{2026}");
+        let all = Mods {
+            ctrl: true,
+            ..ALT_SHIFT
+        };
+        assert_eq!(preview(all), "Ctrl+Alt+Shift+\u{2026}");
+        let ctrl = Mods {
+            ctrl: true,
+            ..Mods::default()
+        };
+        assert_eq!(preview(ctrl), "Ctrl+\u{2026}");
+    }
+
+    #[test]
+    fn the_field_state_follows_recording_then_error_then_switch() {
+        assert_eq!(field(true, false, false), Field::Idle);
+        assert_eq!(field(false, false, false), Field::Off);
+        assert_eq!(field(true, true, false), Field::Recording);
+        // Recording wins over an old error and over the switch being off.
+        assert_eq!(field(true, true, true), Field::Recording);
+        assert_eq!(field(false, true, false), Field::Recording);
+        assert_eq!(field(true, false, true), Field::Error);
+        assert_eq!(field(false, false, true), Field::Error);
+    }
+
+    #[test]
+    fn a_click_starts_recording_and_a_second_click_cancels() {
+        assert_eq!(click(false), Click::Start);
+        assert_eq!(click(true), Click::Cancel);
+    }
+
+    #[test]
+    fn the_note_prefers_a_message_then_the_state() {
+        assert_eq!(note(true, false, ""), IDLE_NOTE);
+        assert_eq!(note(false, false, ""), OFF_NOTE);
+        assert_eq!(note(true, true, ""), RECORDING);
+        assert_eq!(note(true, true, HOLD_TWO), HOLD_TWO);
+        assert_eq!(note(false, false, FAILED), FAILED);
+    }
+
+    /// A whole recording, as the app drives it: a click, a lone modifier, a
+    /// key too soon, a refused combination, then one that is tried.
+    #[test]
+    fn a_recording_walks_through_every_outcome() {
+        let mut recording = click(false) == Click::Start;
+        assert!(recording);
+        assert_eq!(step(Mods::default(), Pressed::Modifier), Step::Ignore);
+        assert_eq!(preview(ALT_SHIFT), "Alt+Shift+\u{2026}");
         assert_eq!(
-            in_use(c),
-            "Another app already uses Alt+Shift+P. Try another."
+            step(Mods::default(), Pressed::Main(Key::Letter('A'))),
+            Step::NeedTwo
         );
-        assert!(HOLD_TWO.starts_with("Hold two of Ctrl, Alt and Shift, then press a key."));
-        assert!(RECORDING.contains("Esc cancels"));
+        let Step::Try(c) = step(ALT_SHIFT, Pressed::Main(Key::F(20))) else {
+            panic!()
+        };
+        assert_eq!(c.to_string(), "Alt+Shift+F20");
+        // A refused try ends the recording and shows the error.
+        recording = false;
+        assert_eq!(field(true, recording, true), Field::Error);
+        // Clicking again starts over and clears the error look.
+        assert_eq!(click(recording), Click::Start);
+        assert_eq!(field(true, true, false), Field::Recording);
     }
 }

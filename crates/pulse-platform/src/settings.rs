@@ -19,8 +19,13 @@ pub enum Sort {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
-    /// Canonical shortcut text such as `Alt+Shift+P`; empty means off.
+    /// The active shortcut, canonical text such as `Alt+Shift+P`; empty means
+    /// off. This is the original field, so an older Pulse reads a new file
+    /// the same way.
     pub hotkey: String,
+    /// The combination to bring back when the shortcut is switched on again.
+    /// Always equal to `hotkey` while the shortcut is on; kept while it is off.
+    pub hotkey_last: String,
     pub theme: Theme,
     pub keep_open: bool,
     pub autostart: bool,
@@ -32,7 +37,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            hotkey: "Alt+Shift+P".to_owned(),
+            hotkey: DEFAULT_HOTKEY.to_owned(),
+            hotkey_last: DEFAULT_HOTKEY.to_owned(),
             theme: Theme::Mint,
             keep_open: false,
             autostart: true,
@@ -41,6 +47,8 @@ impl Default for Settings {
         }
     }
 }
+
+pub const DEFAULT_HOTKEY: &str = "Alt+Shift+P";
 
 /// `%APPDATA%\Pulse\settings.json`, or `$PULSE_SETTINGS_DIR/settings.json`.
 pub fn settings_path() -> PathBuf {
@@ -65,6 +73,33 @@ fn base_dir() -> PathBuf {
 }
 
 impl Settings {
+    /// Whether the open/close shortcut is switched on.
+    pub fn shortcut_on(&self) -> bool {
+        !self.hotkey.is_empty()
+    }
+
+    /// The combination the shortcut has, or would have when switched on.
+    pub fn remembered_hotkey(&self) -> &str {
+        if self.hotkey.is_empty() {
+            &self.hotkey_last
+        } else {
+            &self.hotkey
+        }
+    }
+
+    /// Sets a new combination and switches the shortcut on.
+    pub fn set_shortcut(&mut self, combo: &str) {
+        combo.clone_into(&mut self.hotkey);
+        combo.clone_into(&mut self.hotkey_last);
+    }
+
+    /// Switches the shortcut off and keeps the combination for later.
+    pub fn switch_shortcut_off(&mut self) {
+        if self.shortcut_on() {
+            self.hotkey_last = std::mem::take(&mut self.hotkey);
+        }
+    }
+
     /// Reads the settings file; defaults when it is missing or corrupt.
     pub fn load() -> Settings {
         Self::load_from(&settings_path())
@@ -104,6 +139,20 @@ impl Settings {
         };
         if let Some(s) = map.get("hotkey").and_then(Value::as_str) {
             s.trim().clone_into(&mut out.hotkey);
+        }
+        // A file from before the switch has only `hotkey`: a combination is
+        // on, an empty text is off (and brings back the default when it is
+        // switched on again).
+        match map
+            .get("hotkey_last")
+            .and_then(Value::as_str)
+            .map(str::trim)
+        {
+            Some(s) if !s.is_empty() => s.clone_into(&mut out.hotkey_last),
+            _ => DEFAULT_HOTKEY.clone_into(&mut out.hotkey_last),
+        }
+        if !out.hotkey.is_empty() {
+            out.hotkey_last.clone_from(&out.hotkey);
         }
         if let Some(v) = map
             .get("theme")
@@ -161,6 +210,7 @@ mod tests {
         let path = dir.join("settings.json");
         let s = Settings {
             hotkey: String::new(),
+            hotkey_last: "Ctrl+Shift+K".to_owned(),
             theme: Theme::Neutral,
             keep_open: true,
             autostart: false,
@@ -223,6 +273,82 @@ mod tests {
     #[test]
     fn empty_hotkey_means_off() {
         assert_eq!(Settings::from_json(r#"{"hotkey":""}"#).hotkey, "");
+    }
+
+    #[test]
+    fn old_file_with_a_combination_loads_as_on() {
+        let s = Settings::from_json(r#"{"hotkey":"Ctrl+Shift+K","theme":"neutral"}"#);
+        assert!(s.shortcut_on());
+        assert_eq!(s.hotkey, "Ctrl+Shift+K");
+        assert_eq!(s.hotkey_last, "Ctrl+Shift+K");
+        assert_eq!(s.remembered_hotkey(), "Ctrl+Shift+K");
+    }
+
+    #[test]
+    fn old_file_with_an_empty_hotkey_loads_as_off_with_the_default_remembered() {
+        let s = Settings::from_json(r#"{"hotkey":""}"#);
+        assert!(!s.shortcut_on());
+        assert_eq!(s.hotkey, "");
+        assert_eq!(s.remembered_hotkey(), DEFAULT_HOTKEY);
+    }
+
+    #[test]
+    fn a_file_without_any_hotkey_is_the_default_on() {
+        let s = Settings::from_json("{}");
+        assert!(s.shortcut_on());
+        assert_eq!(s.hotkey, DEFAULT_HOTKEY);
+    }
+
+    #[test]
+    fn off_keeps_the_combination_and_on_restores_it() {
+        let mut s = Settings::from_json(r#"{"hotkey":"Ctrl+Alt+Shift+F12"}"#);
+        s.switch_shortcut_off();
+        assert!(!s.shortcut_on());
+        assert_eq!(s.hotkey, "");
+        assert_eq!(s.remembered_hotkey(), "Ctrl+Alt+Shift+F12");
+        // Through the file and back: still off, still remembered.
+        let again = Settings::from_json(&serde_json::to_string(&s).unwrap());
+        assert_eq!(again, s);
+        assert!(!again.shortcut_on());
+        assert_eq!(again.remembered_hotkey(), "Ctrl+Alt+Shift+F12");
+        // Switching on is setting the remembered combination.
+        let mut on = again;
+        let combo = on.remembered_hotkey().to_owned();
+        on.set_shortcut(&combo);
+        assert!(on.shortcut_on());
+        assert_eq!(on.hotkey, "Ctrl+Alt+Shift+F12");
+    }
+
+    #[test]
+    fn off_twice_does_not_lose_the_combination() {
+        let mut s = Settings::default();
+        s.switch_shortcut_off();
+        s.switch_shortcut_off();
+        assert_eq!(s.remembered_hotkey(), DEFAULT_HOTKEY);
+    }
+
+    #[test]
+    fn a_new_combination_replaces_the_remembered_one() {
+        let mut s = Settings::default();
+        s.switch_shortcut_off();
+        s.set_shortcut("Alt+Shift+Q");
+        assert!(s.shortcut_on());
+        assert_eq!(s.hotkey_last, "Alt+Shift+Q");
+    }
+
+    #[test]
+    fn the_active_combination_wins_over_a_stale_remembered_one() {
+        let s = Settings::from_json(r#"{"hotkey":"Alt+Shift+Q","hotkey_last":"Ctrl+Shift+K"}"#);
+        assert_eq!(s.hotkey_last, "Alt+Shift+Q");
+    }
+
+    #[test]
+    fn the_file_keeps_the_original_hotkey_field_for_an_older_pulse() {
+        let mut s = Settings::default();
+        s.switch_shortcut_off();
+        let v: Value = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(v["hotkey"], "");
+        assert_eq!(v["hotkey_last"], DEFAULT_HOTKEY);
     }
 
     #[test]
