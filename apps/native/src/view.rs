@@ -13,6 +13,52 @@ pub const HISTORY: usize = 90;
 const FIG_W: f32 = 149.0;
 const FIG_H: f32 = 34.0;
 
+/// Logical height of the panel when everything fits, and the vertical pitch of
+/// one "Top apps" row (the rows start at 262.4 in the design).
+pub const PANEL_H: f32 = 700.0;
+const ROW_PITCH: f32 = 60.15;
+/// Rows shown at full height, without and with the battery strip.
+const ROWS_FULL: usize = 5;
+const ROWS_FULL_BATTERY: usize = 4;
+/// The list never gives up more than this: two rows always stay.
+pub const MIN_ROWS: usize = 2;
+
+/// How the panel fits a work area that may be shorter than [`PANEL_H`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Layout {
+    /// "Top apps" rows shown.
+    pub rows: usize,
+    /// Logical px removed from the panel height (the tiles and footer move up
+    /// by the same amount).
+    pub shrink: f32,
+}
+
+impl Layout {
+    pub fn height(self) -> f32 {
+        PANEL_H - self.shrink
+    }
+}
+
+/// The most rows that fit in `avail_h` logical px, never fewer than
+/// [`MIN_ROWS`]: header, tiles and footer always stay whole, the list gives
+/// up rows instead.
+pub fn fit(avail_h: f32, battery: bool) -> Layout {
+    let full = if battery {
+        ROWS_FULL_BATTERY
+    } else {
+        ROWS_FULL
+    };
+    let at = |rows: usize| Layout {
+        rows,
+        shrink: ((full - rows) as f32 * ROW_PITCH).round(),
+    };
+    (MIN_ROWS..=full)
+        .rev()
+        .map(at)
+        .find(|l| l.height() <= avail_h)
+        .unwrap_or(at(MIN_ROWS))
+}
+
 /// Ring of recent percentages for the two sparklines.
 #[derive(Clone, Debug, Default)]
 pub struct History {
@@ -139,7 +185,7 @@ impl Extra {
 }
 
 #[allow(clippy::cast_precision_loss)]
-pub fn build(snap: &Snapshot, extra: &Extra, hist: &History, sample: bool) -> View {
+pub fn build(snap: &Snapshot, extra: &Extra, hist: &History, sample: bool, rows: usize) -> View {
     let used = snap.mem_used as f64;
     let total = snap.mem_total as f64;
     let (cpu_line, cpu_fill) = sparkline(&hist.cpu);
@@ -177,7 +223,7 @@ pub fn build(snap: &Snapshot, extra: &Extra, hist: &History, sample: bool) -> Vi
         apps: snap
             .apps
             .iter()
-            .take(if extra.battery.is_some() { 4 } else { 5 })
+            .take(rows)
             .map(|a| {
                 let base = a.exe.strip_suffix(".exe").unwrap_or(&a.exe);
                 AppView {
@@ -375,7 +421,7 @@ mod tests {
         let snap = Sample::default().read(true);
         let mut h = History::default();
         h.push(&snap);
-        let v = build(&snap, &Extra::from_snapshot(&snap), &h, true);
+        let v = build(&snap, &Extra::from_snapshot(&snap), &h, true, 5);
         assert_eq!(v.apps.len(), 5);
         assert!((v.apps[0].frac - 1.0).abs() < f32::EPSILON);
         assert_eq!(v.apps[0].detail, "chrome.exe \u{b7} 24 processes");
@@ -387,6 +433,41 @@ mod tests {
             v.tiles.net_big.starts_with("\u{2193} ") && v.tiles.net_sub.starts_with("\u{2191} ")
         );
         assert!(!v.tiles.gpu_missing);
+    }
+
+    #[test]
+    fn a_tall_work_area_shows_everything() {
+        let l = fit(1000.0, false);
+        assert_eq!((l.rows, l.shrink, l.height()), (5, 0.0, 700.0));
+        assert_eq!(fit(700.0, false).rows, 5);
+        assert_eq!(fit(1000.0, true).rows, 4);
+        assert_eq!(fit(700.0, true).height(), 700.0);
+    }
+
+    #[test]
+    fn a_short_work_area_gives_up_rows_and_keeps_the_footer() {
+        // One row less frees 60 px.
+        let l = fit(680.0, false);
+        assert_eq!((l.rows, l.height()), (4, 640.0));
+        let l = fit(600.0, false);
+        assert_eq!((l.rows, l.height()), (3, 580.0));
+        let l = fit(520.0, false);
+        assert_eq!((l.rows, l.height()), (2, 520.0));
+        for h in (300..900).map(|h| h as f32) {
+            let l = fit(h, h as i32 % 2 == 0);
+            assert!(l.rows >= MIN_ROWS && l.rows <= 5);
+            // Either it fits, or it is at the minimum.
+            assert!(l.height() <= h || l.rows == MIN_ROWS, "{h}");
+        }
+    }
+
+    #[test]
+    fn the_battery_strip_costs_a_row() {
+        assert_eq!(fit(1000.0, true).rows, 4);
+        assert_eq!(fit(640.0, true).rows, 3);
+        assert_eq!(fit(639.0, true).rows, 2);
+        let l = fit(300.0, true);
+        assert_eq!(l.rows, MIN_ROWS);
     }
 
     #[test]

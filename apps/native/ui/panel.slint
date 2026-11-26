@@ -314,11 +314,13 @@ export component PanelWindow inherits Window {
     in property <string> bat-big: "";
     in property <string> bat-sub: "";
     in property <float> bat-frac;
+    // Height given up when the work area is short (the Top apps list loses rows).
+    in property <length> shrink: 0px;
     callback close-clicked;
 
     title: "Pulse";
     width: 380px;
-    height: 700px;
+    height: 700px - root.shrink;
     no-frame: true;
     always-on-top: true;
     background: transparent;
@@ -497,7 +499,7 @@ export component PanelWindow inherits Window {
     // bottom row of tiles
     Tile {
         x: 13px;
-        y: root.has-battery ? 512px : 572px;
+        y: (root.has-battery ? 512px : 572px) - root.shrink;
         width: 112.67px;
         k: "Graphics";
         v: root.gpu-big;
@@ -509,7 +511,7 @@ export component PanelWindow inherits Window {
 
     Tile {
         x: 133.67px;
-        y: root.has-battery ? 512px : 572px;
+        y: (root.has-battery ? 512px : 572px) - root.shrink;
         width: 112.67px;
         k: "Drive C: free";
         v: root.drive-big;
@@ -519,7 +521,7 @@ export component PanelWindow inherits Window {
 
     Tile {
         x: 254.33px;
-        y: root.has-battery ? 512px : 572px;
+        y: (root.has-battery ? 512px : 572px) - root.shrink;
         width: 112.67px;
         k: "Network";
         v: root.net-big;
@@ -529,7 +531,7 @@ export component PanelWindow inherits Window {
 
     if root.has-battery: Rectangle {
         x: 13px;
-        y: 605px;
+        y: 605px - root.shrink;
         width: 354px;
         height: 50px;
         border-radius: 12px;
