@@ -75,15 +75,25 @@ pub(crate) fn is_builtin(image: &str) -> bool {
 /// Pids kept per group, to try in turn when looking for one that can be opened.
 const PIDS_KEPT: usize = 8;
 
-/// Groups `(image name, private bytes, pid)` by image name (case-insensitive)
-/// and returns the biggest `TOP` groups, largest first, each with the first
-/// few pids seen in its group.
-pub(crate) fn top_apps<I>(processes: I) -> Vec<(AppRow, Vec<u32>)>
+/// The result of grouping: the same groups ranked two ways, and the WSL VM.
+pub(crate) struct Groups {
+    /// Top `TOP` by memory, largest first, with the first few pids of each.
+    pub by_mem: Vec<(AppRow, Vec<u32>)>,
+    /// Top `TOP` by processor share, largest first.
+    pub by_cpu: Vec<(AppRow, Vec<u32>)>,
+    /// Memory and processor share of `vmmemWSL` (or else `vmmem`), when it exists.
+    pub vm: Option<(u64, f32)>,
+}
+
+/// Groups `(image name, private bytes, pid, machine share in percent)` by
+/// image name (case-insensitive) and ranks the groups by memory and by
+/// processor use.
+pub(crate) fn group<I>(processes: I) -> Groups
 where
-    I: IntoIterator<Item = (String, u64, u32)>,
+    I: IntoIterator<Item = (String, u64, u32, f32)>,
 {
     let mut groups: HashMap<String, (AppRow, Vec<u32>)> = HashMap::new();
-    for (image, bytes, pid) in processes {
+    for (image, bytes, pid, cpu) in processes {
         if image.is_empty() {
             continue;
         }
@@ -100,18 +110,34 @@ where
         });
         row.processes += 1;
         row.mem_bytes += bytes;
+        row.cpu_pct += cpu;
         if pids.len() < PIDS_KEPT {
             pids.push(pid);
         }
     }
-    let mut rows: Vec<(AppRow, Vec<u32>)> = groups.into_values().collect();
-    rows.sort_by(|a, b| {
+    let vm = ["vmmemwsl", "vmmem"]
+        .iter()
+        .find_map(|k| groups.get(*k))
+        .map(|(row, _)| (row.mem_bytes, row.cpu_pct.clamp(0.0, 100.0)));
+    let mut by_mem: Vec<(AppRow, Vec<u32>)> = groups.into_values().collect();
+    by_mem.sort_by(|a, b| {
         b.0.mem_bytes
             .cmp(&a.0.mem_bytes)
             .then_with(|| a.0.exe.cmp(&b.0.exe))
     });
-    rows.truncate(TOP);
-    rows
+    let mut by_cpu = by_mem.clone();
+    by_cpu.sort_by(|a, b| {
+        b.0.cpu_pct
+            .total_cmp(&a.0.cpu_pct)
+            .then_with(|| b.0.mem_bytes.cmp(&a.0.mem_bytes))
+            .then_with(|| a.0.exe.cmp(&b.0.exe))
+    });
+    by_mem.truncate(TOP);
+    by_cpu.truncate(TOP);
+    for (row, _) in by_mem.iter_mut().chain(by_cpu.iter_mut()) {
+        row.cpu_pct = row.cpu_pct.clamp(0.0, 100.0);
+    }
+    Groups { by_mem, by_cpu, vm }
 }
 
 #[cfg(test)]
@@ -139,27 +165,68 @@ mod tests {
 
     #[test]
     fn groups_sums_and_sorts() {
-        let rows = top_apps([
-            ("chrome.exe".to_string(), 100, 1),
-            ("svchost.exe".to_string(), 30, 2),
-            ("Chrome.exe".to_string(), 50, 3),
-            ("svchost.exe".to_string(), 40, 4),
-            (String::new(), 9999, 5),
+        let g = group([
+            ("chrome.exe".to_string(), 100, 1, 1.0),
+            ("svchost.exe".to_string(), 30, 2, 0.5),
+            ("Chrome.exe".to_string(), 50, 3, 2.0),
+            ("svchost.exe".to_string(), 40, 4, 0.25),
+            (String::new(), 9999, 5, 50.0),
         ]);
-        let pids: Vec<Vec<u32>> = rows.iter().map(|r| r.1.clone()).collect();
+        let pids: Vec<Vec<u32>> = g.by_mem.iter().map(|r| r.1.clone()).collect();
         assert_eq!(pids, [vec![1, 3], vec![2, 4]]);
-        let rows: Vec<AppRow> = rows.into_iter().map(|r| r.0).collect();
+        let rows: Vec<AppRow> = g.by_mem.into_iter().map(|r| r.0).collect();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].exe, "chrome.exe");
         assert_eq!((rows[0].processes, rows[0].mem_bytes), (2, 150));
+        assert!((rows[0].cpu_pct - 3.0).abs() < 1e-6);
         assert_eq!(rows[1].name, "Windows services");
         assert_eq!((rows[1].processes, rows[1].mem_bytes), (2, 70));
+        assert!((rows[1].cpu_pct - 0.75).abs() < 1e-6);
+        assert!(g.vm.is_none());
+    }
+
+    #[test]
+    fn cpu_ranking_differs_from_memory_ranking() {
+        let g = group([
+            ("big.exe".to_string(), 1000, 1, 0.1),
+            ("busy.exe".to_string(), 10, 2, 40.0),
+            ("mid.exe".to_string(), 500, 3, 5.0),
+        ]);
+        let mem: Vec<_> = g.by_mem.iter().map(|r| r.0.exe.as_str()).collect();
+        let cpu: Vec<_> = g.by_cpu.iter().map(|r| r.0.exe.as_str()).collect();
+        assert_eq!(mem, ["big.exe", "mid.exe", "busy.exe"]);
+        assert_eq!(cpu, ["busy.exe", "mid.exe", "big.exe"]);
+    }
+
+    #[test]
+    fn a_group_total_is_capped_at_100() {
+        let g = group([
+            ("a.exe".to_string(), 1, 1, 70.0),
+            ("a.exe".to_string(), 1, 2, 70.0),
+        ]);
+        assert!((g.by_cpu[0].0.cpu_pct - 100.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_wsl_vm_is_found_outside_the_top() {
+        let g = group(
+            (0..10u64)
+                .map(|i| (format!("a{i}.exe"), 1000 + i, 0, 0.0))
+                .chain([
+                    ("vmmem".to_string(), 7, 8, 2.0),
+                    ("vmmemWSL".to_string(), 5, 9, 1.5),
+                ]),
+        );
+        assert_eq!(g.by_mem.len(), TOP);
+        assert_eq!(g.vm, Some((5, 1.5)));
+        let g = group([("vmmem".to_string(), 7, 8, 2.0)]);
+        assert_eq!(g.vm, Some((7, 2.0)));
     }
 
     #[test]
     fn keeps_only_the_top_rows() {
-        let rows = top_apps((0..20u64).map(|i| (format!("a{i}.exe"), i, 0)));
-        assert_eq!(rows.len(), TOP);
-        assert_eq!(rows[0].0.mem_bytes, 19);
+        let g = group((0..20u64).map(|i| (format!("a{i}.exe"), i, 0, 0.0)));
+        assert_eq!(g.by_mem.len(), TOP);
+        assert_eq!(g.by_mem[0].0.mem_bytes, 19);
     }
 }

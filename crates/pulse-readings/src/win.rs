@@ -5,7 +5,8 @@
 //! `NtQuerySystemInformation(SystemProcessInformation)` call per read.
 
 use crate::known::{Known, Probe};
-use crate::{AppRow, Snapshot, Source, group, icon, perf};
+use crate::{AppRow, Snapshot, Source, group, icon, perf, wsl};
+use std::collections::HashMap;
 use std::time::Instant;
 use windows_sys::Win32::Foundation::FILETIME;
 use windows_sys::Win32::System::SystemInformation::{
@@ -38,6 +39,9 @@ unsafe extern "system" {
 // Offsets inside SYSTEM_PROCESS_INFORMATION on 64-bit Windows.
 const OFF_NEXT: usize = 0;
 const OFF_PRIVATE_WS: usize = 8;
+const OFF_CREATE_TIME: usize = 32;
+const OFF_USER_TIME: usize = 40;
+const OFF_KERNEL_TIME: usize = 48;
 const OFF_NAME_LEN: usize = 56;
 const OFF_NAME_PTR: usize = 64;
 const OFF_PID: usize = 80;
@@ -45,6 +49,25 @@ const MIN_ENTRY: usize = 88;
 
 /// Shortest span (100 ns units, per core) a processor figure is taken over: 250 ms.
 const MIN_SPAN: u64 = 2_500_000;
+
+/// A per-process baseline older than this is dropped: the figure would be an
+/// average over a stretch when nobody was looking (the panel was hidden).
+const BASELINE_MAX_AGE_NS: u128 = 10_000_000_000;
+/// Shortest span (ns) a per-process figure is taken over.
+const PROC_MIN_SPAN_NS: u128 = 250_000_000;
+
+/// Kernel plus user time per (pid, create time).
+type CpuTimes = HashMap<(u32, u64), u64>;
+
+/// One process of the single `SystemProcessInformation` buffer.
+struct Proc {
+    name: String,
+    private_ws: u64,
+    pid: u32,
+    create_time: u64,
+    /// Kernel plus user time, 100 ns units.
+    cpu_time: u64,
+}
 
 fn system32(file: &str) -> Option<String> {
     let root = std::env::var("SystemRoot").ok()?;
@@ -82,6 +105,11 @@ pub struct Windows {
     /// Per lowercase exe name: the path found and the friendly name from its version info.
     known: Known,
     extras: perf::Extras,
+    /// Kernel plus user time per (pid, create time), and when it was taken.
+    cpu_base: Option<(Instant, CpuTimes)>,
+    /// The last per-process figures, repeated by a read that follows too soon.
+    last_pct: HashMap<(u32, u64), f32>,
+    wsl: wsl::Query,
 }
 
 impl Windows {
@@ -95,6 +123,9 @@ impl Windows {
             buf: vec![0; (1 << 20) / 8],
             known: Known::default(),
             extras: perf::Extras::new(),
+            cpu_base: None,
+            last_pct: HashMap::new(),
+            wsl: wsl::Query::default(),
         };
         w.cpu_pct();
         w
@@ -147,8 +178,62 @@ impl Windows {
         row
     }
 
+    /// Each process's share of the whole machine in percent, in the order of
+    /// `procs`, from the change in kernel plus user time since the last read.
+    /// A process not seen before (or a recycled pid: the key includes the
+    /// create time) has no baseline and reads 0.
+    fn cpu_shares(&mut self, procs: &[Proc]) -> Vec<f32> {
+        let now = Instant::now();
+        let key = |p: &Proc| (p.pid, p.create_time);
+        let Some((at, base)) = &self.cpu_base else {
+            return self.start_baseline(now, procs);
+        };
+        let span_ns = now.duration_since(*at).as_nanos();
+        if span_ns > BASELINE_MAX_AGE_NS {
+            return self.start_baseline(now, procs);
+        }
+        if span_ns < PROC_MIN_SPAN_NS {
+            // A read right after another: repeat the last figures and keep the
+            // older baseline, so the span grows instead of the figure turning
+            // to noise.
+            return procs
+                .iter()
+                .map(|p| self.last_pct.get(&key(p)).copied().unwrap_or(0.0))
+                .collect();
+        }
+        // Times are in 100 ns units, per core.
+        let denom = span_ns as f64 / 100.0 * f64::from(self.cores);
+        let pcts: HashMap<(u32, u64), f32> = procs
+            .iter()
+            .map(|p| {
+                let pct = base.get(&key(p)).map_or(0.0, |prev| {
+                    (p.cpu_time.saturating_sub(*prev) as f64 * 100.0 / denom).clamp(0.0, 100.0)
+                        as f32
+                });
+                (key(p), pct)
+            })
+            .collect();
+        let shares = procs.iter().map(|p| pcts[&key(p)]).collect();
+        self.cpu_base = Some((now, procs.iter().map(|p| (key(p), p.cpu_time)).collect()));
+        self.last_pct = pcts;
+        shares
+    }
+
+    /// The first read, or one after a long pause: no figures yet, new baseline.
+    fn start_baseline(&mut self, now: Instant, procs: &[Proc]) -> Vec<f32> {
+        self.cpu_base = Some((
+            now,
+            procs
+                .iter()
+                .map(|p| ((p.pid, p.create_time), p.cpu_time))
+                .collect(),
+        ));
+        self.last_pct.clear();
+        vec![0.0; procs.len()]
+    }
+
     /// One call for every process; returns (image name, private working set).
-    fn processes(&mut self) -> Vec<(String, u64, u32)> {
+    fn processes(&mut self) -> Vec<Proc> {
         let mut returned = 0u32;
         for _ in 0..4 {
             let bytes = self.buf.len() * 8;
@@ -187,7 +272,7 @@ fn u64_at(b: &[u8], o: usize) -> Option<u64> {
 
 /// Walks the linked entries in `buf`; `base` is the address `buf` starts at,
 /// which the name pointers are relative to.
-fn parse(buf: &[u8], base: usize) -> Vec<(String, u64, u32)> {
+fn parse(buf: &[u8], base: usize) -> Vec<Proc> {
     let mut out = Vec::new();
     let mut at = 0usize;
     while at + MIN_ENTRY <= buf.len() {
@@ -209,7 +294,17 @@ fn parse(buf: &[u8], base: usize) -> Vec<(String, u64, u32)> {
             })
             .unwrap_or_default();
         let pid = u64_at(buf, at + OFF_PID).unwrap_or(0) as u32;
-        out.push((name, private, pid));
+        let create_time = u64_at(buf, at + OFF_CREATE_TIME).unwrap_or(0);
+        let cpu_time = u64_at(buf, at + OFF_USER_TIME)
+            .unwrap_or(0)
+            .saturating_add(u64_at(buf, at + OFF_KERNEL_TIME).unwrap_or(0));
+        out.push(Proc {
+            name,
+            private_ws: private,
+            pid,
+            create_time,
+            cpu_time,
+        });
         if next == 0 {
             break;
         }
@@ -237,14 +332,37 @@ impl Source for Windows {
         let cores = self.cores;
         // SAFETY: no arguments.
         let uptime_s = unsafe { GetTickCount64() } / 1000;
-        let apps = if with_apps {
+        let (apps, apps_by_cpu, wsl) = if with_apps {
             self.known.begin_read();
-            let rows = group::top_apps(self.processes());
-            rows.into_iter()
+            let procs = self.processes();
+            let shares = self.cpu_shares(&procs);
+            let groups = group::group(
+                procs
+                    .into_iter()
+                    .zip(shares)
+                    .map(|(p, share)| (p.name, p.private_ws, p.pid, share)),
+            );
+            let by_mem = groups
+                .by_mem
+                .into_iter()
                 .map(|(row, pids)| self.resolve(row, &pids))
-                .collect()
+                .collect();
+            let by_cpu = groups
+                .by_cpu
+                .into_iter()
+                .map(|(row, pids)| self.resolve(row, &pids))
+                .collect();
+            let wsl = groups.vm.map(|(mem_bytes, cpu_pct)| crate::Wsl {
+                mem_bytes,
+                cpu_pct,
+                procs: self.wsl.poll(true),
+            });
+            if wsl.is_none() {
+                self.wsl.poll(false);
+            }
+            (by_mem, by_cpu, wsl)
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new(), None)
         };
         let x = self.extras.read();
         Snapshot {
@@ -254,8 +372,8 @@ impl Source for Windows {
             mem_used,
             mem_total,
             apps,
-            apps_by_cpu: Vec::new(),
-            wsl: None,
+            apps_by_cpu,
+            wsl,
             gpu_pct: x.gpu_pct,
             disk_free: x.disk_free,
             disk_total: x.disk_total,
@@ -316,5 +434,59 @@ mod tests {
         assert!(s.disk_total > 0 && s.disk_free <= s.disk_total);
         assert!(s.gpu_pct.is_none_or(|g| (0.0..=100.0).contains(&g)));
         assert!(s.battery.is_none_or(|b| b.pct <= 100));
+    }
+
+    #[test]
+    fn live_cpu_ranking_and_wsl() {
+        let mut w = Windows::new();
+        let first = w.read(true);
+        assert!(
+            first.apps_by_cpu.iter().all(|a| a.cpu_pct == 0.0),
+            "first read has no baseline"
+        );
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let s = w.read(true);
+        assert!(!s.apps_by_cpu.is_empty() && s.apps_by_cpu.len() <= group::TOP);
+        assert!(
+            s.apps_by_cpu
+                .windows(2)
+                .all(|p| p[0].cpu_pct >= p[1].cpu_pct)
+        );
+        let sum: f32 = s.apps_by_cpu.iter().map(|a| a.cpu_pct).sum();
+        assert!((0.0..=105.0).contains(&sum), "sum {sum}");
+        println!("top by cpu (machine {:.1}%):", s.cpu_pct);
+        for a in &s.apps_by_cpu {
+            println!("  {:<28} {:>5.1}%  x{}", a.exe, a.cpu_pct, a.processes);
+        }
+        // WSL is running on this PC; the query is asynchronous.
+        let start = std::time::Instant::now();
+        let mut snap = s;
+        while start.elapsed() < std::time::Duration::from_secs(10) {
+            if snap.wsl.as_ref().is_some_and(|w| !w.procs.is_empty()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            snap = w.read(true);
+        }
+        let wsl = snap.wsl.expect("vmmemWSL exists while WSL runs");
+        println!("wsl: {} MiB, {:.1}%", wsl.mem_bytes >> 20, wsl.cpu_pct);
+        for p in &wsl.procs {
+            println!(
+                "  {:<30} agent={} x{} {} MiB",
+                p.label,
+                p.agent,
+                p.count,
+                p.mem_bytes >> 20
+            );
+        }
+        assert!(wsl.mem_bytes > 0 && wsl.procs.len() <= 6);
+        assert!(
+            wsl.procs
+                .iter()
+                .any(|p| p.label == "Claude Code" && p.agent),
+            "no Claude Code entry in {:?}",
+            wsl.procs
+        );
+        assert!(w.read(false).wsl.is_none());
     }
 }
