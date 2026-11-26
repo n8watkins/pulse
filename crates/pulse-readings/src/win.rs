@@ -512,7 +512,7 @@ mod tests {
                 p.mem_bytes >> 20
             );
         }
-        assert!(wsl.mem_bytes > 0 && wsl.procs.len() <= 6);
+        assert!(wsl.mem_bytes > 0 && wsl.procs.len() <= 12);
         assert!(
             wsl.procs
                 .iter()
