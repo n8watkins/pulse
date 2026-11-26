@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -58,6 +59,64 @@ impl PanelView {
     }
 }
 
+/// Which groups of rows (a row with sub items, such as `wsl`) the user has
+/// opened or closed, kept per view. A group nobody touched has the view's
+/// default: open in the expanded view, closed in the compact one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupsOpen {
+    pub expanded: BTreeMap<String, bool>,
+    pub compact: BTreeMap<String, bool>,
+}
+
+impl GroupsOpen {
+    fn map(&self, view: PanelView) -> &BTreeMap<String, bool> {
+        match view {
+            PanelView::Expanded => &self.expanded,
+            PanelView::Compact => &self.compact,
+        }
+    }
+
+    /// Whether group `id` is open in `view`.
+    pub fn is_open(&self, view: PanelView, id: &str) -> bool {
+        self.map(view)
+            .get(id)
+            .copied()
+            .unwrap_or(view == PanelView::Expanded)
+    }
+
+    /// Remembers group `id` as open or closed in `view`.
+    pub fn set(&mut self, view: PanelView, id: &str, open: bool) {
+        let map = match view {
+            PanelView::Expanded => &mut self.expanded,
+            PanelView::Compact => &mut self.compact,
+        };
+        map.insert(id.to_owned(), open);
+    }
+
+    /// The other state of group `id` in `view`.
+    pub fn toggle(&mut self, view: PanelView, id: &str) {
+        let now = self.is_open(view, id);
+        self.set(view, id, !now);
+    }
+
+    fn from_value(v: &Value) -> Self {
+        let read = |key: &str| -> BTreeMap<String, bool> {
+            v.get(key)
+                .and_then(Value::as_object)
+                .map(|m| {
+                    m.iter()
+                        .filter_map(|(k, v)| v.as_bool().map(|b| (k.clone(), b)))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        Self {
+            expanded: read("expanded"),
+            compact: read("compact"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     /// The active shortcut, canonical text such as `Alt+Shift+P`; empty means
@@ -76,9 +135,10 @@ pub struct Settings {
     pub appearance: Appearance,
     /// The panel view, expanded by default.
     pub view: PanelView,
-    /// The compact view's Linux (WSL) list is open. Closed by default; the
-    /// expanded view always shows it.
-    pub wsl_open: bool,
+    /// Rows with sub items (the Linux machine, id `wsl`): open or closed per
+    /// view. A file from before the views has a single `wsl_open`, which
+    /// becomes the compact view's state.
+    pub groups_open: GroupsOpen,
 }
 
 impl Default for Settings {
@@ -92,7 +152,7 @@ impl Default for Settings {
             sort: Sort::Memory,
             appearance: Appearance::System,
             view: PanelView::Expanded,
-            wsl_open: false,
+            groups_open: GroupsOpen::default(),
         }
     }
 }
@@ -233,8 +293,14 @@ impl Settings {
         {
             out.view = v;
         }
+        // The single field of older files is the compact view's state.
         if let Some(b) = map.get("wsl_open").and_then(Value::as_bool) {
-            out.wsl_open = b;
+            out.groups_open.set(PanelView::Compact, "wsl", b);
+        }
+        if let Some(v) = map.get("groups_open") {
+            let read = GroupsOpen::from_value(v);
+            out.groups_open.expanded.extend(read.expanded);
+            out.groups_open.compact.extend(read.compact);
         }
         out
     }
@@ -260,7 +326,8 @@ mod tests {
         assert_eq!(s.hidden_refresh_s, 2);
         assert_eq!(s.sort, Sort::Memory);
         assert_eq!(s.view, PanelView::Expanded);
-        assert!(!s.wsl_open);
+        assert!(!s.groups_open.is_open(PanelView::Compact, "wsl"));
+        assert!(s.groups_open.is_open(PanelView::Expanded, "wsl"));
     }
 
     #[test]
@@ -276,7 +343,10 @@ mod tests {
             sort: Sort::Processor,
             appearance: Appearance::Dark,
             view: PanelView::Compact,
-            wsl_open: true,
+            groups_open: GroupsOpen {
+                expanded: BTreeMap::from([("wsl".to_owned(), false)]),
+                compact: BTreeMap::from([("wsl".to_owned(), true)]),
+            },
         };
         s.save_to(&path).unwrap();
         assert!(!dir.join("settings.json.tmp").exists());
@@ -350,25 +420,59 @@ mod tests {
         let old = r#"{"hotkey":"Alt+Shift+P","hotkey_last":"Alt+Shift+P","theme":"neutral","keep_open":true,"autostart":false,"hidden_refresh_s":5,"sort":"processor"}"#;
         let s = Settings::from_json(old);
         assert_eq!(s.view, PanelView::Expanded);
-        assert!(!s.wsl_open);
+        assert!(!s.groups_open.is_open(PanelView::Compact, "wsl"));
+        assert!(s.groups_open.is_open(PanelView::Expanded, "wsl"));
         assert_eq!(s.sort, Sort::Processor);
         assert_eq!(s.hidden_refresh_s, 5);
         assert!(s.keep_open && !s.autostart);
     }
 
     #[test]
-    fn the_view_and_the_wsl_state_are_read_and_bad_values_fall_back() {
-        let s = Settings::from_json(r#"{"view":"compact","wsl_open":true}"#);
+    fn the_view_is_read_and_a_bad_value_falls_back() {
+        let s = Settings::from_json(r#"{"view":"compact"}"#);
         assert_eq!(s.view, PanelView::Compact);
-        assert!(s.wsl_open);
         let s = Settings::from_json(r#"{"view":"huge","wsl_open":"yes","sort":"processor"}"#);
         assert_eq!(s.view, PanelView::Expanded);
-        assert!(!s.wsl_open);
+        assert!(!s.groups_open.is_open(PanelView::Compact, "wsl"));
         assert_eq!(s.sort, Sort::Processor);
-        let v: Value =
-            serde_json::from_str(&serde_json::to_string(&Settings::default()).unwrap()).unwrap();
-        assert_eq!(v["view"], "expanded");
-        assert_eq!(v["wsl_open"], false);
+    }
+
+    #[test]
+    fn an_old_wsl_open_becomes_the_compact_state_and_expanded_stays_open() {
+        for old in [true, false] {
+            let s = Settings::from_json(&format!(r#"{{"view":"compact","wsl_open":{old}}}"#));
+            assert_eq!(s.groups_open.is_open(PanelView::Compact, "wsl"), old);
+            assert!(s.groups_open.is_open(PanelView::Expanded, "wsl"));
+            // Saved again, the old field is gone and the state is kept.
+            let v: Value = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+            assert!(v.get("wsl_open").is_none());
+            assert_eq!(Settings::from_json(&v.to_string()), s);
+        }
+    }
+
+    #[test]
+    fn groups_are_remembered_per_view_by_id() {
+        let mut s = Settings::default();
+        s.groups_open.toggle(PanelView::Expanded, "wsl");
+        assert!(!s.groups_open.is_open(PanelView::Expanded, "wsl"));
+        assert!(!s.groups_open.is_open(PanelView::Compact, "wsl"));
+        s.groups_open.toggle(PanelView::Compact, "wsl");
+        assert!(s.groups_open.is_open(PanelView::Compact, "wsl"));
+        // Another group needs no new setting and has its own state.
+        assert!(s.groups_open.is_open(PanelView::Expanded, "docker"));
+        s.groups_open.set(PanelView::Expanded, "docker", false);
+        let v: Value = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(v["groups_open"]["expanded"]["wsl"], false);
+        assert_eq!(v["groups_open"]["expanded"]["docker"], false);
+        assert_eq!(v["groups_open"]["compact"]["wsl"], true);
+        assert_eq!(Settings::from_json(&v.to_string()), s);
+        // Bad entries are skipped, good ones kept.
+        let s = Settings::from_json(
+            r#"{"groups_open":{"expanded":{"wsl":"no","a":false},"compact":7}}"#,
+        );
+        assert!(s.groups_open.is_open(PanelView::Expanded, "wsl"));
+        assert!(!s.groups_open.is_open(PanelView::Expanded, "a"));
+        assert!(!s.groups_open.is_open(PanelView::Compact, "wsl"));
     }
 
     #[test]

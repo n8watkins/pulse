@@ -60,7 +60,19 @@ Which rows are shown (the Linux list never grows past 6 rows, so many sessions d
 3. With more than 4, the first 3 are rows and all the others fold into one line: "Claude Code · 9 idle" with their memory or processor summed ("9 idle agents" when they are not all one agent, "more" in place of "idle" when one of them is busy; the dot is green then).
 4. The programs fill the rows left of the 6.
 
-In the compact view, the closed WSL row reads "N programs · N agents": the programs are the processes of the Linux programs that are not coding agents, the agents are the sessions (one each, however many helper processes it has), so the two never overlap.
+## Rows with sub items
+
+A row with sub items (today only "WSL (Linux)") has a chevron in both views: down when closed, up when open.
+Click anywhere on the row, or press Space or Enter while it has the keyboard focus (a ring shows it), to open or close it; nothing else on a row is clickable, so there is no conflict.
+A screen reader hears "Expand WSL (Linux)" or "Collapse WSL (Linux)" and the open state.
+A machine with nothing running inside has no sub items, so no chevron.
+The state is kept per view in `settings.json` under `groups_open`, keyed by a group id (`wsl`): `{"groups_open": {"expanded": {"wsl": true}, "compact": {"wsl": false}}}`.
+Expanded defaults to open, compact to closed.
+A file from before has a single `wsl_open`: the compact view takes that value, the expanded view starts open, and the next save drops the old field.
+A new row with sub items needs no new setting, only a group id.
+
+Closed, the expanded row shows the summary on its second line, where "Linux virtual machine · inside:" is when open; the apps below move up.
+In both views the closed WSL row reads "N programs · N agents": the programs are the processes of the Linux programs that are not coding agents, the agents are the sessions (one each, however many helper processes it has), so the two never overlap.
 Opened, the same session rows, folding and order apply, in the compact row style.
 
 Two sessions of the same agent in the same folder show how long each has run ("2h 10m", "14m"), small, after the name.
@@ -82,7 +94,7 @@ Environment hooks, for tests and screenshots:
   It wins over the Appearance setting (System, Light, Dark, saved as `appearance` in `settings.json`; System follows the window's light or dark state, which winit reports on every platform).
 - `PULSE_VIEW=compact|expanded` starts in that view whatever `settings.json` says (the saved field is `view`, expanded by default).
   The header button switches between the views and saves the choice.
-- `PULSE_WSL_OPEN=0|1` starts the compact view with its Linux (WSL) list closed or open (the saved field is `wsl_open`, closed by default; the expanded view always shows the list).
+- `PULSE_WSL_OPEN=0|1` starts both views with their Linux (WSL) list closed or open, whatever `settings.json` says (the saved state is `groups_open`, see "Rows with sub items"; without it expanded is open and compact is closed).
 - `PULSE_SELFTEST=1` with `PULSE_REPORT=<path>` opens and closes the panel five times and writes `{"shell":"native","open_ms":[...]}`.
 - `PULSE_NOTRIM=1` turns off the working-set trim on hide.
 - `PULSE_RENDERER=skia` uses the GPU renderer (about 108 MB; the default software renderer is the reason memory stays low).

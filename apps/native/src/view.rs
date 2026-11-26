@@ -3,7 +3,7 @@
 
 use crate::marks::{self, Mark};
 use crate::sessions::{self, Line};
-use pulse_platform::{PanelView, Sort};
+use pulse_platform::{GroupsOpen, PanelView, Sort};
 use pulse_readings::{AppRow, Snapshot, Wsl, WslProc, WslSession};
 use std::collections::VecDeque;
 use std::fmt::Write as _;
@@ -49,10 +49,10 @@ pub const COMPACT_APPS: usize = 3;
 /// Height of one list row in the given view.
 pub fn row_height(kind: RowKind, compact: bool) -> f32 {
     match (kind, compact) {
-        (RowKind::App | RowKind::Wsl | RowKind::WslClosed | RowKind::WslOpen, false) => ROW_PITCH,
+        (RowKind::App | RowKind::Wsl, false) => ROW_PITCH,
         (RowKind::Sub, false) => 24.0,
         (RowKind::Reading, false) => 40.0,
-        (RowKind::App | RowKind::Wsl | RowKind::WslClosed | RowKind::WslOpen, true) => 29.0,
+        (RowKind::App | RowKind::Wsl, true) => 29.0,
         (RowKind::Sub, true) => 22.0,
         (RowKind::Reading, true) => 36.0,
     }
@@ -157,17 +157,28 @@ fn push_capped(q: &mut VecDeque<(Instant, f32)>, at: Instant, v: f32) {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowKind {
     App,
-    /// The WSL virtual machine; its Linux programs follow as `Sub` rows.
+    /// The head of a group: the WSL virtual machine, whose Linux programs
+    /// follow as `Sub` rows. A head with sub items has a [`Fold`].
     Wsl,
     Sub,
     /// "Reading apps..." before the first scan has finished.
     Reading,
-    /// Compact view: the Linux row that opens and closes the list of Linux
-    /// programs under it (closed, with a chevron pointing down).
-    WslClosed,
-    /// The same row with its list open (chevron up).
-    WslOpen,
 }
+
+/// Whether a row has sub items to open and close, and which way it is now.
+/// A row with sub items has a chevron, the toggle and, closed, a summary.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Fold {
+    /// No sub items: no chevron.
+    #[default]
+    None,
+    Closed,
+    Open,
+}
+
+/// The id of the Linux machine's group, the key of its open state in the
+/// settings file.
+pub const GROUP_WSL: &str = "wsl";
 
 /// The dot before a Linux row: a coding-agent session is busy or idle.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -205,6 +216,14 @@ pub struct AppView {
     /// Session rows that look like another one (same agent, same folder): how
     /// long the session has run, small, to tell them apart. Else empty.
     pub age: String,
+    /// Head rows: the id of the group the following `Sub` rows belong to (the
+    /// key of its saved open state); empty on every other row.
+    pub group: String,
+    /// Head rows: what the closed row says about its sub items, for example
+    /// "14 programs \u{b7} 5 agents"; empty when there are none.
+    pub summary: String,
+    /// Head rows with sub items: closed or open (see [`fold_groups`]).
+    pub fold: Fold,
 }
 
 /// Everything the panel shows, as plain data.
@@ -568,6 +587,9 @@ fn app_view(a: &AppRow, sort: Sort, wsl: Option<&Wsl>, max: f64) -> AppView {
         mark: None,
         dot: Dot::None,
         age: String::new(),
+        group: String::new(),
+        summary: String::new(),
+        fold: Fold::None,
     }
 }
 
@@ -600,6 +622,9 @@ fn reading_row() -> AppView {
         mark: None,
         dot: Dot::None,
         age: String::new(),
+        group: String::new(),
+        summary: String::new(),
+        fold: Fold::None,
     }
 }
 
@@ -709,6 +734,9 @@ fn sub_rows(w: &Wsl, sort: Sort) -> Vec<AppView> {
                 mark,
                 dot,
                 age,
+                group: String::new(),
+                summary: String::new(),
+                fold: Fold::None,
             }
         })
         .collect();
@@ -733,6 +761,9 @@ fn sub_rows(w: &Wsl, sort: Sort) -> Vec<AppView> {
             mark,
             dot: Dot::None,
             age: String::new(),
+            group: String::new(),
+            summary: String::new(),
+            fold: Fold::None,
         }
     }));
     rows
@@ -784,8 +815,12 @@ pub fn app_rows(snap: &Snapshot, sort: Sort) -> Vec<AppView> {
     );
     let mut rows = Vec::new();
     for a in list {
-        let row = app_view(a, sort, wsl, max);
+        let mut row = app_view(a, sort, wsl, max);
         let is_wsl_row = row.kind == RowKind::Wsl;
+        if let (true, Some(w)) = (is_wsl_row, wsl) {
+            GROUP_WSL.clone_into(&mut row.group);
+            row.summary = wsl_summary(w);
+        }
         rows.push(row);
         if let (true, Some(w)) = (is_wsl_row, wsl) {
             rows.extend(sub_rows(w, sort));
@@ -797,23 +832,30 @@ pub fn app_rows(snap: &Snapshot, sort: Sort) -> Vec<AppView> {
     rows
 }
 
-/// What the panel is asked to show: the sort, the view, and (compact view)
-/// whether the Linux list is open.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What the panel is asked to show: the sort, the view, and which groups of
+/// rows are open in that view.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mode {
     pub sort: Sort,
     pub view: PanelView,
-    pub wsl_open: bool,
+    pub open: GroupsOpen,
+}
+
+impl Mode {
+    /// Whether group `id` is open in this mode's view.
+    pub fn is_open(&self, id: &str) -> bool {
+        self.open.is_open(self.view, id)
+    }
 }
 
 #[cfg(test)]
 impl Mode {
-    /// The expanded view sorted by `sort` (its Linux list is always open).
+    /// The expanded view sorted by `sort`, every group open.
     pub fn expanded(sort: Sort) -> Self {
         Self {
             sort,
             view: PanelView::Expanded,
-            wsl_open: true,
+            open: GroupsOpen::default(),
         }
     }
 }
@@ -839,11 +881,49 @@ pub fn wsl_summary(w: &Wsl) -> String {
     }
 }
 
+/// Applies the open or closed state of every group: a head row with sub items
+/// gets its [`Fold`] and, closed, its summary in place of the detail line
+/// and no sub rows below it. `summary_when_open` keeps the summary on an open
+/// head too (the compact view has no room for the long detail).
+pub fn fold_groups(
+    rows: Vec<AppView>,
+    is_open: &dyn Fn(&str) -> bool,
+    summary_when_open: bool,
+) -> Vec<AppView> {
+    let mut out = Vec::with_capacity(rows.len());
+    let mut hidden = false;
+    for mut r in rows {
+        if r.kind == RowKind::Sub {
+            if !hidden {
+                out.push(r);
+            }
+            continue;
+        }
+        hidden = false;
+        if !r.group.is_empty() && !r.summary.is_empty() {
+            let open = is_open(&r.group);
+            r.fold = if open { Fold::Open } else { Fold::Closed };
+            hidden = !open;
+            if hidden || summary_when_open {
+                r.detail.clone_from(&r.summary);
+            }
+        }
+        out.push(r);
+    }
+    out
+}
+
+/// The expanded view's rows: every app, the Linux row where its sort puts
+/// it and, when its group is open, the Linux programs under it.
+pub fn expanded_rows(snap: &Snapshot, sort: Sort, is_open: &dyn Fn(&str) -> bool) -> Vec<AppView> {
+    fold_groups(app_rows(snap, sort), is_open, false)
+}
+
 /// The compact view's rows: the three biggest apps for the sort, then one
 /// Linux row (always last, with its counts and a chevron) and, when the list
 /// is open, the Linux programs under it. Built from [`app_rows`], so the
 /// values, bars and the Linux rows are the same as in the expanded view.
-pub fn compact_rows(snap: &Snapshot, sort: Sort, wsl_open: bool) -> Vec<AppView> {
+pub fn compact_rows(snap: &Snapshot, sort: Sort, is_open: &dyn Fn(&str) -> bool) -> Vec<AppView> {
     let mut apps = Vec::new();
     let mut head = None;
     let mut subs = Vec::new();
@@ -855,26 +935,15 @@ pub fn compact_rows(snap: &Snapshot, sort: Sort, wsl_open: bool) -> Vec<AppView>
         }
     }
     apps.truncate(COMPACT_APPS.max(1));
-    if let Some(mut h) = head {
-        let summary = snap.wsl.as_ref().map(wsl_summary).unwrap_or_default();
-        if !summary.is_empty() {
-            h.kind = if wsl_open {
-                RowKind::WslOpen
-            } else {
-                RowKind::WslClosed
-            };
-            h.detail = summary;
-        }
-        let open = h.kind == RowKind::WslOpen;
+    if let Some(h) = head {
         apps.push(h);
-        if open {
-            for s in &mut subs {
-                s.group_end = false;
-            }
-            apps.extend(subs);
+        // No closing hairline: the Linux list is the end of the compact list.
+        for s in &mut subs {
+            s.group_end = false;
         }
+        apps.extend(subs);
     }
-    apps
+    fold_groups(apps, is_open, true)
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -919,8 +988,8 @@ pub fn build(
         mem_line,
         mem_fill,
         apps: match mode.view {
-            PanelView::Expanded => app_rows(snap, sort),
-            PanelView::Compact => compact_rows(snap, sort, mode.wsl_open),
+            PanelView::Expanded => expanded_rows(snap, sort, &|id| mode.is_open(id)),
+            PanelView::Compact => compact_rows(snap, sort, &|id| mode.is_open(id)),
         },
         tiles: tiles(extra),
     }
@@ -1598,7 +1667,7 @@ mod tests {
     }
 
     fn compact_of(snap: &Snapshot, sort: Sort, open: bool) -> Vec<AppView> {
-        compact_rows(snap, sort, open)
+        compact_rows(snap, sort, &|_| open)
     }
 
     #[test]
@@ -1609,7 +1678,9 @@ mod tests {
             assert_eq!(rows.len(), COMPACT_APPS + 1, "{sort:?}");
             assert!(rows[..COMPACT_APPS].iter().all(|r| r.kind == RowKind::App));
             let head = rows.last().unwrap();
-            assert_eq!(head.kind, RowKind::WslClosed);
+            assert_eq!(head.kind, RowKind::Wsl);
+            assert_eq!(head.fold, Fold::Closed);
+            assert_eq!(head.group, GROUP_WSL);
             assert_eq!(head.name, "WSL (Linux)");
             assert!(head.path.as_deref().is_some_and(|p| p.ends_with("wsl.exe")));
         }
@@ -1684,7 +1755,8 @@ mod tests {
         let closed = compact_of(&snap, Sort::Memory, false);
         let open = compact_of(&snap, Sort::Memory, true);
         assert_eq!(open.len(), closed.len() + n);
-        assert_eq!(open[COMPACT_APPS].kind, RowKind::WslOpen);
+        assert_eq!(open[COMPACT_APPS].kind, RowKind::Wsl);
+        assert_eq!(open[COMPACT_APPS].fold, Fold::Open);
         assert!(
             open[COMPACT_APPS + 1..]
                 .iter()
@@ -1693,13 +1765,9 @@ mod tests {
         assert_eq!(open[..COMPACT_APPS], closed[..COMPACT_APPS]);
         // No closing hairline: the Linux list is the end of the compact list.
         assert!(open.iter().all(|r| !r.group_end));
-        // The expanded rows are not changed by any of this: the Linux list is open there.
-        let full = app_rows(&snap, Sort::Memory);
+        // The expanded rows are not changed by any of this: its own state rules there.
+        let full = expanded_rows(&snap, Sort::Memory, &|_| true);
         assert!(full.iter().any(|r| r.kind == RowKind::Sub));
-        assert!(
-            full.iter()
-                .all(|r| !matches!(r.kind, RowKind::WslOpen | RowKind::WslClosed))
-        );
     }
 
     #[test]
@@ -1708,7 +1776,7 @@ mod tests {
         snap.wsl.as_mut().unwrap().mem_bytes = 20 << 30;
         let rows = compact_of(&snap, Sort::Memory, false);
         assert_eq!(rows.len(), COMPACT_APPS + 1);
-        assert_eq!(rows.last().unwrap().kind, RowKind::WslClosed);
+        assert_eq!(rows.last().unwrap().fold, Fold::Closed);
         assert!(rows[..COMPACT_APPS].iter().all(|r| r.kind == RowKind::App));
     }
 
@@ -1727,6 +1795,7 @@ mod tests {
         });
         let rows = compact_of(&snap, Sort::Memory, true);
         assert_eq!(rows.last().unwrap().kind, RowKind::Wsl);
+        assert_eq!(rows.last().unwrap().fold, Fold::None);
         assert_eq!(rows.len(), COMPACT_APPS + 1);
         // Reading apps.
         snap.apps.clear();
@@ -1781,13 +1850,86 @@ mod tests {
     }
 
     #[test]
+    fn expanded_closed_hides_the_programs_and_says_how_many() {
+        let snap = sample();
+        let open = expanded_rows(&snap, Sort::Memory, &|_| true);
+        let closed = expanded_rows(&snap, Sort::Memory, &|_| false);
+        assert_eq!(open.len(), closed.len() + SUB_ROWS);
+        let head = |rows: &[AppView]| rows.iter().find(|r| r.kind == RowKind::Wsl).cloned();
+        let (o, c) = (head(&open).unwrap(), head(&closed).unwrap());
+        assert_eq!((o.fold, c.fold), (Fold::Open, Fold::Closed));
+        assert_eq!(o.detail, "Linux virtual machine \u{b7} inside:");
+        assert_eq!(c.detail, "18 programs \u{b7} 5 agents");
+        assert!(closed.iter().all(|r| r.kind != RowKind::Sub));
+        // Every app row is still there, in the same order.
+        let apps = |rows: &[AppView]| {
+            rows.iter()
+                .filter(|r| r.kind != RowKind::Sub)
+                .map(|r| r.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(apps(&open), apps(&closed));
+        // The list height shrinks by exactly the Linux rows.
+        let h = |rows: &[AppView]| rows.iter().map(|r| row_height(r.kind, false)).sum::<f32>();
+        assert_eq!(h(&open) - h(&closed), SUB_ROWS as f32 * 24.0);
+    }
+
+    #[test]
+    fn a_machine_with_nothing_inside_has_no_fold_in_either_view() {
+        let mut snap = sample();
+        snap.wsl = Some(Wsl {
+            mem_bytes: 1 << 30,
+            cpu_pct: 0.5,
+            ..Wsl::default()
+        });
+        for open in [true, false] {
+            let rows = expanded_rows(&snap, Sort::Memory, &|_| open);
+            assert!(rows.iter().all(|r| r.fold == Fold::None));
+            assert!(rows.iter().all(|r| r.kind != RowKind::Sub));
+        }
+    }
+
+    #[test]
+    fn only_the_asked_group_folds() {
+        let snap = sample();
+        let rows = expanded_rows(&snap, Sort::Memory, &|id| id != "other");
+        assert!(rows.iter().any(|r| r.kind == RowKind::Sub));
+        let rows = expanded_rows(&snap, Sort::Memory, &|id| id != GROUP_WSL);
+        assert!(rows.iter().all(|r| r.kind != RowKind::Sub));
+    }
+
+    #[test]
+    fn each_view_reads_its_own_saved_state() {
+        let snap = sample();
+        let mut open = GroupsOpen::default();
+        open.set(PanelView::Compact, GROUP_WSL, true);
+        open.set(PanelView::Expanded, GROUP_WSL, false);
+        let subs = |view| {
+            let mode = Mode {
+                sort: Sort::Memory,
+                view,
+                open: open.clone(),
+            };
+            let (hist, extra) = (History::default(), Extra::default());
+            let now = Instant::now();
+            build(&snap, &extra, &hist, true, mode, now, now)
+                .apps
+                .iter()
+                .filter(|r| r.kind == RowKind::Sub)
+                .count()
+        };
+        assert_eq!(subs(PanelView::Expanded), 0);
+        assert_eq!(subs(PanelView::Compact), SUB_ROWS);
+    }
+
+    #[test]
     fn row_heights_are_the_ones_the_panel_draws() {
         // These are the Metrics of ui/panel.slint.
         assert_eq!(row_height(RowKind::App, false), 53.0);
         assert_eq!(row_height(RowKind::Wsl, false), 53.0);
         assert_eq!(row_height(RowKind::Sub, false), 24.0);
         assert_eq!(row_height(RowKind::App, true), 29.0);
-        assert_eq!(row_height(RowKind::WslClosed, true), 29.0);
+        assert_eq!(row_height(RowKind::Wsl, true), 29.0);
         assert_eq!(row_height(RowKind::Sub, true), 22.0);
     }
 
