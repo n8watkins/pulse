@@ -611,12 +611,13 @@ fn app_view(a: &AppRow, sort: Sort, wsl: Option<&Wsl>, max: f64) -> AppView {
 
 /// The head row's detail line when it is open: the dev server count (it is not
 /// in the Linux rows, which show some of the programs) and "inside:" when
-/// there are rows below.
+/// there are rows below. With a count the machine is "Linux VM": the bar
+/// takes the right of the line, and the count must stay readable.
 fn wsl_detail(wsl: Option<&Wsl>) -> String {
     let mut text = String::from("Linux virtual machine");
     if let Some(w) = wsl {
         if let Some(servers) = servers_text(w.server_count()) {
-            text.push_str(" \u{b7} ");
+            text = String::from("Linux VM \u{b7} ");
             text.push_str(&servers);
         }
         if !w.procs.is_empty() {
@@ -1344,10 +1345,7 @@ mod tests {
         assert_eq!(wsl_rows.len(), 1);
         let w = wsl_rows[0];
         assert_eq!(w.name, "WSL (Linux)");
-        assert_eq!(
-            w.detail,
-            "Linux virtual machine \u{b7} 3 dev servers \u{b7} inside:"
-        );
+        assert_eq!(w.detail, "Linux VM \u{b7} 3 dev servers \u{b7} inside:");
         assert!(w.path.as_deref().is_some_and(|p| p.ends_with("wsl.exe")));
         let subs: Vec<_> = rows.iter().filter(|r| r.kind == RowKind::Sub).collect();
         // Sessions first (3 rows and a fold), then the biggest programs.
@@ -1813,7 +1811,7 @@ mod tests {
         );
         assert_eq!(
             wsl_detail(Some(&w)),
-            "Linux virtual machine \u{b7} 3 dev servers \u{b7} inside:"
+            "Linux VM \u{b7} 3 dev servers \u{b7} inside:"
         );
         w.dev_servers = Some(1);
         assert_eq!(
@@ -1832,10 +1830,7 @@ mod tests {
             ..Wsl::default()
         };
         assert_eq!(wsl_summary(&only), "2 dev servers");
-        assert_eq!(
-            wsl_detail(Some(&only)),
-            "Linux virtual machine \u{b7} 2 dev servers"
-        );
+        assert_eq!(wsl_detail(Some(&only)), "Linux VM \u{b7} 2 dev servers");
         assert_eq!(wsl_detail(None), "Linux virtual machine");
     }
 
@@ -1970,10 +1965,7 @@ mod tests {
         let head = |rows: &[AppView]| rows.iter().find(|r| r.kind == RowKind::Wsl).cloned();
         let (o, c) = (head(&open).unwrap(), head(&closed).unwrap());
         assert_eq!((o.fold, c.fold), (Fold::Open, Fold::Closed));
-        assert_eq!(
-            o.detail,
-            "Linux virtual machine \u{b7} 3 dev servers \u{b7} inside:"
-        );
+        assert_eq!(o.detail, "Linux VM \u{b7} 3 dev servers \u{b7} inside:");
         assert_eq!(c.detail, "18 programs \u{b7} 5 agents \u{b7} 3 dev servers");
         assert!(closed.iter().all(|r| r.kind != RowKind::Sub));
         // Every app row is still there, in the same order.

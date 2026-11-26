@@ -74,7 +74,7 @@ A new row with sub items needs no new setting, only a group id.
 Closed, the expanded row shows the summary on its second line, where "Linux virtual machine · inside:" is when open; the apps below move up.
 In both views the closed WSL row reads "N programs · N agents · N dev servers": the programs are the processes of the Linux programs that are not coding agents, the agents are the sessions (one each, however many helper processes it has), so the two never overlap, and the dev servers are described below.
 Zero (or a count that could not be read) is left out of the line.
-Open in the expanded view, the count moves to the detail line: "Linux virtual machine · 3 dev servers · inside:".
+Open in the expanded view, the count moves to the detail line: "Linux VM · 3 dev servers · inside:" ("VM" because the bar leaves room for about 35 characters).
 Open in the compact view, the summary stays on the row.
 Opened, the same session rows, folding and order apply, in the compact row style.
 
