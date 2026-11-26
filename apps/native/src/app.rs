@@ -4,7 +4,7 @@
 use crate::logic::{self, ClickAction, Pending, PendingAction, Throttle, Toggle};
 use crate::record::{self, Mods, Pressed, Step};
 use crate::tray;
-use crate::view::{self, History, RowKind};
+use crate::view::{self, Dot, History, RowKind};
 use crate::win::{self, Hwnd};
 use pulse_platform::hotkey::{Combo, Listener};
 use pulse_platform::{Appearance, PanelView, Settings, Sort, autostart, single};
@@ -404,6 +404,12 @@ impl Panel {
                     frac: a.frac,
                     agent: a.agent,
                     count: a.count.into(),
+                    state: match a.dot {
+                        Dot::None => 0,
+                        Dot::Idle => 1,
+                        Dot::Busy => 2,
+                    },
+                    age: a.age.into(),
                     group_end: a.group_end,
                     has_mark: a.mark.is_some(),
                     mark_path: a.mark.map(|m| m.path).unwrap_or_default().into(),

@@ -45,6 +45,10 @@ export struct AppItem {
     has-icon: bool,
     agent: bool,
     count: string,
+    // A coding-agent session (kind 2): 0 no dot, 1 idle, 2 busy; and how long
+    // it has run, shown only when another session looks the same.
+    state: int,
+    age: string,
     group-end: bool,
     // A Linux program with a product mark: the glyph path (24 x 24) replaces
     // the letter on a tile in the brand color (`color`).
@@ -1033,6 +1037,19 @@ component AppRow inherits Rectangle {
             width: root.width - self.x - 2px - sub-val.preferred-width - 8px;
             alignment: start;
             spacing: 0px;
+            // Busy or idle: a green dot, or a grey one.
+            if root.item.state > 0: Rectangle {
+                width: 13px;
+                Rectangle {
+                    y: 5.5px; // centered in the 18 px row
+                    width: 7px;
+                    height: 7px;
+                    border-radius: 3.5px;
+                    background: root.item.state == 2
+                        ? (Theme.dark ? #4ade80 : #1f9d5c)
+                        : (Theme.dark ? #5d6662 : #9aa39f);
+                }
+            }
             Text {
                 text: root.item.name;
                 font-family: "Inter";
@@ -1041,6 +1058,16 @@ component AppRow inherits Rectangle {
                 vertical-alignment: center;
                 overflow: elide;
                 min-width: 0px;
+            }
+            if root.item.age != "": Rectangle {
+                width: 6px;
+            }
+            if root.item.age != "": Text {
+                text: root.item.age;
+                font-family: "Inter";
+                font-size: 11px;
+                color: Theme.mute;
+                vertical-alignment: center;
             }
 
             if root.item.agent: Rectangle {

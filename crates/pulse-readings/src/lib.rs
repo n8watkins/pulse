@@ -97,20 +97,57 @@ pub struct Wsl {
     pub mem_bytes: u64,
     /// That process's share of the whole machine, 0 to 100.
     pub cpu_pct: f32,
-    /// The Linux programs in the default distro, grouped by label, largest in
-    /// memory first: the 6 using the most memory plus the 6 using the most
-    /// processor (at most 12, the panel shows 6 of them in its chosen sort).
-    /// Empty when the distro is not running, the query failed or it has not
-    /// returned yet.
+    /// The Linux programs in the default distro that are not coding agents,
+    /// grouped by label, largest in memory first: the 6 using the most memory
+    /// plus the 6 using the most processor (at most 12, the panel shows some
+    /// of them in its chosen sort). Programs a coding agent started are here
+    /// too, under their own label. Empty when the distro is not running, the
+    /// query failed or it has not returned yet.
     pub procs: Vec<WslProc>,
+    /// The coding-agent sessions, one each (see [`WslSession`]), in no
+    /// particular order. They replace the agent groups that used to sit in
+    /// `procs`: the number of agents is [`Wsl::agent_count`].
+    pub sessions: Vec<WslSession>,
+}
+
+impl Wsl {
+    /// How many coding-agent sessions run in Linux.
+    #[must_use]
+    pub fn agent_count(&self) -> usize {
+        self.sessions.len()
+    }
+}
+
+/// One coding-agent session: an agent's root process plus the helper
+/// processes that are part of the agent itself (for example its spare
+/// background process). Programs the agent started are not part of it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct WslSession {
+    /// The agent, for example "Claude Code".
+    pub label: String,
+    /// The name of the folder the session works in (never a full path), `~`
+    /// for the home folder. `None` when it cannot be read.
+    pub folder: Option<String>,
+    /// Memory of the session's own processes.
+    pub mem_bytes: u64,
+    /// Their share of the whole machine, same scale as `WslProc::cpu_pct`.
+    pub cpu_pct: f32,
+    /// Whether the session is working now: its processes and everything it
+    /// started use processor (with hysteresis).
+    pub busy: bool,
+    /// Seconds since the session started, `None` when unknown.
+    pub run_secs: Option<u64>,
+    /// The root process id, stable while the session runs.
+    pub pid: u32,
 }
 
 /// One labelled group of Linux processes.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct WslProc {
-    /// For example "Claude Code" or "node: next-server".
+    /// For example "node: next-server".
     pub label: String,
-    /// Whether this is a coding agent.
+    /// Whether this is a coding agent. Always false in `Wsl::procs` now (the
+    /// agents are in `Wsl::sessions`); the field stays for readers of it.
     pub agent: bool,
     pub count: u32,
     pub mem_bytes: u64,
@@ -248,12 +285,12 @@ impl Source for Sample {
             #[allow(clippy::cast_possible_truncation)]
             cpu_pct: (1.2 * factor) as f32,
             procs: [
-                ("Claude Code", true, 3, 640 * MB, 0.4),
                 ("VS Code server", false, 6, 512 * MB, 0.2),
                 ("next-server (v16.4.6)", false, 1, 318 * MB, 0.9),
-                ("Codex CLI", true, 2, 236 * MB, 0.1),
                 ("rust-analyzer", false, 2, 174 * MB, 0.05),
+                ("Docker", false, 3, 150 * MB, 0.15),
                 ("chrome-headless-shell", false, 4, 120 * MB, 0.6),
+                ("python3: worker.py", false, 2, 90 * MB, 0.1),
             ]
             .into_iter()
             .map(|(label, agent, count, mem_bytes, cpu)| WslProc {
@@ -263,6 +300,35 @@ impl Source for Sample {
                 mem_bytes,
                 #[allow(clippy::cast_possible_truncation)]
                 cpu_pct: (cpu * factor) as f32,
+            })
+            .collect(),
+            // Two sessions share a folder (told apart by run time), one
+            // agent is not Claude Code, and the idle ones fold into one line.
+            sessions: [
+                (
+                    "Claude Code",
+                    "pulse",
+                    420,
+                    0.9,
+                    true,
+                    2 * 3_600 + 10 * 60,
+                    411,
+                ),
+                ("Claude Code", "pulse", 260, 0.0, false, 14 * 60, 412),
+                ("Claude Code", "shop-site", 310, 0.0, false, 5 * 3_600, 413),
+                ("Codex CLI", "api-server", 236, 0.5, true, 36 * 60, 414),
+                ("Gemini CLI", "docs", 180, 0.0, false, 3_600 + 5 * 60, 415),
+            ]
+            .into_iter()
+            .map(|(label, folder, mem, cpu, busy, run, pid)| WslSession {
+                label: label.into(),
+                folder: Some(folder.into()),
+                mem_bytes: mem * MB,
+                #[allow(clippy::cast_possible_truncation)]
+                cpu_pct: (cpu * factor) as f32,
+                busy,
+                run_secs: Some(run),
+                pid,
             })
             .collect(),
         });
@@ -318,6 +384,16 @@ mod tests {
         // The processor order differs from the memory order, as in real use.
         assert!(w.procs.iter().all(|p| p.cpu_pct > 0.0));
         assert!(w.procs.windows(2).any(|p| p[0].cpu_pct < p[1].cpu_pct));
+        // Sessions: more than the panel shows one by one, two in one folder.
+        assert_eq!(w.agent_count(), 5);
+        assert!(w.sessions.iter().any(|x| x.busy) && w.sessions.iter().any(|x| !x.busy));
+        assert!(w.procs.iter().all(|p| !p.agent));
+        let pulse = w
+            .sessions
+            .iter()
+            .filter(|x| x.folder.as_deref() == Some("pulse"))
+            .count();
+        assert_eq!(pulse, 2);
         let off = s.read(false);
         assert!(off.apps_by_cpu.is_empty() && off.wsl.is_none());
     }
