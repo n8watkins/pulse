@@ -97,14 +97,15 @@ pub struct Wsl {
     pub mem_bytes: u64,
     /// That process's share of the whole machine, 0 to 100.
     pub cpu_pct: f32,
-    /// Up to 6 Linux programs using the most memory in the default distro,
-    /// grouped by label, largest first. Empty when the distro is not running,
-    /// the query failed or it has not returned yet.
+    /// The Linux programs in the default distro, grouped by label, largest in
+    /// memory first: the 6 using the most memory plus the 6 using the most
+    /// processor (at most 12, the panel shows 6 of them in its chosen sort).
+    /// Empty when the distro is not running, the query failed or it has not
+    /// returned yet.
     pub procs: Vec<WslProc>,
 }
 
-/// One labelled group of Linux processes. Memory only: `ps` reports no live
-/// processor figure.
+/// One labelled group of Linux processes.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct WslProc {
     /// For example "Claude Code" or "node: next-server".
@@ -113,6 +114,10 @@ pub struct WslProc {
     pub agent: bool,
     pub count: u32,
     pub mem_bytes: u64,
+    /// The group's share of the whole machine, 0 to 100, on the scale of
+    /// `AppRow::cpu_pct` (processor time used between two queries, over the
+    /// logical processors of Windows). 0 on the first query.
+    pub cpu_pct: f32,
 }
 
 /// An icon as straight (non-premultiplied) RGBA, top-down.
@@ -243,18 +248,21 @@ impl Source for Sample {
             #[allow(clippy::cast_possible_truncation)]
             cpu_pct: (1.2 * factor) as f32,
             procs: [
-                ("Claude Code", true, 3, 640 * MB),
-                ("Editor server", false, 6, 512 * MB),
-                ("node: next-server", false, 1, 318 * MB),
-                ("Codex CLI", true, 2, 236 * MB),
-                ("Docker", false, 2, 174 * MB),
+                ("Claude Code", true, 3, 640 * MB, 0.4),
+                ("Editor server", false, 6, 512 * MB, 0.2),
+                ("next-server (v16.4.6)", false, 1, 318 * MB, 0.9),
+                ("Codex CLI", true, 2, 236 * MB, 0.1),
+                ("Docker", false, 2, 174 * MB, 0.05),
+                ("chrome-headless-shell", false, 4, 120 * MB, 0.6),
             ]
             .into_iter()
-            .map(|(label, agent, count, mem_bytes)| WslProc {
+            .map(|(label, agent, count, mem_bytes, cpu)| WslProc {
                 label: label.into(),
                 agent,
                 count,
                 mem_bytes,
+                #[allow(clippy::cast_possible_truncation)]
+                cpu_pct: (cpu * factor) as f32,
             })
             .collect(),
         });
@@ -305,8 +313,11 @@ mod tests {
         );
         assert_eq!(x.apps_by_cpu[0].exe, "chrome.exe");
         let w = x.wsl.expect("wsl in sample");
-        assert_eq!(w.procs.len(), 5);
+        assert_eq!(w.procs.len(), 6);
         assert!(w.procs.windows(2).all(|p| p[0].mem_bytes >= p[1].mem_bytes));
+        // The processor order differs from the memory order, as in real use.
+        assert!(w.procs.iter().all(|p| p.cpu_pct > 0.0));
+        assert!(w.procs.windows(2).any(|p| p[0].cpu_pct < p[1].cpu_pct));
         let off = s.read(false);
         assert!(off.apps_by_cpu.is_empty() && off.wsl.is_none());
     }

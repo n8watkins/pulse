@@ -16,8 +16,74 @@ const SCRIPT_MAX: usize = 28;
 /// Characters the kernel keeps of a command name.
 const COMM_MAX: usize = 15;
 
-/// The command run inside the default distro (through `sh -c`).
-pub(crate) const PS_COMMAND: &str = "ps -eo pcpu=,rss=,comm=,args= --sort=-rss | head -n 40";
+/// The line that separates the `ps` rows from the `/proc/<pid>/stat` dump.
+const STAT_MARK: &str = "@@PULSE_STAT";
+
+/// The command run inside the default distro (through `sh -c`): the biggest
+/// processes by memory, then the processor times of all processes, in one
+/// call. `ps` can only report a lifetime average, so the live processor use
+/// is the difference between two dumps of the times.
+pub(crate) const PS_COMMAND: &str = "ps -eo pid=,rss=,comm=,args= --sort=-rss | head -n 60; echo @@PULSE_STAT; cat /proc/[0-9]*/stat 2>/dev/null";
+
+/// Clock ticks per second of the times in `/proc/<pid>/stat` (`USER_HZ`, 100
+/// on every Linux kernel WSL ships).
+const TICKS_PER_SEC: f64 = 100.0;
+
+/// Splits the output of [`PS_COMMAND`] into the `ps` rows and the stat dump.
+pub(crate) fn split_output(out: &str) -> (&str, &str) {
+    match out.find(STAT_MARK) {
+        Some(i) => (&out[..i], &out[i + STAT_MARK.len()..]),
+        None => (out, ""),
+    }
+}
+
+/// Processor ticks (user plus system time) per process id, from a dump of
+/// `/proc/<pid>/stat` files, one line each. The command name sits in brackets
+/// and may hold spaces and brackets, so the fields are counted from the last
+/// closing bracket. Lines that do not parse are ignored.
+pub(crate) fn parse_stat(dump: &str) -> HashMap<u32, u64> {
+    let mut out = HashMap::new();
+    for line in dump.lines() {
+        let Some((pid, rest)) = line.split_once(' ') else {
+            continue;
+        };
+        let (Ok(pid), Some(close)) = (pid.trim().parse::<u32>(), rest.rfind(')')) else {
+            continue;
+        };
+        // After the bracket: state, ppid, ..., utime is field 14 and stime 15
+        // of the file (index 11 and 12 here).
+        let fields: Vec<&str> = rest[close + 1..].split_whitespace().collect();
+        let tick = |i: usize| fields.get(i).and_then(|f| f.parse::<u64>().ok());
+        if let (Some(u), Some(s)) = (tick(11), tick(12)) {
+            out.insert(pid, u + s);
+        }
+    }
+    out
+}
+
+/// Each process's share of the whole machine, 0 to 100 (the scale of
+/// `AppRow::cpu_pct`), from two dumps `secs` apart on a machine with `cores`
+/// logical processors. A process missing from the first dump (new) or whose
+/// time went down (the id was reused) counts as idle.
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+pub(crate) fn cpu_shares(
+    before: &HashMap<u32, u64>,
+    after: &HashMap<u32, u64>,
+    secs: f64,
+    cores: usize,
+) -> HashMap<u32, f32> {
+    if secs <= 0.0 || cores == 0 {
+        return HashMap::new();
+    }
+    let per_tick = 100.0 / (TICKS_PER_SEC * secs * cores as f64);
+    after
+        .iter()
+        .filter_map(|(pid, now)| {
+            let was = before.get(pid)?;
+            Some((*pid, (now.saturating_sub(*was) as f64 * per_tick) as f32))
+        })
+        .collect()
+}
 
 /// Decodes the UTF-16LE output of `wsl.exe` (a byte-order mark is dropped, a
 /// dangling odd byte is ignored).
@@ -50,9 +116,10 @@ pub(crate) fn default_is_running(listing: &str) -> bool {
     })
 }
 
-/// One line of `ps -eo pcpu=,rss=,comm=,args=`.
+/// One line of `ps -eo pid=,rss=,comm=,args=`.
 #[derive(Debug, PartialEq)]
 struct PsRow<'a> {
+    pid: u32,
     rss_kib: u64,
     comm: String,
     args: &'a str,
@@ -64,8 +131,8 @@ struct PsRow<'a> {
 /// failing that the first word alone (a renamed thread such as `MainThread`).
 fn parse_line(line: &str) -> Option<PsRow<'_>> {
     let rest = line.trim_start();
-    let (cpu, rest) = split_word(rest)?;
-    cpu.parse::<f32>().ok()?;
+    let (pid, rest) = split_word(rest)?;
+    let pid: u32 = pid.parse().ok()?;
     let (rss, rest) = split_word(rest)?;
     let rss_kib: u64 = rss.parse().ok()?;
     let words: Vec<(usize, &str)> = word_spans(rest);
@@ -95,6 +162,7 @@ fn parse_line(line: &str) -> Option<PsRow<'_>> {
         (rest.len(), rest.len())
     };
     Some(PsRow {
+        pid,
         rss_kib,
         comm: collapse(&rest[..comm_end]),
         args: rest[args_start..].trim_end(),
@@ -303,6 +371,10 @@ fn label(comm: &str, args: &str) -> Option<(String, bool)> {
     if let Some(l) = agent_named(exe) {
         return agent(l);
     }
+    // The native Claude Code binary is installed as `.../claude/versions/<n>`.
+    if first.contains("/claude/versions/") {
+        return agent("Claude Code");
+    }
     if is_runtime(exe) {
         let script = words.find(|w| !w.starts_with('-'));
         if let Some(script) = script {
@@ -341,9 +413,12 @@ fn label(comm: &str, args: &str) -> Option<(String, bool)> {
     Some((shown, false))
 }
 
-/// Groups the output of the `ps` command by label and returns the biggest
-/// [`TOP`] groups, largest first. Lines that do not parse are ignored.
-pub(crate) fn top_procs(ps_output: &str) -> Vec<WslProc> {
+/// Groups the `ps` rows by label. The result holds the biggest [`TOP`] groups
+/// by memory and the busiest [`TOP`] by processor (so either sort has its
+/// full list), largest in memory first. `cpu` is each process's share of the
+/// machine (see [`cpu_shares`]); a process without an entry counts as idle.
+/// Lines that do not parse are ignored.
+pub(crate) fn top_procs(ps_output: &str, cpu: &HashMap<u32, f32>) -> Vec<WslProc> {
     let mut groups: HashMap<String, WslProc> = HashMap::new();
     for line in ps_output.lines() {
         let Some(row) = parse_line(line) else {
@@ -357,18 +432,32 @@ pub(crate) fn top_procs(ps_output: &str) -> Vec<WslProc> {
             agent,
             count: 0,
             mem_bytes: 0,
+            cpu_pct: 0.0,
         });
         g.count += 1;
         g.mem_bytes += row.rss_kib * 1024;
+        g.cpu_pct += cpu.get(&row.pid).copied().unwrap_or(0.0);
     }
-    let mut rows: Vec<WslProc> = groups.into_values().collect();
-    rows.sort_by(|a, b| {
+    let mut by_mem: Vec<WslProc> = groups.into_values().collect();
+    by_mem.sort_by(|a, b| {
         b.mem_bytes
             .cmp(&a.mem_bytes)
             .then_with(|| a.label.cmp(&b.label))
     });
-    rows.truncate(TOP);
-    rows
+    let mut by_cpu: Vec<&WslProc> = by_mem.iter().collect();
+    by_cpu.sort_by(|a, b| b.cpu_pct.total_cmp(&a.cpu_pct));
+    let busy: Vec<String> = by_cpu
+        .iter()
+        .take(TOP)
+        .filter(|p| p.cpu_pct > 0.0)
+        .map(|p| p.label.clone())
+        .collect();
+    let mut kept = 0;
+    by_mem.retain(|p| {
+        kept += 1;
+        kept <= TOP || busy.contains(&p.label)
+    });
+    by_mem
 }
 
 #[cfg(windows)]
@@ -377,8 +466,12 @@ pub(crate) use runner::Query;
 /// The Windows side: spawn `wsl.exe` without a window, off the reading thread.
 #[cfg(windows)]
 mod runner {
-    use super::{PS_COMMAND, decode_utf16le, default_is_running, top_procs};
+    use super::{
+        PS_COMMAND, cpu_shares, decode_utf16le, default_is_running, parse_stat, split_output,
+        top_procs,
+    };
     use crate::WslProc;
+    use std::collections::HashMap;
     use std::io::Read;
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
@@ -395,7 +488,11 @@ mod runner {
     struct Shared {
         procs: Vec<WslProc>,
         running: bool,
+        /// When the last stat dump was read, and what it held.
+        prev: Option<Dump>,
     }
+
+    type Dump = (Instant, HashMap<u32, u64>);
 
     /// Runs the query on its own thread and keeps the last finished result.
     #[derive(Default)]
@@ -412,6 +509,7 @@ mod runner {
                 // Nothing runs: forget the old result and start nothing.
                 if let Ok(mut s) = self.shared.lock() {
                     s.procs.clear();
+                    s.prev = None;
                 }
                 return Vec::new();
             }
@@ -426,9 +524,11 @@ mod runner {
                 let spawned = std::thread::Builder::new().name("pulse-wsl".into()).spawn({
                     let shared = Arc::clone(&shared);
                     move || {
-                        let result = query();
+                        let prev = shared.lock().ok().and_then(|mut s| s.prev.take());
+                        let (result, dump) = query(prev);
                         if let Ok(mut s) = shared.lock() {
                             s.procs = result;
+                            s.prev = dump;
                             s.running = false;
                         }
                     }
@@ -448,18 +548,27 @@ mod runner {
 
     /// The labelled programs, or empty when the default distro is not running
     /// or anything failed or timed out.
-    fn query() -> Vec<WslProc> {
+    fn query(prev: Option<Dump>) -> (Vec<WslProc>, Option<Dump>) {
         let deadline = Instant::now() + TIMEOUT;
         let Some(listing) = run(&["-l", "--running"], deadline) else {
-            return Vec::new();
+            return (Vec::new(), None);
         };
         if !default_is_running(&decode_utf16le(&listing)) {
-            return Vec::new();
+            return (Vec::new(), None);
         }
         let Some(out) = run(&["-e", "sh", "-c", PS_COMMAND], deadline) else {
-            return Vec::new();
+            return (Vec::new(), None);
         };
-        top_procs(&String::from_utf8_lossy(&out))
+        let at = Instant::now();
+        let text = String::from_utf8_lossy(&out);
+        let (ps, stat) = split_output(&text);
+        let ticks = parse_stat(stat);
+        // The first query has nothing to compare with: every program is idle.
+        let cores = std::thread::available_parallelism().map_or(1, usize::from);
+        let shares = prev.map_or_else(HashMap::new, |(was, before)| {
+            cpu_shares(&before, &ticks, at.duration_since(was).as_secs_f64(), cores)
+        });
+        (top_procs(ps, &shares), Some((at, ticks)))
     }
 
     /// Runs `wsl.exe` with no window and returns stdout, or `None` on failure
@@ -539,34 +648,85 @@ mod tests {
 
     #[test]
     fn parses_ps_lines() {
-        let r = parse_line("  3.5 440764 claude         claude --resume 29e1").unwrap();
+        let r = parse_line("  351 440764 claude         claude --resume 29e1").unwrap();
         assert_eq!(
-            (r.rss_kib, r.comm.as_str(), r.args),
-            (440_764, "claude", "claude --resume 29e1")
+            (r.pid, r.rss_kib, r.comm.as_str(), r.args),
+            (351, 440_764, "claude", "claude --resume 29e1")
         );
         // Spaces in comm, cut at 15 characters.
-        let r = parse_line("67.5 889456 next-server (v1 next-server (v16.4.6)").unwrap();
+        let r = parse_line("675 889456 next-server (v1 next-server (v16.4.6)").unwrap();
         assert_eq!(r.comm, "next-server (v1");
         assert_eq!(r.args, "next-server (v16.4.6)");
-        let r = parse_line(" 0.0   64 npm ci        npm ci").unwrap();
+        let r = parse_line(" 12   64 npm ci        npm ci").unwrap();
         assert_eq!((r.comm.as_str(), r.args), ("npm ci", "npm ci"));
         // A renamed thread: comm differs from the command line.
-        let r = parse_line("9.1 184404 MainThread     /usr/bin/node /srv/app.js --x").unwrap();
+        let r = parse_line("91 184404 MainThread     /usr/bin/node /srv/app.js --x").unwrap();
         assert_eq!(
             (r.comm.as_str(), r.args),
             ("MainThread", "/usr/bin/node /srv/app.js --x")
         );
         // A kernel-style line with no arguments of its own.
-        let r = parse_line("0.0 10 kthreadd [kthreadd]").unwrap();
+        let r = parse_line("2 10 kthreadd [kthreadd]").unwrap();
         assert_eq!(r.comm, "kthreadd");
         // Garbage and short lines.
         assert!(parse_line("").is_none());
         assert!(parse_line("abc 12 x y").is_none());
-        assert!(parse_line("1.0").is_none());
-        assert!(parse_line("1.0 12").is_none());
+        assert!(parse_line("1.5 12 x y").is_none());
+        assert!(parse_line("10").is_none());
+        assert!(parse_line("10 12").is_none());
         // Comm only (empty args).
-        let r = parse_line("0.0 12 foo").unwrap();
+        let r = parse_line("5 12 foo").unwrap();
         assert_eq!((r.comm.as_str(), r.args), ("foo", ""));
+    }
+
+    /// A `/proc/<pid>/stat` line: fields 14 and 15 are user and system time.
+    fn stat_line(pid: u32, comm: &str, utime: u64, stime: u64) -> String {
+        format!(
+            "{pid} ({comm}) S 1 1 1 0 -1 4194560 100 0 0 0 {utime} {stime} 0 0 20 0 1 0 5 1000 50 18446744073709551615\n"
+        )
+    }
+
+    #[test]
+    fn parses_stat_dumps() {
+        let dump = format!(
+            "{}{}{}garbage\n12 (x) S\n",
+            stat_line(10, "claude", 300, 120),
+            // The name holds spaces and brackets.
+            stat_line(11, "a) b (c", 7, 3),
+            stat_line(12, "next-server (v1", 0, 0),
+        );
+        let t = parse_stat(&dump);
+        assert_eq!(t.get(&10), Some(&420));
+        assert_eq!(t.get(&11), Some(&10));
+        assert_eq!(t.get(&12), Some(&0));
+        assert_eq!(t.len(), 3);
+        assert!(parse_stat("").is_empty());
+    }
+
+    #[test]
+    fn splits_ps_from_the_stat_dump() {
+        let (ps, stat) = split_output("1 2 a b\n@@PULSE_STAT\n10 (a) S\n");
+        assert_eq!(ps, "1 2 a b\n");
+        assert_eq!(stat, "\n10 (a) S\n");
+        assert_eq!(split_output("1 2 a b\n"), ("1 2 a b\n", ""));
+    }
+
+    #[test]
+    fn shares_are_a_part_of_the_whole_machine() {
+        let before: HashMap<u32, u64> = [(1, 1000), (2, 50), (3, 500)].into();
+        // Over 5 s on 4 cores: pid 1 used 100 ticks = 1 s = 20% of one core =
+        // 5% of the machine; pid 3 went backwards (id reused); pid 4 is new.
+        let after: HashMap<u32, u64> = [(1, 1100), (2, 900), (3, 10), (4, 7)].into();
+        let s = cpu_shares(&before, &after, 5.0, 4);
+        assert!((s[&1] - 5.0).abs() < 1e-4, "{s:?}");
+        assert_eq!(s[&3], 0.0);
+        assert!(!s.contains_key(&4));
+        assert!(s.contains_key(&2));
+        // Everything busy on every core is 100.
+        let all = cpu_shares(&[(1, 0)].into(), &[(1, 4 * 500)].into(), 5.0, 4);
+        assert!((all[&1] - 100.0).abs() < 1e-3);
+        assert!(cpu_shares(&before, &after, 0.0, 4).is_empty());
+        assert!(cpu_shares(&before, &after, 5.0, 0).is_empty());
     }
 
     #[test]
@@ -707,18 +867,23 @@ mod tests {
     #[test]
     fn groups_and_sorts() {
         let out = "\
- 3.5 440764 claude         claude --resume a
- 4.9 429320 claude         claude --resume b
- 0.1 100000 sh             sh -c ps
- 0.1 1000 ps             ps -eo
- 2.0 600000 MainThread     node /home/u/.vscode-server/bin/x/out/server-main.js
- 2.0 100 SessionLeader   /init
+ 11 440764 claude         claude --resume a
+ 12 429320 claude         claude --resume b
+ 13 100000 sh             sh -c ps
+ 14 1000 ps             ps -eo
+ 15 600000 MainThread     node /home/u/.vscode-server/bin/x/out/server-main.js
+ 16 100 SessionLeader   /init
  junk line
- 1.0 2048 Relay(5)       /init
- 9.9 1 a b c
+ 17 2048 Relay(5)       /init
+ 18 1 a b c
 ";
-        let rows = top_procs(out);
+        let cpu: HashMap<u32, f32> = [(11, 0.5), (12, 0.25), (15, 1.5), (13, 40.0)].into();
+        let rows = top_procs(out, &cpu);
         assert_eq!(rows[1].label, "Editor server");
+        assert!((rows[1].cpu_pct - 1.5).abs() < 1e-6);
+        // Both processes of a group add up; plumbing (pid 13) adds nothing.
+        assert!((rows[0].cpu_pct - 0.75).abs() < 1e-6);
+        assert_eq!(rows[2].cpu_pct, 0.0);
         assert_eq!(rows[1].mem_bytes, 600_000 * 1024);
         assert_eq!(rows[0].label, "Claude Code");
         assert!(rows[0].agent);
@@ -733,10 +898,42 @@ mod tests {
     #[test]
     fn keeps_six() {
         let out: String = (0..10)
-            .map(|i| format!("0.0 {} prog{i} /bin/prog{i}\n", 100 + i))
+            .map(|i| format!("{} {} prog{i} /bin/prog{i}\n", 500 + i, 100 + i))
             .collect();
-        let rows = top_procs(&out);
+        let rows = top_procs(&out, &HashMap::new());
         assert_eq!(rows.len(), TOP);
         assert_eq!(rows[0].label, "prog9");
+    }
+
+    #[test]
+    fn a_busy_small_program_is_kept_for_the_processor_sort() {
+        let out: String = (0..10)
+            .map(|i| format!("{} {} prog{i} /bin/prog{i}\n", 500 + i, 100 + i))
+            .collect();
+        // prog0 is the smallest in memory and the busiest; prog1 is second.
+        let cpu: HashMap<u32, f32> = [(500, 9.0), (501, 4.0)].into();
+        let rows = top_procs(&out, &cpu);
+        assert_eq!(rows.len(), TOP + 2);
+        // Still largest in memory first.
+        assert_eq!(rows[0].label, "prog9");
+        let mut by_cpu: Vec<&WslProc> = rows.iter().collect();
+        by_cpu.sort_by(|a, b| b.cpu_pct.total_cmp(&a.cpu_pct));
+        assert_eq!(by_cpu[0].label, "prog0");
+        assert_eq!(by_cpu[1].label, "prog1");
+    }
+
+    #[test]
+    fn the_native_claude_binary_is_claude_code() {
+        assert_eq!(
+            one(
+                "2.1.332",
+                "/home/u/.local/share/claude/versions/2.1.332 --session-id 4f87 --resume"
+            ),
+            Some(("Claude Code".into(), true))
+        );
+        assert_eq!(
+            one("2.1.332", "claude bg-spare --bg-spare /tmp/x.sock"),
+            Some(("Claude Code".into(), true))
+        );
     }
 }

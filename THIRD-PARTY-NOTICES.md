@@ -56,6 +56,21 @@ The full licence texts are in `apps/native/fonts/` and are installed beside the 
 - Inter (weights 400, 500, 600): Copyright 2020 The Inter Project Authors (<https://github.com/rsms/inter>).
 - Space Grotesk (weight 700): Copyright 2020 The Space Grotesk Project Authors (<https://github.com/floriankarsten/space-grotesk>).
 
+## Product marks
+
+The small logos beside Linux programs in "Top apps" (Claude, Next.js, Node.js, Rust, Chrome and others) are paths from [Simple Icons](https://github.com/simple-icons/simple-icons) (version 16.38.1), embedded in the app from `apps/native/assets/marks/`.
+Simple Icons publishes its SVG files under CC0 1.0 Universal (public domain dedication); the licence text is in `apps/native/assets/marks/LICENSE-simple-icons.md`.
+The logos themselves remain trademarks of their owners.
+Pulse is not affiliated with or endorsed by any of them, and shows a mark only to say which program a row is.
+
+Simple Icons lists a separate licence for the artwork of three of these marks, and that licence applies to them:
+
+- Git logo: CC BY 3.0 (the Git logo by Jason Long, <https://git-scm.com/downloads/logos>).
+- Rust logo: CC BY-SA 4.0 (the Rust Foundation, <https://github.com/rust-lang/rust-artwork>).
+- Deno logo: MIT (the Deno authors, <https://github.com/denoland/deno>).
+
+The marks are drawn unchanged, only scaled and coloured white or black on a tile.
+
 ## Rust crates
 
 281 crates are linked into the Windows build.
