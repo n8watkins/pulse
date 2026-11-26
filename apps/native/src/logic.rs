@@ -147,9 +147,30 @@ impl Throttle {
     }
 }
 
+/// `PULSE_BATTERY=<percent>,<plugged 0|1>` (a development knob): a pretend battery.
+pub fn parse_battery(v: &str) -> Option<(u8, bool)> {
+    let (pct, plugged) = v.split_once(',')?;
+    let pct = pct.trim().parse::<u8>().ok().filter(|p| *p <= 100)?;
+    let plugged = match plugged.trim() {
+        "0" => false,
+        "1" => true,
+        _ => return None,
+    };
+    Some((pct, plugged))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_battery_hook_parses() {
+        assert_eq!(parse_battery("12,0"), Some((12, false)));
+        assert_eq!(parse_battery(" 80 , 1 "), Some((80, true)));
+        for bad in ["", "12", "101,0", "x,1", "12,2", "-1,0", "12,"] {
+            assert_eq!(parse_battery(bad), None, "{bad:?}");
+        }
+    }
 
     #[test]
     fn a_failed_save_is_tried_once_more() {

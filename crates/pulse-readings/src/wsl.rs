@@ -13,6 +13,9 @@ pub(crate) const TOP: usize = 6;
 /// The longest "<runtime>: <script>" script name, in characters.
 const SCRIPT_MAX: usize = 28;
 
+/// Characters the kernel keeps of a command name.
+const COMM_MAX: usize = 15;
+
 /// The command run inside the default distro (through `sh -c`).
 pub(crate) const PS_COMMAND: &str = "ps -eo pcpu=,rss=,comm=,args= --sort=-rss | head -n 40";
 
@@ -250,8 +253,39 @@ fn is_docker(name: &str) -> bool {
     name == "dockerd" || name.starts_with("containerd")
 }
 
+/// At most `max` characters, the last one an ellipsis when something was cut.
 fn truncate_chars(s: &str, max: usize) -> String {
-    s.chars().take(max).collect()
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    out.push('\u{2026}');
+    out
+}
+
+/// The kernel keeps 15 characters of a command name (`comm`), so a long one
+/// arrives cut ("next-server (v1"). When the command line starts with the cut
+/// name, the word it ends in is completed from the command line.
+fn complete_comm(comm: &str, args: &str) -> String {
+    if comm.chars().count() < COMM_MAX {
+        return comm.to_string();
+    }
+    let args = args.split_whitespace().collect::<Vec<_>>();
+    let Some(first) = args.first() else {
+        return comm.to_string();
+    };
+    let short = std::iter::once(file_name(first))
+        .chain(args[1..].iter().copied())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !short.starts_with(comm) {
+        return comm.to_string();
+    }
+    // Up to the end of the word the cut name stops in.
+    let end = short[comm.len()..]
+        .find(char::is_whitespace)
+        .map_or(short.len(), |i| comm.len() + i);
+    truncate_chars(&short[..end], SCRIPT_MAX)
 }
 
 /// The label of one process and whether it is a coding agent; `None` for the
@@ -300,11 +334,11 @@ fn label(comm: &str, args: &str) -> Option<(String, bool)> {
     }
     // A thread name stands in for the command when a program renames itself.
     let shown = if comm == "MainThread" && !exe.is_empty() {
-        exe
+        exe.to_string()
     } else {
-        comm
+        complete_comm(comm, args)
     };
-    Some((shown.to_string(), false))
+    Some((shown, false))
 }
 
 /// Groups the output of the `ps` command by label and returns the biggest
@@ -619,7 +653,28 @@ mod tests {
                 "python3",
                 "python3 -u /srv/app/worker_with_a_really_long_name_indeed.py"
             ),
-            plain("python3: worker_with_a_really_long_na")
+            plain("python3: worker_with_a_really_long_n\u{2026}")
+        );
+        // A name that just fits is not marked.
+        assert_eq!(
+            one("node", "node /srv/pool_entry-[turbopack-node]_"),
+            plain("node: pool_entry-[turbopack-node]_")
+        );
+        // The kernel cuts a command name at 15 characters ("next-server (v1"):
+        // the whole last word comes from the command line.
+        assert_eq!(
+            one("next-server (v1", "next-server (v16.4.6)"),
+            plain("next-server (v16.4.6)")
+        );
+        assert_eq!(
+            one("chrome-headless", "/opt/chrome-headless-shell --headless"),
+            plain("chrome-headless-shell")
+        );
+        // Not cut, or the command line does not start with it: unchanged.
+        assert_eq!(one("short name", "short name --x"), plain("short name"));
+        assert_eq!(
+            one("fifteen-chars-x", "/bin/other --x"),
+            plain("fifteen-chars-x")
         );
         assert_eq!(one("bun", "bun --hot run dev.ts"), plain("bun: run"));
         assert_eq!(

@@ -116,7 +116,7 @@ impl Icons {
             // COM once for the worker's life: `icon_rgba` then only re-enters it.
             let _com = pulse_readings::IconThread::init();
             while let Ok(path) = rx.recv() {
-                let img = icon_rgba(&path, 32);
+                let img = icon_rgba(&path, win::icon_px());
                 shared
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -349,6 +349,7 @@ impl Panel {
             ui.set_bat_big(b.big.into());
             ui.set_bat_sub(b.sub.into());
             ui.set_bat_frac(b.frac);
+            ui.set_bat_low(b.low);
         }
         let rows: Vec<AppItem> = v
             .apps
@@ -784,6 +785,9 @@ fn spawn_reader(
         let stress = std::env::var_os("PULSE_STRESS").is_some();
         let warn = std::env::var_os("PULSE_WARN").is_some();
         let no_apps = std::env::var_os("PULSE_NOAPPS").is_some();
+        let battery = std::env::var("PULSE_BATTERY")
+            .ok()
+            .and_then(|v| logic::parse_battery(&v));
         let mut hist = History::default();
         // Rows from the last scan, kept for readings taken while hidden.
         let mut rows: CachedRows = Default::default();
@@ -820,6 +824,14 @@ fn spawn_reader(
                 snap.apps.clear();
                 snap.apps_by_cpu.clear();
                 snap.wsl = None;
+            }
+            if let Some((pct, plugged)) = battery {
+                // A development knob: a pretend battery.
+                snap.battery = Some(pulse_readings::Battery { pct, plugged });
+            }
+            if stress {
+                // A development knob: very long names everywhere.
+                view::stress_snapshot(&mut snap);
             }
             if warn {
                 // A development knob: shows the warning colours.
@@ -883,6 +895,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args_os().any(|a| a == "--quit") {
         let gone = single::request_quit(Duration::from_secs(5));
         std::process::exit(i32::from(!gone));
+    }
+    if let Some(f) = win::scale_override() {
+        // SAFETY: nothing else runs yet; this is the first thing the process does.
+        unsafe { std::env::set_var("SLINT_SCALE_FACTOR", f.to_string()) };
     }
     let cfg = Config::from_env();
     let settings = Settings::load();

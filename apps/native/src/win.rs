@@ -23,6 +23,22 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 pub const PANEL_W: f32 = 380.0;
 pub const MARGIN: f32 = 12.0;
 
+#[cfg(test)]
+mod tests {
+    use super::parse_scale;
+
+    #[test]
+    fn scale_override_parses_only_sane_factors() {
+        assert_eq!(parse_scale(Some("1.5")), Some(1.5));
+        assert_eq!(parse_scale(Some(" 1.25 ")), Some(1.25));
+        assert_eq!(parse_scale(Some("2")), Some(2.0));
+        for bad in ["", "0", "0.5", "5", "x", "NaN", "inf", "-1"] {
+            assert_eq!(parse_scale(Some(bad)), None, "{bad:?}");
+        }
+        assert_eq!(parse_scale(None), None);
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Hwnd(pub isize);
 
@@ -128,7 +144,7 @@ fn work_area(h: Hwnd) -> Option<(RECT, f32)> {
         if GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &raw mut dx, &raw mut dy) != 0 {
             dx = GetDpiForWindow(h.raw()).max(96);
         }
-        Some((info.rcWork, dx as f32 / 96.0))
+        Some((info.rcWork, scale_override().unwrap_or(dx as f32 / 96.0)))
     }
 }
 
@@ -165,9 +181,33 @@ pub fn place(h: Hwnd, height: f32) {
     }
 }
 
-/// The system DPI, which sets the tray icon's size.
+/// `PULSE_SCALE=<factor>` (1.0 to 4.0): pretend every display is at this
+/// scale, so a 150 percent layout can be drawn on a 100 percent monitor. A
+/// development knob; the real display settings are never touched.
+pub fn scale_override() -> Option<f32> {
+    parse_scale(std::env::var("PULSE_SCALE").ok().as_deref())
+}
+
+fn parse_scale(v: Option<&str>) -> Option<f32> {
+    v?.trim()
+        .parse::<f32>()
+        .ok()
+        .filter(|f| f.is_finite() && (1.0..=4.0).contains(f))
+}
+
+/// The system DPI, which sets the tray icon's size (`PULSE_SCALE` overrides it).
 pub fn system_dpi() -> u32 {
-    unsafe { GetDpiForSystem() }
+    scale_override().map_or_else(
+        || unsafe { GetDpiForSystem() },
+        |f| (96.0 * f).round() as u32,
+    )
+}
+
+/// Pixel size to ask for the 24 px (logical) app icons at: the scaled size,
+/// never below 32 (36 at 150 percent, 48 at 200 percent).
+pub fn icon_px() -> u32 {
+    let scale = system_dpi().max(96) as f32 / 96.0;
+    ((24.0 * scale).round() as u32).max(32)
 }
 
 /// Hands the process's idle pages back to Windows (the same trim Windows
