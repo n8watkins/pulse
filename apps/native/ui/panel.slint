@@ -108,7 +108,7 @@ component PButton inherits Rectangle {
     height: 32px;
     width: lbl.preferred-width + 28px;
     border-radius: 8px;
-    background: root.primary ? (ta.has-hover ? (Theme.neutral ? Theme.mute : Theme.hero-bg.brighter(0.15)) : (Theme.neutral ? Theme.ink : Theme.hero-bg)) : (ta.has-hover ? Theme.line : Theme.soft);
+    background: root.primary ? (ta.has-hover ? (Theme.neutral ? Theme.ink.with-alpha(0.8) : Theme.hero-bg.brighter(0.15)) : (Theme.neutral ? Theme.ink : Theme.hero-bg)) : (ta.has-hover ? Theme.line : Theme.soft);
     border-width: root.primary ? 0px : 1px;
     border-color: Theme.line;
     lbl := Text {
@@ -1142,7 +1142,9 @@ export component PanelWindow inherits Window {
                     height: 14px + 20px + 8px + 32px + 6px + shortcut-note.preferred-height + 12px;
                     Text {
                         y: 14px;
+                        width: parent.width;
                         height: 20px;
+                        horizontal-alignment: left;
                         text: "Open/close shortcut";
                         font-family: "Inter";
                         font-size: 14px;
@@ -1246,8 +1248,8 @@ export component PanelWindow inherits Window {
 
                 SRow {
                     name: "Refresh while hidden";
-                    note: "How often Pulse checks while closed. It is always 2 s while open.";
-                    ctl-w: 160px;
+                    note: "How often Pulse checks while closed (2 s while open).";
+                    ctl-w: 136px;
                     Seg {
                         labels: ["2 s", "5 s", "10 s"];
                         current: root.refresh;
@@ -1262,7 +1264,9 @@ export component PanelWindow inherits Window {
                     height: 14px + 20px + 6px + 96px + 4px + 20px + 12px;
                     Text {
                         y: 14px;
+                        width: 44px;
                         height: 20px;
+                        horizontal-alignment: left;
                         text: "About";
                         font-family: "Inter";
                         font-size: 14px;
@@ -1274,7 +1278,9 @@ export component PanelWindow inherits Window {
                     Text {
                         x: 52px;
                         y: 14px;
+                        width: parent.width - 52px;
                         height: 20px;
+                        horizontal-alignment: left;
                         text: "Pulse " + root.version;
                         font-family: "Inter";
                         font-size: 13px;

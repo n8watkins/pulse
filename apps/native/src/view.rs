@@ -432,7 +432,13 @@ pub fn build(snap: &Snapshot, extra: &Extra, hist: &History, sample: bool, sort:
     View {
         status: status(snap, sample),
         cpu_big: format!("{}%", round_half_up(f64::from(snap.cpu_pct))),
-        cpu_sub: format!("{} cores \u{b7} up {}", snap.cores, uptime(snap.uptime_s)),
+        // The tile is 149 px wide: with " \u{b7} restart?" after it there is only
+        // room for the uptime, so the core count gives way.
+        cpu_sub: if snap.uptime_s >= RESTART_AFTER_S {
+            format!("up {}", uptime(snap.uptime_s))
+        } else {
+            format!("{} cores \u{b7} up {}", snap.cores, uptime(snap.uptime_s))
+        },
         cpu_restart: snap.uptime_s >= RESTART_AFTER_S,
         cpu_line,
         cpu_fill,
@@ -788,7 +794,7 @@ mod tests {
             Sort::Memory,
         );
         assert!(v.cpu_restart);
-        assert_eq!(v.cpu_sub, "16 cores \u{b7} up 7d 0h");
+        assert_eq!(v.cpu_sub, "up 7d 0h");
     }
 
     #[test]
