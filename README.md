@@ -126,7 +126,11 @@ From WSL:
 
 ## Release
 
-The version is the workspace version in the root `Cargo.toml`; the exe, its version details and the installer name all take it from there.
+The version is the workspace version in the root `Cargo.toml`; the exe, its version details, the About line in Settings and the installer name all take it from there.
+
+Every installer that is handed out has its own version number, so two builds are never told apart by date alone.
+Raise the version in a pull request before building one: the middle number for a round with new features (0.2.0 to 0.3.0), the last number for a round of fixes only (0.2.0 to 0.2.1).
+Run `cargo update --workspace` so `Cargo.lock` follows, then publish the installer as a GitHub release tagged `v<version>` on the commit it was built from.
 
 1. Build the exe with the Windows toolchain: `cargo.exe build --release -p pulse-native`, with `--target-dir` pointing at a Windows folder when the source is inside WSL.
    `apps/native/build.rs` embeds the icon (`apps/native/assets/pulse.ico`), the version details (ProductName and FileDescription "Pulse", company "n8builds.dev") and a manifest (per-monitor-v2 DPI, Windows 10 and 11) through `rc.exe`.
