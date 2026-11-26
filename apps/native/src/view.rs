@@ -911,6 +911,20 @@ impl Mode {
 /// out when none or unknown). Parts that are zero are left out; nothing
 /// running inside: empty.
 pub fn wsl_summary(w: &Wsl) -> String {
+    let [programs, agents, servers] = summary_parts(w);
+    join_parts([programs, agents, servers])
+}
+
+/// The compact row's summary: the same parts, the newest and most useful
+/// first, because the row has room for about 30 characters and the end is
+/// what ends in an ellipsis ("3 dev servers \u{b7} 5 agents \u{b7} 18 progr...").
+fn wsl_summary_compact(w: &Wsl) -> String {
+    let [programs, agents, servers] = summary_parts(w);
+    join_parts([servers, agents, programs])
+}
+
+/// Programs, agents and dev servers as text, each `None` at zero.
+fn summary_parts(w: &Wsl) -> [Option<String>; 3] {
     let programs: u32 = w.procs.iter().map(|p| p.count.max(1)).sum();
     let agents = u32::try_from(w.agent_count()).unwrap_or(u32::MAX);
     let noun = |n: u32, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
@@ -919,10 +933,14 @@ pub fn wsl_summary(w: &Wsl) -> String {
         (agents > 0).then(|| noun(agents, "agent", "agents")),
         servers_text(w.server_count()),
     ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(" \u{b7} ")
+}
+
+fn join_parts(parts: [Option<String>; 3]) -> String {
+    parts
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ")
 }
 
 /// Applies the open or closed state of every group: a head row with sub items
@@ -979,7 +997,10 @@ pub fn compact_rows(snap: &Snapshot, sort: Sort, is_open: &dyn Fn(&str) -> bool)
         }
     }
     apps.truncate(COMPACT_APPS.max(1));
-    if let Some(h) = head {
+    if let Some(mut h) = head {
+        if let Some(w) = &snap.wsl {
+            h.summary = wsl_summary_compact(w);
+        }
         apps.push(h);
         // No closing hairline: the Linux list is the end of the compact list.
         for s in &mut subs {
@@ -1759,14 +1780,20 @@ mod tests {
         let agents = u32::try_from(w.agent_count()).unwrap();
         let rows = compact_of(&snap, Sort::Memory, false);
         let head = rows.last().unwrap();
+        // The compact row has little room: the servers come first.
         assert_eq!(
             head.detail,
-            format!("{programs} programs \u{b7} {agents} agents \u{b7} 3 dev servers")
+            format!("3 dev servers \u{b7} {agents} agents \u{b7} {programs} programs")
         );
         // The sample: five agent sessions, and 18 processes of other programs.
         assert_eq!((programs, agents), (18, 5));
+        // Open or closed, the compact row keeps its summary.
+        let open = compact_of(&snap, Sort::Memory, true);
+        let open_head = open.iter().find(|r| r.kind == RowKind::Wsl).unwrap();
+        assert_eq!(open_head.detail, head.detail);
+        // The expanded row keeps the long order.
         assert_eq!(
-            head.detail,
+            wsl_summary(w),
             "18 programs \u{b7} 5 agents \u{b7} 3 dev servers"
         );
     }

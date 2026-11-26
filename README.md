@@ -75,7 +75,7 @@ Closed, the expanded row shows the summary on its second line, where "Linux virt
 In both views the closed WSL row reads "N programs · N agents · N dev servers": the programs are the processes of the Linux programs that are not coding agents, the agents are the sessions (one each, however many helper processes it has), so the two never overlap, and the dev servers are described below.
 Zero (or a count that could not be read) is left out of the line.
 Open in the expanded view, the count moves to the detail line: "Linux VM · 3 dev servers · inside:" ("VM" because the bar leaves room for about 35 characters).
-Open in the compact view, the summary stays on the row.
+The compact row has room for about 30 characters, so there the parts come in the order "3 dev servers · 5 agents · 18 programs" (open or closed): what does not fit ends in an ellipsis at the end, and the name "WSL (Linux)" keeps its width.
 Opened, the same session rows, folding and order apply, in the compact row style.
 
 Two sessions of the same agent in the same folder show how long each has run ("2h 10m", "14m"), small, after the name.

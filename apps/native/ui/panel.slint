@@ -942,6 +942,8 @@ component AppRow inherits Rectangle {
             width: root.width - 30px - 2px - tail - val-c.preferred-width - 8px;
             alignment: start;
             spacing: 6px;
+            // The name keeps its width: a long summary (with the dev server
+            // count) is the text that ends in an ellipsis.
             Text {
                 text: root.item.name;
                 font-family: "Inter";
@@ -950,7 +952,7 @@ component AppRow inherits Rectangle {
                 color: Theme.ink;
                 vertical-alignment: center;
                 overflow: elide;
-                min-width: 0px;
+                min-width: self.preferred-width;
             }
 
             if root.item.detail != "": Text {
