@@ -97,33 +97,6 @@ pub fn view_height(view: PanelView, rows: &[AppView], battery: bool, avail_h: f3
     }
 }
 
-/// The panel's height with the Settings sheet open or not. Settings needs the
-/// expanded height (a short compact panel would make the sheet scroll), so it
-/// grows the panel while it is open, as far as the room allows.
-pub fn settings_height(own: f32, avail_h: f32, settings_open: bool) -> f32 {
-    if settings_open {
-        own.max(EXPANDED_H.min(avail_h))
-    } else {
-        own
-    }
-}
-
-/// [`view_height`] and [`settings_height`] together.
-#[cfg(test)]
-pub fn panel_height(
-    view: PanelView,
-    rows: &[AppView],
-    battery: bool,
-    avail_h: f32,
-    settings_open: bool,
-) -> f32 {
-    settings_height(
-        view_height(view, rows, battery, avail_h),
-        avail_h,
-        settings_open,
-    )
-}
-
 /// The most rows that fit in `avail_h` logical px, never fewer than
 /// [`MIN_ROWS`]: header, tiles and footer always stay whole, the list gives
 /// up rows instead.
@@ -1649,28 +1622,17 @@ mod tests {
     }
 
     #[test]
-    fn each_view_has_its_own_height_and_settings_needs_the_expanded_one() {
+    fn each_view_has_its_own_height_and_settings_never_changes_it() {
         let snap = sample();
         let rows = compact_of(&snap, Sort::Memory, false);
-        let ex = |open| panel_height(PanelView::Expanded, &[], false, 1000.0, open);
-        let co = |open, avail| panel_height(PanelView::Compact, &rows, false, avail, open);
-        assert_eq!(ex(false), 580.0);
-        assert_eq!(ex(true), 580.0);
-        assert!((co(false, 1000.0) - 287.0).abs() < 0.5);
-        // Settings grows the short compact panel to the expanded height.
-        assert_eq!(co(true, 1000.0), EXPANDED_H);
-        // ... as far as the room goes.
-        assert_eq!(co(true, 450.0), 450.0);
-        // A short screen shortens the expanded view (a row less); Settings then
-        // takes all the room there is.
-        assert_eq!(
-            panel_height(PanelView::Expanded, &[], false, 540.0, false),
-            527.0
-        );
-        assert_eq!(
-            panel_height(PanelView::Expanded, &[], false, 540.0, true),
-            540.0
-        );
+        assert_eq!(view_height(PanelView::Expanded, &[], false, 1000.0), 580.0);
+        let c = view_height(PanelView::Compact, &rows, false, 1000.0);
+        assert!((c - 287.0).abs() < 0.5);
+        // The Settings sheet has a compact form for the compact panel, so there is
+        // no separate height for it: the panel keeps the height of its view.
+        // A short screen limits both.
+        assert_eq!(view_height(PanelView::Expanded, &[], false, 540.0), 527.0);
+        assert_eq!(view_height(PanelView::Compact, &rows, false, 250.0), 250.0);
     }
 
     #[test]

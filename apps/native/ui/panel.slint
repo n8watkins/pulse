@@ -14,7 +14,9 @@ export global Theme {
     in property <bool> neutral: false;
     // Windows "Animation effects": off means bars and tiles do not move.
     in property <bool> animate: true;
-    out property <bool> dark: force == 2 || (force == 0 && Palette.color-scheme == ColorScheme.dark);
+    // Windows is in dark mode (set by the app from the window's theme, live).
+    in property <bool> system-dark: false;
+    out property <bool> dark: force == 2 || (force == 0 && system-dark);
     out property <color> bg: dark ? #0d0f0e : #ffffff;
     out property <color> ink: dark ? #f1f4f2 : #0d0f0e;
     out property <color> mute: dark ? #98a19d : #5b625f;
@@ -1078,6 +1080,43 @@ component AppRow inherits Rectangle {
     }
 }
 
+// One line of the compact Settings screen: the name on the left, the control on the right.
+component CRow inherits Rectangle {
+    in property <string> name;
+    in property <length> ctl-w: 40px;
+    in property <length> ctl-h: 24px;
+    in property <bool> line: true;
+    height: 32px;
+    Text {
+        x: 0;
+        y: 0;
+        width: root.width - root.ctl-w - 10px;
+        height: 32px;
+        text: root.name;
+        font-family: "Inter";
+        font-size: 13px;
+        font-weight: 600;
+        color: Theme.ink;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    HorizontalLayout {
+        x: root.width - root.ctl-w;
+        y: (32px - root.ctl-h) / 2;
+        width: root.ctl-w;
+        height: root.ctl-h;
+        alignment: end;
+        @children
+    }
+
+    Rectangle {
+        y: root.height - 1px;
+        height: root.line ? 1px : 0px;
+        background: Theme.line;
+    }
+}
+
 // One line of the Settings screen: bold name, muted note, a control on the right.
 component SRow inherits Rectangle {
     in property <string> name;
@@ -1196,16 +1235,22 @@ export component PanelWindow inherits Window {
     callback field-clicked;
     callback shortcut-toggled(bool);
     callback settings-shown;
+    // Appearance: 0 System, 1 Light, 2 Dark.
+    callback appearance-picked(int);
+    in property <int> appearance: 0;
     callback settings-hidden;
     // The header button: switch between the expanded and the compact view.
     callback view-toggled;
     // The compact view's Linux row: open or close its list.
     callback wsl-toggled;
 
-    // Follow a forced light or dark theme in the standard widgets as well.
-    property <int> scheme: Theme.force;
-    changed scheme => {
-        Palette.color-scheme = root.scheme == 2 ? ColorScheme.dark : (root.scheme == 1 ? ColorScheme.light : Palette.color-scheme);
+    // The standard widgets (the About Slint badge) follow the panel's theme.
+    property <bool> is-dark: Theme.dark;
+    changed is-dark => {
+        Palette.color-scheme = root.is-dark ? ColorScheme.dark : ColorScheme.light;
+    }
+    init => {
+        Palette.color-scheme = Theme.dark ? ColorScheme.dark : ColorScheme.light;
     }
 
     title: "Pulse";
@@ -1660,7 +1705,7 @@ export component PanelWindow inherits Window {
     }
 
     // The Settings screen, a layer over the whole panel.
-    if root.settings-open: Rectangle {
+    if root.settings-open && !root.compact: Rectangle {
         width: root.width;
         height: root.height;
         background: Theme.bg;
@@ -1815,6 +1860,19 @@ export component PanelWindow inherits Window {
                 }
 
                 SRow {
+                    name: "Appearance";
+                    note: "System follows the Windows setting.";
+                    ctl-w: 176px;
+                    Seg {
+                        labels: ["System", "Light", "Dark"];
+                        current: root.appearance;
+                        picked(i) => {
+                            root.appearance-picked(i);
+                        }
+                    }
+                }
+
+                SRow {
                     name: "Colours";
                     note: "Neutral: a colour per tile.";
                     ctl-w: 150px;
@@ -1910,6 +1968,278 @@ export component PanelWindow inherits Window {
             primary: true;
             clicked => {
                 root.settings-hidden();
+            }
+        }
+    }
+
+    // The Settings screen in the compact view: the same width and height as the
+    // compact panel, one line per setting, no help notes (a note shows only
+    // while recording or when something went wrong), a back button in the
+    // header instead of Done, and a small About line at the bottom.
+    if root.settings-open && root.compact: Rectangle {
+        width: root.width;
+        height: root.height;
+        background: Theme.bg;
+        border-radius: 14px;
+        border-width: 1px;
+        border-color: Theme.line;
+        // Swallow clicks so nothing underneath reacts.
+        TouchArea { }
+
+        IconBtn {
+            x: 7px;
+            y: 7px;
+            size: 28px;
+            source: @image-url("back.svg");
+            label: "Close settings";
+            clicked => {
+                root.settings-hidden();
+            }
+        }
+
+        Text {
+            x: 42px;
+            y: 7px;
+            height: 28px;
+            text: "Settings";
+            font-family: "Space Grotesk";
+            font-size: 15px;
+            font-weight: 700;
+            color: Theme.ink;
+            vertical-alignment: center;
+        }
+
+        Rectangle {
+            x: 1px;
+            y: 42px;
+            width: root.width - 2px;
+            height: 1px;
+            background: Theme.line;
+        }
+
+        csc := Scroll {
+            x: 14px;
+            y: 43px;
+            width: root.width - 28px;
+            height: root.height - 43px - 29px;
+            content-h: crows.preferred-height;
+            crows := VerticalLayout {
+                y: 0px;
+                width: csc.width - 10px;
+                alignment: start;
+                if root.save-failed: Rectangle {
+                    height: csave.preferred-height + 12px;
+                    csave := Text {
+                        x: 0;
+                        y: 6px;
+                        width: parent.width;
+                        text: "Couldn't save settings. Changes will be lost when Pulse closes.";
+                        wrap: word-wrap;
+                        font-family: "Inter";
+                        font-size: 12px;
+                        font-weight: 600;
+                        color: Theme.warn;
+                    }
+                }
+                // Shortcut: name, the field that records, the switch.
+                Rectangle {
+                    height: 32px + (root.hotkey-warn || root.field-state == 2 ? cnote.preferred-height + 6px : 0px);
+                    Text {
+                        x: 0;
+                        y: 0;
+                        width: 64px;
+                        height: 32px;
+                        text: "Shortcut";
+                        font-family: "Inter";
+                        font-size: 13px;
+                        font-weight: 600;
+                        color: Theme.ink;
+                        vertical-alignment: center;
+                    }
+
+                    cfield := Rectangle {
+                        x: 68px;
+                        y: 3px;
+                        width: parent.width - 68px - 48px;
+                        height: 26px;
+                        border-radius: 8px;
+                        border-width: root.field-state == 2 ? 2px : 1px;
+                        background: root.field-state == 2 ? (Theme.neutral ? Theme.soft : Theme.hero-bg) : (root.field-state == 3 ? Theme.warn.with-alpha(0.08) : (cfield-ta.has-hover ? Theme.line : Theme.soft));
+                        border-color: root.field-state == 2 ? Theme.dot : (root.field-state == 3 ? Theme.warn : (cfield-ta.has-hover ? Theme.mute : Theme.line));
+                        Text {
+                            x: 10px;
+                            width: parent.width - 20px - chint.preferred-width - 8px;
+                            text: root.key-text;
+                            font-family: "Inter";
+                            font-size: 13px;
+                            font-weight: 600;
+                            color: root.field-state == 3 ? Theme.warn : (root.field-state == 1 ? Theme.mute : Theme.ink);
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+
+                        chint := Text {
+                            x: parent.width - self.preferred-width - 10px;
+                            text: root.key-hint;
+                            font-family: "Inter";
+                            font-size: 11.5px;
+                            color: Theme.mute;
+                            vertical-alignment: center;
+                        }
+
+                        cfield-fs := FocusScope {
+                            key-pressed(e) => {
+                                if (e.text == " " || e.text == "\n") {
+                                    root.field-clicked();
+                                    return accept;
+                                }
+                                return reject;
+                            }
+                        }
+
+                        cfield-ta := TouchArea {
+                            clicked => {
+                                root.field-clicked();
+                            }
+                        }
+
+                        Ring {
+                            active: cfield-fs.has-focus;
+                        }
+                    }
+
+                    Rectangle {
+                        x: parent.width - 40px;
+                        y: 4px;
+                        width: 40px;
+                        height: 24px;
+                        PSwitch {
+                            checked: root.shortcut-on;
+                            toggled(v) => {
+                                root.shortcut-toggled(v);
+                            }
+                        }
+                    }
+
+                    cnote := Text {
+                        visible: root.hotkey-warn || root.field-state == 2;
+                        x: 0;
+                        y: 32px;
+                        width: parent.width;
+                        text: root.hotkey-note;
+                        wrap: word-wrap;
+                        font-family: "Inter";
+                        font-size: 12px;
+                        color: root.hotkey-warn ? Theme.warn : Theme.mute;
+                    }
+
+                    Rectangle {
+                        y: parent.height - 1px;
+                        height: 1px;
+                        background: Theme.line;
+                    }
+                }
+
+                CRow {
+                    name: "Appearance";
+                    ctl-w: 156px;
+                    ctl-h: 30px;
+                    Seg {
+                        dense: true;
+                        labels: ["System", "Light", "Dark"];
+                        current: root.appearance;
+                        picked(i) => {
+                            root.appearance-picked(i);
+                        }
+                    }
+                }
+
+                CRow {
+                    name: "Colours";
+                    ctl-w: 124px;
+                    ctl-h: 30px;
+                    Seg {
+                        dense: true;
+                        labels: ["Mint", "Neutral"];
+                        current: Theme.neutral ? 1 : 0;
+                        picked(i) => {
+                            root.theme-picked(i);
+                        }
+                    }
+                }
+
+                CRow {
+                    name: "Keep open when I click away";
+                    PSwitch {
+                        checked: root.keep-open;
+                        toggled(v) => {
+                            root.keep-toggled(v);
+                        }
+                    }
+                }
+
+                CRow {
+                    name: "Start with Windows";
+                    PSwitch {
+                        checked: root.autostart;
+                        toggled(v) => {
+                            root.autostart-toggled(v);
+                        }
+                    }
+                }
+
+                CRow {
+                    name: "Refresh while hidden";
+                    ctl-w: 124px;
+                    ctl-h: 30px;
+                    line: false;
+                    Seg {
+                        dense: true;
+                        labels: ["2 s", "5 s", "10 s"];
+                        current: root.refresh;
+                        picked(i) => {
+                            root.refresh-picked(i);
+                        }
+                    }
+                }
+            }
+        }
+
+        // About: the version and Slint's own attribution widget, small, on one line.
+        Rectangle {
+            x: 1px;
+            y: root.height - 29px;
+            width: root.width - 2px;
+            height: 1px;
+            background: Theme.line;
+        }
+
+        Text {
+            x: 14px;
+            y: root.height - 28px;
+            width: root.width - 14px - 14px - 70px;
+            height: 27px;
+            text: "Pulse " + root.version + " · Licences are in the install folder.";
+            font-family: "Inter";
+            font-size: 11.5px;
+            color: Theme.mute;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Rectangle {
+            x: root.width - 14px - 67px;
+            y: root.height - 28px;
+            width: 67px;
+            height: 27px;
+            clip: true;
+            AboutSlint {
+                x: 0;
+                y: 0;
+                width: 256px;
+                height: 108px;
+                transform-scale: 0.26;
+                transform-origin: { x: 0px, y: 0px };
             }
         }
     }

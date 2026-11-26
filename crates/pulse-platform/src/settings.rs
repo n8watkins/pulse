@@ -17,6 +17,27 @@ pub enum Sort {
     Processor,
 }
 
+/// Light or dark: follow the system (the default), or always one of them.
+/// The stored words are `system`, `light` and `dark` on every platform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    System,
+    Light,
+    Dark,
+}
+
+impl Appearance {
+    /// Whether the panel is dark, given whether the system is.
+    pub fn is_dark(self, system_dark: bool) -> bool {
+        match self {
+            Self::System => system_dark,
+            Self::Light => false,
+            Self::Dark => true,
+        }
+    }
+}
+
 /// Which size the panel has: the full view (default) or the compact one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -59,6 +80,8 @@ pub struct Settings {
     /// Seconds between refreshes while the panel is hidden: 2, 5 or 10.
     pub hidden_refresh_s: u8,
     pub sort: Sort,
+    /// Light, dark, or follow the system.
+    pub appearance: Appearance,
     /// The panel view, expanded by default.
     pub view: PanelView,
     /// The compact view's Linux (WSL) list is open. Closed by default; the
@@ -76,6 +99,7 @@ impl Default for Settings {
             autostart: true,
             hidden_refresh_s: 2,
             sort: Sort::Memory,
+            appearance: Appearance::System,
             view: PanelView::Expanded,
             wsl_open: false,
         }
@@ -213,6 +237,12 @@ impl Settings {
             out.sort = v;
         }
         if let Some(v) = map
+            .get("appearance")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+        {
+            out.appearance = v;
+        }
+        if let Some(v) = map
             .get("view")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
         {
@@ -261,6 +291,7 @@ mod tests {
             autostart: false,
             hidden_refresh_s: 10,
             sort: Sort::Processor,
+            appearance: Appearance::Dark,
             view: PanelView::Compact,
             wsl_open: true,
         };
@@ -335,6 +366,36 @@ mod tests {
             serde_json::from_str(&serde_json::to_string(&Settings::default()).unwrap()).unwrap();
         assert_eq!(v["view"], "expanded");
         assert_eq!(v["wsl_open"], false);
+    }
+
+    #[test]
+    fn an_old_file_follows_the_system_and_the_words_are_platform_neutral() {
+        assert_eq!(Settings::from_json("{}").appearance, Appearance::System);
+        let old = r#"{"hotkey":"Alt+Shift+P","theme":"neutral","sort":"memory"}"#;
+        assert_eq!(Settings::from_json(old).appearance, Appearance::System);
+        for (word, want) in [
+            ("system", Appearance::System),
+            ("light", Appearance::Light),
+            ("dark", Appearance::Dark),
+        ] {
+            let s = Settings::from_json(&format!(r#"{{"appearance":"{word}"}}"#));
+            assert_eq!(s.appearance, want);
+            let v: Value = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+            assert_eq!(v["appearance"], word);
+        }
+        // A bad value falls back on its own, the rest of the file still loads.
+        let s = Settings::from_json(r#"{"appearance":"sepia","theme":"neutral"}"#);
+        assert_eq!(s.appearance, Appearance::System);
+        assert_eq!(s.theme, Theme::Neutral);
+    }
+
+    #[test]
+    fn which_theme_follows_from_the_setting_and_the_system() {
+        for system_dark in [false, true] {
+            assert_eq!(Appearance::System.is_dark(system_dark), system_dark);
+            assert!(!Appearance::Light.is_dark(system_dark));
+            assert!(Appearance::Dark.is_dark(system_dark));
+        }
     }
 
     #[test]

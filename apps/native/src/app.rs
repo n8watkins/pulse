@@ -7,7 +7,9 @@ use crate::tray;
 use crate::view::{self, History, RowKind};
 use crate::win::{self, Hwnd};
 use pulse_platform::hotkey::{Combo, Listener};
-use pulse_platform::{PanelView, Settings, Sort, Theme as ThemeSetting, autostart, single};
+use pulse_platform::{
+    Appearance, PanelView, Settings, Sort, Theme as ThemeSetting, autostart, single,
+};
 use pulse_readings::{AppRow, IconImage, Sample, Snapshot, Source, Wsl, icon_rgba};
 use slint::winit_030::winit::dpi::PhysicalPosition;
 use slint::winit_030::winit::event::{ElementState, WindowEvent};
@@ -15,6 +17,7 @@ use slint::winit_030::winit::keyboard::{Key, NamedKey, PhysicalKey};
 use slint::winit_030::winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use slint::winit_030::winit::platform::windows::WindowAttributesExtWindows;
 use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use slint::winit_030::winit::window::Theme as WinitTheme;
 use slint::winit_030::{EventResult, WinitWindowAccessor};
 use slint::{CloseRequestResponse, ComponentHandle, Model, SharedString, VecModel};
 use std::cell::{Cell, RefCell};
@@ -227,6 +230,8 @@ struct Panel {
     trim: bool,
     /// Logical height the panel may use on the monitor it opens on.
     avail_h: Cell<f32>,
+    /// PULSE_THEME (1 light, 2 dark), which wins over the Appearance setting.
+    theme_override: i32,
     /// Height of the view itself (no Settings sheet), from the newest reading.
     own_h: Cell<f32>,
     /// Height the window has now: `own_h`, or taller while Settings is open.
@@ -431,15 +436,11 @@ impl Panel {
         }
     }
 
-    /// Gives the window the height for the view (taller while Settings is
-    /// open). The property is set before the window is moved, so the content
+    /// Gives the window the height for the view (Settings has a compact form
+    /// too, so it never changes the height). The property is set before the window is moved, so the content
     /// and the window change in the same turn of the event loop.
     fn set_height(&self) {
-        let h = view::settings_height(
-            self.own_h.get(),
-            self.avail_h.get(),
-            self.ui.get_settings_open(),
-        );
+        let h = self.own_h.get();
         if (h - self.height.replace(h)).abs() < f32::EPSILON {
             return;
         }
@@ -534,6 +535,13 @@ impl Panel {
         self.neutral
             .store(s.theme == ThemeSetting::Neutral, Ordering::Relaxed);
         ui.set_sort_cpu(s.sort == Sort::Processor);
+        ui.global::<Theme>()
+            .set_force(logic::theme_force(self.theme_override, s.appearance));
+        ui.set_appearance(match s.appearance {
+            Appearance::System => 0,
+            Appearance::Light => 1,
+            Appearance::Dark => 2,
+        });
         ui.set_compact(s.view == PanelView::Compact);
         ui.set_keep_open(s.keep_open);
         ui.set_refresh(refresh_index(s.hidden_refresh_s));
@@ -608,6 +616,23 @@ impl Panel {
         self.apply_latest();
     }
 
+    /// Appearance: follow the system, or always light or dark. Applied at once.
+    fn set_appearance(&self, a: Appearance) {
+        self.settings.borrow_mut().appearance = a;
+        self.save();
+        self.sync_settings_ui();
+    }
+
+    /// Reads the system's light or dark state from the window (winit's theme,
+    /// the same on every platform) into the UI. Called at start and on every change.
+    fn sync_system_theme(&self, reported: Option<WinitTheme>) {
+        let theme =
+            reported.or_else(|| self.ui.window().with_winit_window(|w| w.theme()).flatten());
+        self.ui
+            .global::<Theme>()
+            .set_system_dark(theme == Some(WinitTheme::Dark));
+    }
+
     fn set_theme(&self, theme: ThemeSetting) {
         self.settings.borrow_mut().theme = theme;
         self.save();
@@ -671,8 +696,6 @@ impl Panel {
     fn open_settings(&self) {
         self.show_real_autostart();
         self.ui.set_settings_open(true);
-        // The sheet needs the expanded height (see `view::settings_height`).
-        self.set_height();
     }
 
     fn close_settings(&self) {
@@ -680,7 +703,6 @@ impl Panel {
             self.cancel_recording();
         }
         self.ui.set_settings_open(false);
-        self.set_height();
     }
 
     /// The saved combination, if there is a valid one.
@@ -1135,7 +1157,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let ui = PanelWindow::new()?;
-    ui.global::<Theme>().set_force(cfg.theme);
     ui.global::<Theme>()
         .set_animate(pulse_platform::animations_enabled());
     ui.set_version(env!("CARGO_PKG_VERSION").into());
@@ -1195,6 +1216,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         icons: Icons::spawn(),
         trim: std::env::var_os("PULSE_NOTRIM").is_none(),
         avail_h: Cell::new(f32::MAX),
+        theme_override: cfg.theme,
         own_h: Cell::new(first_h),
         height: Cell::new(first_h),
         settings: RefCell::new(settings.clone()),
@@ -1237,6 +1259,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 Sort::Processor
             } else {
                 Sort::Memory
+            });
+        });
+    });
+    panel.ui.on_appearance_picked(|i| {
+        with_panel(|p| {
+            p.set_appearance(match i {
+                1 => Appearance::Light,
+                2 => Appearance::Dark,
+                _ => Appearance::System,
             });
         });
     });
@@ -1382,6 +1413,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 win::style_tool_window(h);
                 win::no_system_corners(h);
                 p.hwnd.set(Some(h));
+                p.sync_system_theme(None);
                 p.ui.window().on_winit_window_event(|_, ev| match ev {
                     WindowEvent::RedrawRequested => {
                         with_panel(|p| p.frame_drawn());
@@ -1398,6 +1430,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 p.hide(true);
                             }
                         });
+                        EventResult::Propagate
+                    }
+                    WindowEvent::ThemeChanged(t) => {
+                        let t = *t;
+                        with_panel(|p| p.sync_system_theme(Some(t)));
                         EventResult::Propagate
                     }
                     WindowEvent::ModifiersChanged(m) => {
