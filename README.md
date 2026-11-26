@@ -20,6 +20,41 @@ Built: tray icon with live bars and a tooltip, open and close by click or a glob
 Slint is used under its royalty-free desktop licence, which requires an "About Slint" notice in the app or the Slint badge on a public download page.
 Pulse shows the `AboutSlint` widget at the bottom of Settings.
 
+## Coding-agent sessions in the WSL list
+
+Inside "WSL (Linux)", each coding-agent session (Claude Code, Codex CLI, Gemini CLI, Cursor Agent, Aider, opencode and the other agents the labeller marks) is one row: the product mark, the agent, "·" and the name of the folder it runs in, a dot (green when busy, grey when idle) and the value of the active sort (memory in Memory sort, percent in Processor sort).
+Programs that are not agents stay grouped by name, as before.
+Pulse reads this from outside, so it shows only what it can know: which sessions exist, the folder name (never the full path, `~` for the home folder), busy or idle, processor, memory and how long the session has run.
+It cannot know what an agent is thinking or which step it is on, and shows nothing that implies it.
+
+What a session is:
+
+- The root process of an agent plus its helpers: agent processes whose direct parent is an agent of the same kind (Claude Code's spare process, a native binary under a script wrapper).
+- Programs the agent started (a dev server, a test run, a headless browser) are no part of it.
+  They keep their own rows and are not counted in the session's memory or processor.
+  Another agent started by an agent is a session of its own.
+- `Wsl::sessions` replaces the agent groups that used to be in `Wsl::procs`, so the number of agents is `Wsl::agent_count()` (the number of sessions); `procs` holds only non-agent programs and `WslProc::agent` is always false there.
+
+Busy and idle:
+
+- A session is busy when it and everything it started (all descendants, except other agents' sessions) used at least 3 percent of one processor core since the last query, and stays busy until that falls under 1 percent of a core.
+- The gap between 3 and 1 percent is the hysteresis that keeps the dot from flickering.
+  The first query after WSL starts has nothing to compare with, so all sessions read idle for one round.
+
+Which rows are shown (the Linux list never grows past 6 rows, so many sessions do not push the rest out):
+
+1. Sessions are ordered busy first, then by the value of the active sort, then by name, folder and process id.
+2. Up to 4 sessions are one row each.
+3. With more than 4, the first 3 are rows and all the others fold into one line: "Claude Code · 9 idle" with their memory or processor summed ("9 idle agents" when they are not all one agent, "more" in place of "idle" when one of them is busy; the dot is green then).
+4. The programs fill the rows left of the 6.
+
+Two sessions of the same agent in the same folder show how long each has run ("2h 10m", "14m"), small, after the name.
+Long folder names end in an ellipsis.
+Without a readable folder, the row shows the agent alone.
+
+How it is read: the same single `wsl.exe -e sh -c "..."` call as before (WSL is never started by Pulse), now also printing the parent and start of every process (`/proc/<pid>/stat`), the working folder of every process (`ls -l /proc/[0-9]*/cwd`, at most 400 lines), the home folder and the uptime.
+The `ps` part is cut to the 120 biggest processes by memory with each line cut to 240 characters, so the output stays bounded and an agent, being big, is not cut off.
+
 ## Build and measure
 
 Build with the Windows toolchain: `cargo.exe build --release -p pulse-native`, with `--target-dir` pointing at a Windows folder when the source is inside WSL.
@@ -32,7 +67,7 @@ Environment hooks, for tests and screenshots:
 - `PULSE_SELFTEST=1` with `PULSE_REPORT=<path>` opens and closes the panel five times and writes `{"shell":"native","open_ms":[...]}`.
 - `PULSE_NOTRIM=1` turns off the working-set trim on hide.
 - `PULSE_RENDERER=skia` uses the GPU renderer (about 108 MB; the default software renderer is the reason memory stays low).
-- `PULSE_STRESS=1` feeds worst-case tile values and very long names (app names, exe lines, Linux program labels with the agent badge and a count, the busy status line), to check that every text ends in an ellipsis or wraps and nothing is cut.
+- `PULSE_STRESS=1` feeds worst-case tile values and very long names (app names, exe lines, Linux program labels with a count, 14 agent sessions (busy and idle, a long folder name, the home folder, none readable, two in one folder), the busy status line), to check that every text ends in an ellipsis or wraps and nothing is cut.
 - `PULSE_SCALE=<factor>` (1.0 to 4.0) forces the display scale: Slint draws at that factor, the window is sized and placed (12 logical px from the work-area corner) at that factor, the app icons are asked for at the scaled pixel size (36 px at 1.5) and the tray icon size follows it.
   It simulates scaling on a 100% monitor for screenshots; it is not a real scaled monitor, and per-monitor DPI changes when dragging between monitors are untested.
 - `PULSE_BATTERY=<percent>,<plugged 0|1>` replaces the battery reading (for example `12,0` or `80,1`), to see the Battery tile on a desktop PC.
