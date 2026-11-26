@@ -1269,7 +1269,7 @@ export component PanelWindow inherits Window {
     property <length> head-y: root.compact ? 100px : 191px;
     property <length> list-y: root.compact ? 134px : 225px;
     property <length> foot-y: root.compact ? root.height - (root.has-battery ? 52px : 33px) : root.height - 35px;
-    property <length> tiles-y: root.height - 43px - 83px - (root.has-battery ? 55px : 0px);
+    property <length> tiles-y: root.height - 43px - 83px - (root.has-battery ? 59px : 0px);
     property <length> list-bottom: root.compact ? root.foot-y - 4px : root.tiles-y - 9px;
     property <color> bar: Theme.neutral ? (root.sort-cpu ? Theme.c-cpu : Theme.c-mem) : Theme.ink;
 
@@ -1525,14 +1525,14 @@ export component PanelWindow inherits Window {
 
     if !root.compact && root.has-battery: Rectangle {
         x: 11px;
-        y: root.height - 89px;
+        y: root.height - 93px;
         width: 358px;
-        height: 46px;
+        height: 50px;
         border-radius: 12px;
         background: Theme.soft;
         Text {
             x: 9px;
-            y: 4px;
+            y: 6px;
             height: 19px;
             text: "Battery";
             font-family: "Inter";
@@ -1544,7 +1544,7 @@ export component PanelWindow inherits Window {
 
         Text {
             x: 9px;
-            y: 23px;
+            y: 25px;
             height: 19px;
             text: root.bat-big;
             font-family: "Space Grotesk";
@@ -1556,7 +1556,7 @@ export component PanelWindow inherits Window {
 
         Text {
             x: 72px;
-            y: 23px;
+            y: 25px;
             width: 140px;
             height: 19px;
             text: root.bat-sub;
@@ -1569,7 +1569,7 @@ export component PanelWindow inherits Window {
 
         Rectangle {
             x: parent.width - 9px - 110px;
-            y: 20.5px;
+            y: 22.5px;
             width: 110px;
             height: 5px;
             border-radius: 3px;
