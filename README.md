@@ -37,6 +37,7 @@ Environment hooks, for tests and screenshots:
 - `PULSE_WORK_H=<logical px>` pretends the work area is that tall, to check the panel on a short display.
 - `PULSE_OPEN=settings` starts with the Settings screen open (for screenshots).
 - `PULSE_WARN=1` makes the reader report 92% processor and 9 days of uptime, to see the warning colours and "restart?".
+- `PULSE_NOAPPS=1` makes the reader report no apps, to see the "Reading apps..." row.
 - `PULSE_SETTINGS_DIR=<folder>` keeps `settings.json` in that folder instead of `%APPDATA%\Pulse` (test runs use it).
 - `PULSE_INSTANCE_NAME=<name>` gives a test run its own single-instance name, so it never pokes the real panel.
 - `PULSE_AUTOSTART_NAME=<name>` names the Run-key value a test run would write.

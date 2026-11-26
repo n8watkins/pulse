@@ -783,6 +783,7 @@ fn spawn_reader(
         };
         let stress = std::env::var_os("PULSE_STRESS").is_some();
         let warn = std::env::var_os("PULSE_WARN").is_some();
+        let no_apps = std::env::var_os("PULSE_NOAPPS").is_some();
         let mut hist = History::default();
         // Rows from the last scan, kept for readings taken while hidden.
         let mut rows: CachedRows = Default::default();
@@ -813,6 +814,12 @@ fn spawn_reader(
                     snap.wsl.clone(),
                 );
                 apps_at = Instant::now();
+            }
+            if no_apps {
+                // A development knob: shows the "Reading apps" row.
+                snap.apps.clear();
+                snap.apps_by_cpu.clear();
+                snap.wsl = None;
             }
             if warn {
                 // A development knob: shows the warning colours.
