@@ -40,13 +40,13 @@ fn wide(s: &str) -> Vec<u16> {
 }
 
 /// A PDH query with the counters added to it.
-struct Query {
+pub(crate) struct Query {
     handle: *mut c_void,
     counters: Vec<*mut c_void>,
 }
 
 impl Query {
-    fn new(paths: &[&str]) -> Option<Self> {
+    pub(crate) fn new(paths: &[&str]) -> Option<Self> {
         let mut handle: *mut c_void = null_mut();
         // SAFETY: valid out pointers; the query is closed on drop.
         unsafe {
@@ -70,13 +70,13 @@ impl Query {
         }
     }
 
-    fn collect(&self) -> bool {
+    pub(crate) fn collect(&self) -> bool {
         // SAFETY: the handle is a live query.
         unsafe { PdhCollectQueryData(self.handle) == 0 }
     }
 
     /// One counter's value.
-    fn value(&self, i: usize) -> Option<f64> {
+    pub(crate) fn value(&self, i: usize) -> Option<f64> {
         // SAFETY: a live counter and a valid out pointer.
         unsafe {
             let mut v: PDH_FMT_COUNTERVALUE = core::mem::zeroed();
@@ -87,7 +87,7 @@ impl Query {
     }
 
     /// Every instance of a wildcard counter: (name, value, valid).
-    fn instances(&self, i: usize) -> Option<Vec<(String, f64, bool)>> {
+    pub(crate) fn instances(&self, i: usize) -> Option<Vec<(String, f64, bool)>> {
         // SAFETY: the buffer is sized by the first call; items and the names
         // they point to stay inside it.
         unsafe {
