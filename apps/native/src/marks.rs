@@ -4,24 +4,24 @@
 //! version 16.38.1, one 24 by 24 path each), embedded in the binary as text.
 //! Only the path data is read, at the moment a row is built; nothing is parsed
 //! or kept while the panel is hidden. A label without a mark keeps the
-//! coloured letter tile.
+//! colored letter tile.
 
-/// One mark: its path data (24 by 24 view box), the brand colour of the tile
-/// and the colour of the glyph on it.
+/// One mark: its path data (24 by 24 view box), the brand color of the tile
+/// and the color of the glyph on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Mark {
     pub slug: &'static str,
     /// SVG path data of the glyph, 24 by 24.
     pub path: &'static str,
-    /// Brand colour of the tile.
+    /// Brand color of the tile.
     pub rgb: [u8; 3],
-    /// Black glyph (the brand colour is too light for a white one).
+    /// Black glyph (the brand color is too light for a white one).
     pub dark_ink: bool,
     /// The tile is so dark that it needs a faint outline on a dark panel.
     pub ring: bool,
 }
 
-/// Slug, embedded file, brand colour (from the Simple Icons data).
+/// Slug, embedded file, brand color (from the Simple Icons data).
 type Entry = (&'static str, &'static str, [u8; 3]);
 
 macro_rules! entry {
@@ -79,7 +79,7 @@ fn path_data(svg: &str) -> Option<&str> {
     Some(&svg[at..at + len])
 }
 
-/// Relative luminance of a colour (WCAG), 0 to 1.
+/// Relative luminance of a color (WCAG), 0 to 1.
 fn luminance(rgb: [u8; 3]) -> f64 {
     let lin = |c: u8| {
         let c = f64::from(c) / 255.0;
@@ -92,12 +92,12 @@ fn luminance(rgb: [u8; 3]) -> f64 {
     0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2])
 }
 
-/// Contrast ratio of a white glyph on the colour.
+/// Contrast ratio of a white glyph on the color.
 fn white_contrast(rgb: [u8; 3]) -> f64 {
     1.05 / (luminance(rgb) + 0.05)
 }
 
-/// White is the brand's usual glyph colour; black only where white would be
+/// White is the brand's usual glyph color; black only where white would be
 /// under 3:1 (the WCAG minimum for graphics).
 const MIN_WHITE_CONTRAST: f64 = 3.0;
 

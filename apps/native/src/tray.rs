@@ -1,6 +1,6 @@
 //! The tray icon's picture: two live bars (processor and memory) on a dark
 //! rounded square, drawn for the size Windows asks for. Pure code, so the
-//! quantising and the colours are unit tested.
+//! quantising and the colors are unit tested.
 
 use pulse_readings::Snapshot;
 
@@ -219,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn mint_neutral_and_warning_colours() {
+    fn mint_neutral_and_warning_colors() {
         let mint = Key::new(32, 0.9, 0.9, false, false);
         assert_eq!(bar_pixel(&mint, 0), [184, 245, 208]);
         assert_eq!(bar_pixel(&mint, 1), [255, 255, 255]);

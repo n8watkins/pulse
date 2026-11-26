@@ -1,20 +1,20 @@
 # Third-party notices
 
-Pulse is copyright (c) 2026 n8builds.dev and is released under the MIT licence (see the repository).
+Pulse is copyright (c) 2026 n8builds.dev and is released under the MIT license (see the repository).
 It includes the software and fonts below.
 
 ## Slint
 
 Pulse's interface is built with [Slint](https://slint.dev).
 Pulse uses Slint under the Slint Royalty-free Desktop, Mobile, and Web Applications License v2.0.
-The licence text is at <https://slint.dev/terms-and-conditions#royalty-free> (Slint's own sources also carry it as `LICENSES/LicenseRef-Slint-Royalty-free-2.0.md`).
+The license text is at <https://slint.dev/terms-and-conditions#royalty-free> (Slint's own sources also carry it as `LICENSES/LicenseRef-Slint-Royalty-free-2.0.md`).
 Its attribution condition is met by the "About Slint" notice (the AboutSlint widget) in Pulse's Settings.
 The Slint crates are dual or triple licensed (GPL-3.0-only, Slint Royalty-free, or Slint commercial); Pulse does not use the GPL option.
 
 ## Skia
 
 Pulse draws with Skia, through the `skia-safe` and `skia-bindings` crates.
-Skia is licensed under the BSD 3-Clause licence.
+Skia is licensed under the BSD 3-Clause license.
 
 ```text
 Copyright (c) 2011 Google Inc. All rights reserved.
@@ -51,7 +51,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ## Fonts
 
 Pulse embeds these fonts under the SIL Open Font License, Version 1.1.
-The full licence texts are in `apps/native/fonts/` and are installed beside the app as `OFL-Inter.txt` and `OFL-SpaceGrotesk.txt`.
+The full license texts are in `apps/native/fonts/` and are installed beside the app as `OFL-Inter.txt` and `OFL-SpaceGrotesk.txt`.
 
 - Inter (weights 400, 500, 600): Copyright 2020 The Inter Project Authors (<https://github.com/rsms/inter>).
 - Space Grotesk (weight 700): Copyright 2020 The Space Grotesk Project Authors (<https://github.com/floriankarsten/space-grotesk>).
@@ -59,14 +59,14 @@ The full licence texts are in `apps/native/fonts/` and are installed beside the 
 ## Product marks
 
 The small logos beside Linux programs in "Top apps" (Claude, Next.js, Node.js, Chrome, Rust, OpenAI, Visual Studio Code and others) are paths from [Simple Icons](https://github.com/simple-icons/simple-icons) (version 16.38.1), embedded in the app from `apps/native/assets/marks/`.
-Simple Icons publishes its SVG files under CC0 1.0 Universal (public domain dedication); the licence text is in `apps/native/assets/marks/LICENSE-simple-icons.md`.
+Simple Icons publishes its SVG files under CC0 1.0 Universal (public domain dedication); the license text is in `apps/native/assets/marks/LICENSE-simple-icons.md`.
 The logos themselves remain trademarks of their owners.
 Pulse is not affiliated with or endorsed by any of them, and shows a mark only to say which program a row is.
 
-Two marks carry a licence of their own in the Simple Icons data, and it applies to them:
+Two marks carry a license of their own in the Simple Icons data, and it applies to them:
 
 - Git logo by Jason Long, licensed under [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).
-- Deno logo, under the MIT licence of the Deno docs repository, text below.
+- Deno logo, under the MIT license of the Deno docs repository, text below.
 
 ```text
 MIT License
@@ -92,10 +92,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-The Rust mark carries a share-alike licence:
+The Rust mark carries a share-alike license:
 
 - Rust logo, copyright the Rust Foundation, licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) (source <https://www.rust-lang.org>, as listed by Simple Icons 16.38.1).
-  The file `apps/native/assets/marks/rust.svg` is under that licence, separate from Pulse's MIT code: the licence covers the logo file and any adaptation of it, not the rest of Pulse.
+  The file `apps/native/assets/marks/rust.svg` is under that license, separate from Pulse's MIT code: the license covers the logo file and any adaptation of it, not the rest of Pulse.
   The file is used unchanged, shown only scaled and in white on a black tile.
 
 Two marks come from older Simple Icons releases, because current releases no longer include them.
@@ -106,10 +106,10 @@ Both were under the collection's CC0 default at that time:
 
 Programs with no mark (Cursor's and Windsurf's "Editor server", Aider, opencode and others) keep the letter tile.
 
-The marks are drawn unchanged, only scaled and coloured white or black on a tile.
-Each mark with its title, source and licence as Simple Icons lists them (no licence listed means the CC0 default of the collection); the Simple Icons version is 16.38.1 unless the table says otherwise:
+The marks are drawn unchanged, only scaled and colored white or black on a tile.
+Each mark with its title, source and license as Simple Icons lists them (no license listed means the CC0 default of the collection); the Simple Icons version is 16.38.1 unless the table says otherwise:
 
-| Mark | Simple Icons name | Licence | Source |
+| Mark | Simple Icons name | License | Source |
 | --- | --- | --- | --- |
 | Claude | claude | CC0 1.0 | <https://claude.ai> |
 | Google Gemini | googlegemini | CC0 1.0 | <https://gemini.google.com> |
@@ -139,12 +139,58 @@ Each mark with its title, source and licence as Simple Icons lists them (no lice
 | OpenAI (Codex CLI) | openai (15.22.0) | CC0 1.0 | <https://openai.com/brand> |
 | Visual Studio Code | visualstudiocode (12.4.0) | CC0 1.0 | <https://commons.wikimedia.org/wiki/File:Visual_Studio_Code_1.35_icon.svg> |
 
+## Icons
+
+The line icons in the header and in Settings (monitor, sun, moon, keyboard, palette, pin, power, refresh, info, settings, maximize, minimize, x, chevron) are from [Lucide](https://lucide.dev) (<https://github.com/lucide-icons/lucide>, icon data as in lucide-react 0.453.0), embedded as SVG files in `apps/native/ui/` and drawn at 16 px in the panel's text color.
+Lucide is released under the ISC license; the icons derived from the Feather project (info, monitor, moon, power, x, chevrons, minimize-2 and others) are also covered by the MIT license of Feather.
+Both texts follow.
+
+```
+ISC License
+
+Copyright (c) 2026 Lucide Icons and Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+```
+
+```
+Copyright (c) 2013-present Cole Bemis
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Rust crates
 
 281 crates are linked into the Windows build.
 The list is generated by `scripts/gen-notices.py` from `cargo metadata` (do not edit it by hand).
 
-| Crate | Version | Licence |
+| Crate | Version | License |
 |---|---|---|
 | adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 |
 | allocator-api2 | 0.2.21 | MIT OR Apache-2.0 |
@@ -428,7 +474,7 @@ The list is generated by `scripts/gen-notices.py` from `cargo metadata` (do not 
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib |
 | zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib |
 
-## Licence texts of the crates
+## License texts of the crates
 
 Each block applies to the crates listed above it; identical texts are shown once.
 

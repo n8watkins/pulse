@@ -1,4 +1,4 @@
-//! Turns readings into the strings, colours and sparkline paths the panel shows.
+//! Turns readings into the strings, colors and sparkline paths the panel shows.
 //! No toolkit types here, so it is plain code and unit tested on any machine.
 
 use crate::marks::{self, Mark};
@@ -180,7 +180,7 @@ pub struct AppView {
     pub value: String,
     /// Bar length, 0 to 1, scaled to the top row.
     pub frac: f32,
-    /// Executable path, for the real icon; `None` shows the coloured letter.
+    /// Executable path, for the real icon; `None` shows the colored letter.
     pub path: Option<String>,
     /// Sub rows: a coding agent.
     pub agent: bool,
@@ -198,7 +198,7 @@ pub struct View {
     pub status: Status,
     pub cpu_big: String,
     pub cpu_sub: String,
-    /// Uptime reached a week: " \u{b7} restart?" follows in the warning colour.
+    /// Uptime reached a week: " \u{b7} restart?" follows in the warning color.
     pub cpu_restart: bool,
     pub cpu_line: String,
     pub cpu_fill: String,
@@ -210,7 +210,7 @@ pub struct View {
     pub tiles: Tiles,
 }
 
-/// The line under the title and its dot colour.
+/// The line under the title and its dot color.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Status {
     pub text: String,
@@ -237,7 +237,7 @@ pub struct Tiles {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BatteryView {
-    /// On battery at or under [`BATTERY_LOW`] percent: the bar takes the warning colour.
+    /// On battery at or under [`BATTERY_LOW`] percent: the bar takes the warning color.
     pub low: bool,
     pub big: String,
     pub sub: String,
@@ -1291,7 +1291,7 @@ mod tests {
             assert_eq!(find(name).mark.map(|m| m.slug), Some(slug), "{name}");
         }
         // Cursor's and Windsurf's server has no mark: the letter tile stays,
-        // in the hashed colour. (Only the first six rows by memory are shown.)
+        // in the hashed color. (Only the first six rows by memory are shown.)
         snap.wsl.as_mut().unwrap().procs[0].mem_bytes = 1;
         let rows2 = app_rows(&snap, Sort::Memory);
         let r = rows2.iter().find(|r| r.name == "Editor server").unwrap();

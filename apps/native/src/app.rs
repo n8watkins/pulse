@@ -251,7 +251,7 @@ struct Panel {
     ago: slint::Timer,
     /// Seconds between readings while hidden, read by the reader thread.
     refresh: Arc<AtomicU8>,
-    /// The Neutral theme is on (the tray icon's colours), read by the reader thread.
+    /// The Neutral theme is on (the tray icon's colors), read by the reader thread.
     neutral: Arc<AtomicBool>,
     tray: RefCell<Option<TrayState>>,
     /// At mouse-down on the tray icon: the panel counted as open.
@@ -1029,7 +1029,7 @@ fn spawn_reader(
                 view::stress_snapshot(&mut snap);
             }
             if warn {
-                // A development knob: shows the warning colours.
+                // A development knob: shows the warning colors.
                 snap.cpu_pct = 92.0;
                 snap.uptime_s = 9 * 86_400;
             }

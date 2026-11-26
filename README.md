@@ -18,9 +18,9 @@ The webview shell is parked, not deleted: branch `spike/webview`, tag `parked/we
 Two views: the expanded one (380 x 580, the "B Tighter" layout) and a compact one (380 wide, about 287 tall: Processor and Memory as mini tiles, three one-line apps, a collapsible Linux row with its program and agent counts, one footer row of figures).
 The Settings sheet has a one-line-per-setting form in the compact view and never changes the panel's height.
 
-Built: tray icon with live bars and a tooltip, open and close by click or a global shortcut, Processor and Memory tiles with sparklines, Top apps with real icons sorted by memory or processor, the WSL breakdown with coding agents marked, Graphics, Drive, Network and Battery tiles, Settings, start with Windows, Mint and Neutral colours in light and dark, and a per-user installer (`scripts/build-installer.ps1`).
+Built: tray icon with live bars and a tooltip, open and close by click or a global shortcut, Processor and Memory tiles with sparklines, Top apps with real icons sorted by memory or processor, the WSL breakdown with coding agents marked, Graphics, Drive, Network and Battery tiles, Settings, start with Windows, Mint and Neutral colors in light and dark, and a per-user installer (`scripts/build-installer.ps1`).
 
-Slint is used under its royalty-free desktop licence, which requires an "About Slint" notice in the app or the Slint badge on a public download page.
+Slint is used under its royalty-free desktop license, which requires an "About Slint" notice in the app or the Slint badge on a public download page.
 Pulse shows the `AboutSlint` widget at the bottom of Settings.
 
 ## Build and measure
@@ -49,7 +49,7 @@ Environment hooks, for tests and screenshots:
   It registers nothing.
   The off state needs no hook: a `settings.json` with `"hotkey": ""` and `"hotkey_last": "Ctrl+Shift+F20"` shows the switch off with the combination dimmed.
   Screenshots of a test copy should use F20 to F24 shortcuts, never the owner's real one.
-- `PULSE_WARN=1` makes the reader report 92% processor and 9 days of uptime, to see the warning colours and "restart?".
+- `PULSE_WARN=1` makes the reader report 92% processor and 9 days of uptime, to see the warning colors and "restart?".
 - `PULSE_NOAPPS=1` makes the reader report no apps, to see the "Reading apps..." row.
 - `PULSE_SETTINGS_DIR=<folder>` keeps `settings.json` in that folder instead of `%APPDATA%\Pulse` (test runs use it).
 - `PULSE_INSTANCE_NAME=<name>` gives a test run its own single-instance name, so it never pokes the real panel.
@@ -86,7 +86,7 @@ The version is the workspace version in the root `Cargo.toml`; the exe, its vers
    The resource step runs only when the build host is Windows, so `cargo clippy --target x86_64-pc-windows-msvc` from WSL needs no resource tools.
 2. The icon is generated, not drawn by hand: `python3 scripts/make-icon.py` (needs Python 3 and Pillow) rewrites `apps/native/assets/pulse.ico` with 16, 20, 24, 32, 48, 64 and 256 px images in the style of `apps/native/ui/logo.svg`.
 3. `THIRD-PARTY-NOTICES.md` is generated from `cargo metadata` for the Windows target: `python3 scripts/gen-notices.py` (hand-written part in `scripts/notices-head.md`).
-   Regenerate it after dependency changes; the script prints any crate whose licence is copyleft-only or unclear.
+   Regenerate it after dependency changes; the script prints any crate whose license is copyleft-only or unclear.
 4. Build the installer on Windows: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-installer.ps1 -Exe <pulse-native.exe> -Out <folder>` writes `Pulse-<version>-setup.exe`.
    It uses the `makensis.exe` of the NSIS that Tauri downloaded (`%LOCALAPPDATA%\tauri\NSIS`), or one on PATH, or `-Makensis <path>`.
    `-TestName "Pulse Test"` builds an installer that uses that name for the folder, shortcut, uninstall entry, Run-key value and settings folder, so it never touches a real Pulse install.

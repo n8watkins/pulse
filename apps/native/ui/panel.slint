@@ -10,7 +10,7 @@ import "../fonts/SpaceGrotesk-700.ttf";
 export global Theme {
     // 0 follows Windows, 1 light, 2 dark (PULSE_THEME).
     in property <int> force: 0;
-    // The Neutral colour theme: each tile gets its own colour.
+    // The Neutral color theme: each tile gets its own color.
     in property <bool> neutral: false;
     // Windows "Animation effects": off means bars and tiles do not move.
     in property <bool> animate: true;
@@ -52,7 +52,7 @@ export struct AppItem {
     count: string,
     group-end: bool,
     // A Linux program with a product mark: the glyph path (24 x 24) replaces
-    // the letter on a tile in the brand colour (`color`).
+    // the letter on a tile in the brand color (`color`).
     has-mark: bool,
     mark-path: string,
     mark-dark-ink: bool,
@@ -100,7 +100,7 @@ component IconBtn inherits Rectangle {
         root.clicked();
     }
     Image {
-        width: root.size >= 34px ? 18px : (root.size >= 30px ? 17px : 16px);
+        width: root.size >= 34px ? 18px : 16px;
         height: self.width;
         source: root.source;
         colorize: ta.has-hover ? Theme.ink : Theme.mute;
@@ -224,6 +224,10 @@ component Seg inherits Rectangle {
     in property <bool> on: true;
     // The panel's own control: 30 px high with 12.5 px text (Settings keeps 34 px).
     in property <bool> dense: false;
+    // A small icon before each label, or (swatches) a color swatch: Mint, then Neutral.
+    in property <[image]> icons;
+    in property <bool> swatches: false;
+    property <length> lead: (root.icons.length > 0 || root.swatches) ? 18px : 0px;
     callback picked(int);
     width: row.preferred-width + 4px;
     height: root.dense ? 30px : 34px;
@@ -234,7 +238,7 @@ component Seg inherits Rectangle {
         y: 2px;
         height: root.dense ? 26px : 30px;
         for label[i] in root.labels: Rectangle {
-            width: measure.preferred-width + (root.dense ? 18px : 20px);
+            width: measure.preferred-width + root.lead + (root.dense ? 18px : 20px);
             border-radius: 6px;
             background: i == root.current ? Theme.bg : (ta.has-hover ? Theme.line.with-alpha(0.6) : transparent);
             drop-shadow-blur: i == root.current ? 2px : 0px;
@@ -249,7 +253,73 @@ component Seg inherits Rectangle {
                 font-weight: 600;
             }
 
+            if root.icons.length > 0: Image {
+                x: (parent.width - root.lead - measure.preferred-width) / 2;
+                y: (parent.height - 14px) / 2;
+                width: 14px;
+                height: 14px;
+                source: root.icons[i];
+                colorize: i == root.current ? Theme.ink : Theme.mute;
+            }
+
+            // Mint: one round swatch in the mint of the tiles.
+            if root.swatches && i == 0: Rectangle {
+                x: (parent.width - root.lead - measure.preferred-width) / 2 + 1px;
+                y: (parent.height - 12px) / 2;
+                width: 12px;
+                height: 12px;
+                border-radius: 6px;
+                background: Theme.mint;
+                border-width: 1px;
+                border-color: Theme.mute.with-alpha(0.55);
+            }
+
+            // Neutral: four small squares, one in each tile color.
+            if root.swatches && i == 1: Rectangle {
+                x: (parent.width - root.lead - measure.preferred-width) / 2 + 1px;
+                y: (parent.height - 12px) / 2;
+                width: 12px;
+                height: 12px;
+                Rectangle {
+                    x: 0px;
+                    y: 0px;
+                    width: 5.5px;
+                    height: 5.5px;
+                    border-radius: 1.5px;
+                    background: Theme.c-cpu;
+                }
+
+                Rectangle {
+                    x: 6.5px;
+                    y: 0px;
+                    width: 5.5px;
+                    height: 5.5px;
+                    border-radius: 1.5px;
+                    background: Theme.c-mem;
+                }
+
+                Rectangle {
+                    x: 0px;
+                    y: 6.5px;
+                    width: 5.5px;
+                    height: 5.5px;
+                    border-radius: 1.5px;
+                    background: Theme.c-gpu;
+                }
+
+                Rectangle {
+                    x: 6.5px;
+                    y: 6.5px;
+                    width: 5.5px;
+                    height: 5.5px;
+                    border-radius: 1.5px;
+                    background: Theme.c-net;
+                }
+            }
+
             Text {
+                x: root.lead;
+                width: parent.width - root.lead;
                 text: label;
                 font-family: "Inter";
                 font-size: root.dense ? 12.5px : 13px;
@@ -314,15 +384,15 @@ component Hero inherits Rectangle {
     in property <string> label;
     in property <string> big;
     in property <string> sub;
-    // " · restart?" after the sub line, in the warning colour.
+    // " · restart?" after the sub line, in the warning color.
     in property <bool> restart: false;
     in property <string> line;
     in property <string> fill;
     in property <color> ink;
     in property <color> tile-bg;
-    // Colour of the sparkline (the text colour unless the Neutral theme sets one).
+    // Color of the sparkline (the text color unless the Neutral theme sets one).
     in property <color> spark;
-    // Neutral: a coloured square before the label.
+    // Neutral: a colored square before the label.
     in property <bool> square: false;
     in property <bool> outlined: false;
     background: tile-bg;
@@ -604,7 +674,7 @@ component FootFig inherits Rectangle {
     // A second bold figure (the network's up rate).
     in property <string> val2;
     in property <bool> warn: false;
-    // Neutral: a coloured square first, like the other tiles.
+    // Neutral: a colored square first, like the other tiles.
     in property <color> accent: transparent;
     in property <bool> square: false;
     width: row.preferred-width;
@@ -655,7 +725,7 @@ component FootFig inherits Rectangle {
     }
 }
 
-// An app's icon: the real icon, or a coloured square with the first letter.
+// An app's icon: the real icon, or a colored square with the first letter.
 component AppIcon inherits Rectangle {
     in property <AppItem> item;
     // Size of a real icon inside the square.
@@ -1086,11 +1156,22 @@ component CRow inherits Rectangle {
     in property <length> ctl-w: 40px;
     in property <length> ctl-h: 24px;
     in property <bool> line: true;
+    in property <image> icon;
+    property <length> lead: root.icon.width > 0 ? 22px : 0px;
     height: 32px;
-    Text {
+    if root.icon.width > 0: Image {
         x: 0;
+        y: 8px;
+        width: 16px;
+        height: 16px;
+        source: root.icon;
+        colorize: Theme.ink;
+    }
+
+    Text {
+        x: root.lead;
         y: 0;
-        width: root.width - root.ctl-w - 10px;
+        width: root.width - root.ctl-w - 10px - root.lead;
         height: 32px;
         text: root.name;
         font-family: "Inter";
@@ -1124,11 +1205,22 @@ component SRow inherits Rectangle {
     in property <bool> warn: false;
     in property <length> ctl-w: 40px;
     in property <bool> line: true;
+    in property <image> icon;
+    property <length> lead: root.icon.width > 0 ? 24px : 0px;
     height: 8px + 20px + 1px + note-t.preferred-height + 9px;
-    Text {
+    if root.icon.width > 0: Image {
         x: 0;
+        y: 10px;
+        width: 16px;
+        height: 16px;
+        source: root.icon;
+        colorize: Theme.ink;
+    }
+
+    Text {
+        x: root.lead;
         y: 8px;
-        width: root.width - root.ctl-w - 12px;
+        width: root.width - root.ctl-w - 12px - root.lead;
         height: 20px;
         text: root.name;
         font-family: "Inter";
@@ -1140,9 +1232,9 @@ component SRow inherits Rectangle {
     }
 
     note-t := Text {
-        x: 0;
+        x: root.lead;
         y: 29px;
-        width: root.width - root.ctl-w - 12px;
+        width: root.width - root.ctl-w - 12px - root.lead;
         text: root.note;
         wrap: word-wrap;
         font-family: "Inter";
@@ -1340,7 +1432,7 @@ export component PanelWindow inherits Window {
     }
 
     // The status line (expanded view). The compact header has no room for it:
-    // it names a warning in the warning colour, after the title, and says
+    // it names a warning in the warning color, after the title, and says
     // nothing when all is well.
     if !root.compact: Rectangle {
         x: 15px;
@@ -1762,10 +1854,19 @@ export component PanelWindow inherits Window {
                 // (click it to record), then one line of help.
                 Rectangle {
                     height: 8px + 24px + 6px + 34px + 6px + shortcut-note.preferred-height + 9px;
-                    Text {
+                    Image {
                         x: 0;
+                        y: 12px;
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("keyboard.svg");
+                        colorize: Theme.ink;
+                    }
+
+                    Text {
+                        x: 24px;
                         y: 8px;
-                        width: parent.width - 52px;
+                        width: parent.width - 52px - 24px;
                         height: 24px;
                         horizontal-alignment: left;
                         text: "Open and close shortcut";
@@ -1862,8 +1963,10 @@ export component PanelWindow inherits Window {
                 SRow {
                     name: "Appearance";
                     note: "System follows Windows.";
-                    ctl-w: 168px;
+                    icon: @image-url("sun.svg");
+                    ctl-w: 214px;
                     Seg {
+                        icons: [@image-url("monitor.svg"), @image-url("sun.svg"), @image-url("moon.svg")];
                         labels: ["System", "Light", "Dark"];
                         current: root.appearance;
                         picked(i) => {
@@ -1873,10 +1976,12 @@ export component PanelWindow inherits Window {
                 }
 
                 SRow {
-                    name: "Colours";
-                    note: "Neutral: a colour per tile.";
-                    ctl-w: 150px;
+                    name: "Colors";
+                    note: "Neutral: a color per tile.";
+                    icon: @image-url("palette.svg");
+                    ctl-w: 160px;
                     Seg {
+                        swatches: true;
                         labels: ["Mint", "Neutral"];
                         current: Theme.neutral ? 1 : 0;
                         picked(i) => {
@@ -1887,6 +1992,7 @@ export component PanelWindow inherits Window {
 
                 SRow {
                     name: "Keep open when I click away";
+                    icon: @image-url("pin.svg");
                     note: "Stays open until you press Esc or the x.";
                     PSwitch {
                         checked: root.keep-open;
@@ -1898,6 +2004,7 @@ export component PanelWindow inherits Window {
 
                 SRow {
                     name: "Start with Windows";
+                    icon: @image-url("power.svg");
                     note: root.autostart-other ? "Another copy of Pulse starts with Windows." : "Opens in the tray when you sign in.";
                     PSwitch {
                         checked: root.autostart;
@@ -1909,6 +2016,7 @@ export component PanelWindow inherits Window {
 
                 SRow {
                     name: "Refresh while hidden";
+                    icon: @image-url("refresh.svg");
                     note: "Always 2 s while open.";
                     ctl-w: 136px;
                     Seg {
@@ -1921,16 +2029,25 @@ export component PanelWindow inherits Window {
                 }
 
                 // About: the version, and Slint's own attribution widget (its
-                // Royalty-free licence asks for it on an About screen), scaled down.
+                // Royalty-free license asks for it on an About screen), scaled down.
                 Rectangle {
                     height: 62px;
-                    Text {
+                    Image {
                         x: 0;
+                        y: 23px;
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("info.svg");
+                        colorize: Theme.ink;
+                    }
+
+                    Text {
+                        x: 24px;
                         y: 0;
-                        width: parent.width - 150px;
+                        width: parent.width - 150px - 24px;
                         height: parent.height;
                         horizontal-alignment: left;
-                        text: "Pulse " + root.version + "\nLicences are in the install folder.";
+                        text: "Pulse " + root.version + "\nLicenses are in the install folder.";
                         font-family: "Inter";
                         font-size: 12px;
                         color: Theme.mute;
@@ -1939,7 +2056,7 @@ export component PanelWindow inherits Window {
                     }
 
                     Rectangle {
-                        // The widget centres its logo in 128 px; push that box
+                        // The widget centers its logo in 128 px; push that box
                         // right so the logo ends near the switches' edge.
                         x: parent.width - 92px;
                         y: 4px;
@@ -2044,10 +2161,19 @@ export component PanelWindow inherits Window {
                 // Shortcut: name, the field that records, the switch.
                 Rectangle {
                     height: 32px + (root.hotkey-warn || root.field-state == 2 ? cnote.preferred-height + 6px : 0px);
-                    Text {
+                    Image {
                         x: 0;
+                        y: 8px;
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("keyboard.svg");
+                        colorize: Theme.ink;
+                    }
+
+                    Text {
+                        x: 22px;
                         y: 0;
-                        width: 64px;
+                        width: 60px;
                         height: 32px;
                         text: "Shortcut";
                         font-family: "Inter";
@@ -2058,9 +2184,9 @@ export component PanelWindow inherits Window {
                     }
 
                     cfield := Rectangle {
-                        x: 68px;
+                        x: 86px;
                         y: 3px;
-                        width: parent.width - 68px - 48px;
+                        width: parent.width - 86px - 48px;
                         height: 26px;
                         border-radius: 8px;
                         border-width: root.field-state == 2 ? 2px : 1px;
@@ -2142,10 +2268,12 @@ export component PanelWindow inherits Window {
 
                 CRow {
                     name: "Appearance";
-                    ctl-w: 164px;
+                    icon: @image-url("sun.svg");
+                    ctl-w: 206px;
                     ctl-h: 30px;
                     Seg {
                         dense: true;
+                        icons: [@image-url("monitor.svg"), @image-url("sun.svg"), @image-url("moon.svg")];
                         labels: ["System", "Light", "Dark"];
                         current: root.appearance;
                         picked(i) => {
@@ -2155,11 +2283,13 @@ export component PanelWindow inherits Window {
                 }
 
                 CRow {
-                    name: "Colours";
-                    ctl-w: 124px;
+                    name: "Colors";
+                    icon: @image-url("palette.svg");
+                    ctl-w: 150px;
                     ctl-h: 30px;
                     Seg {
                         dense: true;
+                        swatches: true;
                         labels: ["Mint", "Neutral"];
                         current: Theme.neutral ? 1 : 0;
                         picked(i) => {
@@ -2170,6 +2300,7 @@ export component PanelWindow inherits Window {
 
                 CRow {
                     name: "Keep open when I click away";
+                    icon: @image-url("pin.svg");
                     PSwitch {
                         checked: root.keep-open;
                         toggled(v) => {
@@ -2180,6 +2311,7 @@ export component PanelWindow inherits Window {
 
                 CRow {
                     name: "Start with Windows";
+                    icon: @image-url("power.svg");
                     PSwitch {
                         checked: root.autostart;
                         toggled(v) => {
@@ -2190,6 +2322,7 @@ export component PanelWindow inherits Window {
 
                 CRow {
                     name: "Refresh while hidden";
+                    icon: @image-url("refresh.svg");
                     ctl-w: 124px;
                     ctl-h: 30px;
                     line: false;
@@ -2214,12 +2347,21 @@ export component PanelWindow inherits Window {
             background: Theme.line;
         }
 
-        Text {
+        Image {
             x: 14px;
+            y: root.height - 28px + 5.5px;
+            width: 16px;
+            height: 16px;
+            source: @image-url("info.svg");
+            colorize: Theme.ink;
+        }
+
+        Text {
+            x: 36px;
             y: root.height - 28px;
-            width: root.width - 14px - 14px - 70px;
+            width: root.width - 36px - 14px - 70px;
             height: 27px;
-            text: "Pulse " + root.version + " · Licences are in the install folder.";
+            text: "Pulse " + root.version + " · Licenses are in the install folder.";
             font-family: "Inter";
             font-size: 11.5px;
             color: Theme.mute;
