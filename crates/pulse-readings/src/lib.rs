@@ -24,6 +24,8 @@ mod perf;
 mod scale;
 #[cfg(windows)]
 mod win;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod wsl;
 
 /// One reading of the machine. Sizes are bytes.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
