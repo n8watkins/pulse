@@ -371,6 +371,7 @@ impl Source for Windows {
                     cpu_pct,
                     procs: found.procs,
                     sessions: found.sessions,
+                    dev_servers: found.dev_servers,
                 }
             });
             if wsl.is_none() {

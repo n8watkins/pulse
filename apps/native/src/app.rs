@@ -414,6 +414,7 @@ impl Panel {
                         Dot::Busy => 2,
                     },
                     age: a.age.into(),
+                    port: a.port.into(),
                     group_end: a.group_end,
                     has_mark: a.mark.is_some(),
                     mark_path: a.mark.map(|m| m.path).unwrap_or_default().into(),

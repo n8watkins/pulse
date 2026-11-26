@@ -216,6 +216,9 @@ pub struct AppView {
     /// Session rows that look like another one (same agent, same folder): how
     /// long the session has run, small, to tell them apart. Else empty.
     pub age: String,
+    /// Sub rows that are dev servers: their port, small and muted, for example
+    /// ":3000" or ":3000 +1" (the lowest and how many more); else empty.
+    pub port: String,
     /// Head rows: the id of the group the following `Sub` rows belong to (the
     /// key of its saved open state); empty on every other row.
     pub group: String,
@@ -377,7 +380,18 @@ pub fn stress_snapshot(snap: &mut Snapshot) {
             wsl_proc("chrome-headless-shell", false, 4, 200, 0.3),
         ],
         sessions: stress_sessions(),
+        // Three digits, as on a PC with many agents.
+        dev_servers: Some(128),
     });
+    // Ports: five digits, and several ports on one row.
+    for (p, ports) in snap.wsl.iter_mut().flat_map(|w| w.procs.iter_mut()).zip([
+        vec![65535, 65534, 3000],
+        vec![65535],
+        vec![8000, 8001],
+        vec![],
+    ]) {
+        p.ports = ports;
+    }
 }
 
 /// Fourteen sessions: two busy, two in the same folder, one with a very long
@@ -446,6 +460,7 @@ fn wsl_proc(label: &str, agent: bool, count: u32, mem_mb: u64, cpu: f32) -> WslP
         count,
         mem_bytes: mem_mb * (1 << 20),
         cpu_pct: cpu,
+        ports: Vec::new(),
     }
 }
 
@@ -587,17 +602,42 @@ fn app_view(a: &AppRow, sort: Sort, wsl: Option<&Wsl>, max: f64) -> AppView {
         mark: None,
         dot: Dot::None,
         age: String::new(),
+        port: String::new(),
         group: String::new(),
         summary: String::new(),
         fold: Fold::None,
     }
 }
 
+/// The head row's detail line when it is open: the dev server count (it is not
+/// in the Linux rows, which show some of the programs) and "inside:" when
+/// there are rows below.
 fn wsl_detail(wsl: Option<&Wsl>) -> String {
-    if wsl.is_some_and(|w| !w.procs.is_empty()) {
-        "Linux virtual machine \u{b7} inside:".into()
-    } else {
-        "Linux virtual machine".into()
+    let mut text = String::from("Linux virtual machine");
+    if let Some(w) = wsl {
+        if let Some(servers) = servers_text(w.server_count()) {
+            text.push_str(" \u{b7} ");
+            text.push_str(&servers);
+        }
+        if !w.procs.is_empty() {
+            text.push_str(" \u{b7} inside:");
+        }
+    }
+    text
+}
+
+/// "3 dev servers", or `None` for none (zero is not shown).
+fn servers_text(n: u32) -> Option<String> {
+    (n > 0).then(|| format!("{n} dev server{}", if n == 1 { "" } else { "s" }))
+}
+
+/// The port text of a Linux row: ":3000", or ":3000 +2" for several (the
+/// lowest, then how many more). Empty without ports.
+fn port_text(ports: &[u16]) -> String {
+    match ports.iter().min() {
+        None => String::new(),
+        Some(low) if ports.len() == 1 => format!(":{low}"),
+        Some(low) => format!(":{low} +{}", ports.len() - 1),
     }
 }
 
@@ -622,6 +662,7 @@ fn reading_row() -> AppView {
         mark: None,
         dot: Dot::None,
         age: String::new(),
+        port: String::new(),
         group: String::new(),
         summary: String::new(),
         fold: Fold::None,
@@ -734,6 +775,7 @@ fn sub_rows(w: &Wsl, sort: Sort) -> Vec<AppView> {
                 mark,
                 dot,
                 age,
+                port: String::new(),
                 group: String::new(),
                 summary: String::new(),
                 fold: Fold::None,
@@ -761,6 +803,7 @@ fn sub_rows(w: &Wsl, sort: Sort) -> Vec<AppView> {
             mark,
             dot: Dot::None,
             age: String::new(),
+            port: port_text(&p.ports),
             group: String::new(),
             summary: String::new(),
             fold: Fold::None,
@@ -860,25 +903,25 @@ impl Mode {
     }
 }
 
-/// "14 programs \u{b7} 5 agents": the Linux programs that are not coding agents,
+/// "14 programs \u{b7} 5 agents \u{b7} 3 dev servers": the Linux programs that are not coding agents,
 /// counted by their process count, and the coding-agent sessions (each agent
 /// is counted once however many helper processes it has, so the two numbers
-/// never overlap). No agents: just the programs; nothing running inside:
-/// empty.
+/// never overlap), and the dev servers (counted from all Linux processes; left
+/// out when none or unknown). Parts that are zero are left out; nothing
+/// running inside: empty.
 pub fn wsl_summary(w: &Wsl) -> String {
     let programs: u32 = w.procs.iter().map(|p| p.count.max(1)).sum();
     let agents = u32::try_from(w.agent_count()).unwrap_or(u32::MAX);
     let noun = |n: u32, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
-    match (programs, agents) {
-        (0, 0) => String::new(),
-        (p, 0) => noun(p, "program", "programs"),
-        (0, a) => noun(a, "agent", "agents"),
-        (p, a) => format!(
-            "{} \u{b7} {}",
-            noun(p, "program", "programs"),
-            noun(a, "agent", "agents")
-        ),
-    }
+    [
+        (programs > 0).then(|| noun(programs, "program", "programs")),
+        (agents > 0).then(|| noun(agents, "agent", "agents")),
+        servers_text(w.server_count()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" \u{b7} ")
 }
 
 /// Applies the open or closed state of every group: a head row with sub items
@@ -1301,7 +1344,10 @@ mod tests {
         assert_eq!(wsl_rows.len(), 1);
         let w = wsl_rows[0];
         assert_eq!(w.name, "WSL (Linux)");
-        assert_eq!(w.detail, "Linux virtual machine \u{b7} inside:");
+        assert_eq!(
+            w.detail,
+            "Linux virtual machine \u{b7} 3 dev servers \u{b7} inside:"
+        );
         assert!(w.path.as_deref().is_some_and(|p| p.ends_with("wsl.exe")));
         let subs: Vec<_> = rows.iter().filter(|r| r.kind == RowKind::Sub).collect();
         // Sessions first (3 rows and a fold), then the biggest programs.
@@ -1717,11 +1763,14 @@ mod tests {
         let head = rows.last().unwrap();
         assert_eq!(
             head.detail,
-            format!("{programs} programs \u{b7} {agents} agents")
+            format!("{programs} programs \u{b7} {agents} agents \u{b7} 3 dev servers")
         );
         // The sample: five agent sessions, and 18 processes of other programs.
         assert_eq!((programs, agents), (18, 5));
-        assert_eq!(head.detail, "18 programs \u{b7} 5 agents");
+        assert_eq!(
+            head.detail,
+            "18 programs \u{b7} 5 agents \u{b7} 3 dev servers"
+        );
     }
 
     #[test]
@@ -1737,6 +1786,7 @@ mod tests {
             sessions: (0..agents)
                 .map(|pid| session("Claude Code", Some("p"), 10, 0.0, false, pid))
                 .collect(),
+            dev_servers: None,
         };
         assert_eq!(wsl_summary(&w(vec![], 0)), "");
         assert_eq!(wsl_summary(&w(vec![1], 0)), "1 program");
@@ -1745,6 +1795,68 @@ mod tests {
         assert_eq!(wsl_summary(&w(vec![9], 5)), "9 programs \u{b7} 5 agents");
         // Only agents running: no "0 programs".
         assert_eq!(wsl_summary(&w(vec![], 3)), "3 agents");
+    }
+
+    #[test]
+    fn the_summary_and_detail_count_dev_servers_and_omit_zero() {
+        let mut w = Wsl {
+            procs: vec![wsl_proc("x", false, 9, 10, 0.0)],
+            sessions: (0..5)
+                .map(|pid| session("Claude Code", Some("p"), 10, 0.0, false, pid))
+                .collect(),
+            dev_servers: Some(3),
+            ..Wsl::default()
+        };
+        assert_eq!(
+            wsl_summary(&w),
+            "9 programs \u{b7} 5 agents \u{b7} 3 dev servers"
+        );
+        assert_eq!(
+            wsl_detail(Some(&w)),
+            "Linux virtual machine \u{b7} 3 dev servers \u{b7} inside:"
+        );
+        w.dev_servers = Some(1);
+        assert_eq!(
+            wsl_summary(&w),
+            "9 programs \u{b7} 5 agents \u{b7} 1 dev server"
+        );
+        // Zero and unknown leave the count out.
+        for none in [Some(0), None] {
+            w.dev_servers = none;
+            assert_eq!(wsl_summary(&w), "9 programs \u{b7} 5 agents");
+            assert_eq!(wsl_detail(Some(&w)), "Linux virtual machine \u{b7} inside:");
+        }
+        // Servers alone, nothing else running in Linux.
+        let only = Wsl {
+            dev_servers: Some(2),
+            ..Wsl::default()
+        };
+        assert_eq!(wsl_summary(&only), "2 dev servers");
+        assert_eq!(
+            wsl_detail(Some(&only)),
+            "Linux virtual machine \u{b7} 2 dev servers"
+        );
+        assert_eq!(wsl_detail(None), "Linux virtual machine");
+    }
+
+    #[test]
+    fn a_dev_server_row_shows_its_lowest_port_and_how_many_more() {
+        assert_eq!(port_text(&[]), "");
+        assert_eq!(port_text(&[3000]), ":3000");
+        assert_eq!(port_text(&[8001, 8000]), ":8000 +1");
+        assert_eq!(port_text(&[5173, 9229, 24678]), ":5173 +2");
+        let rows = app_rows(&sample(), Sort::Memory);
+        let next = rows.iter().find(|r| r.name.starts_with("next-server"));
+        assert_eq!(next.map(|r| r.port.as_str()), Some(":3000"));
+        let others = rows
+            .iter()
+            .filter(|r| r.kind == RowKind::Sub && !r.name.starts_with("next-server"));
+        assert!(others.into_iter().all(|r| r.port.is_empty()));
+        // A worker with two ports, where the rows have room for it.
+        let mut snap = sample();
+        snap.wsl.as_mut().unwrap().sessions.clear();
+        let rows = app_rows(&snap, Sort::Processor);
+        assert!(rows.iter().any(|r| r.port == ":8000 +1"));
     }
 
     #[test]
@@ -1858,8 +1970,11 @@ mod tests {
         let head = |rows: &[AppView]| rows.iter().find(|r| r.kind == RowKind::Wsl).cloned();
         let (o, c) = (head(&open).unwrap(), head(&closed).unwrap());
         assert_eq!((o.fold, c.fold), (Fold::Open, Fold::Closed));
-        assert_eq!(o.detail, "Linux virtual machine \u{b7} inside:");
-        assert_eq!(c.detail, "18 programs \u{b7} 5 agents");
+        assert_eq!(
+            o.detail,
+            "Linux virtual machine \u{b7} 3 dev servers \u{b7} inside:"
+        );
+        assert_eq!(c.detail, "18 programs \u{b7} 5 agents \u{b7} 3 dev servers");
         assert!(closed.iter().all(|r| r.kind != RowKind::Sub));
         // Every app row is still there, in the same order.
         let apps = |rows: &[AppView]| {
