@@ -547,6 +547,8 @@ component Tile inherits Rectangle {
     in property <color> accent;
     // No reading: the value text is smaller so "Not reported" fits.
     in property <bool> small-v: false;
+    // A small note at the right of the value (the Drive tile's "1 of 3").
+    in property <string> note: "";
     height: 83px;
     border-radius: 12px;
     background: Theme.soft;
@@ -574,10 +576,22 @@ component Tile inherits Rectangle {
         overflow: elide;
     }
 
+    note-text := Text {
+        x: parent.width - 9px - self.width;
+        y: 26px;
+        width: root.note == "" ? 0px : self.preferred-width;
+        height: 19px;
+        text: root.note;
+        font-family: "Inter";
+        font-size: 11.5px;
+        color: Theme.mute;
+        vertical-alignment: center;
+    }
+
     Text {
         x: 9px;
         y: 26px;
-        width: parent.width - 18px;
+        width: parent.width - 18px - (root.note == "" ? 0px : note-text.width + 4px);
         height: 19px;
         text: root.v;
         font-family: "Space Grotesk";
@@ -1296,8 +1310,14 @@ export component PanelWindow inherits Window {
     in property <string> gpu-big: "";
     in property <bool> gpu-missing: false;
     in property <float> gpu-frac;
+    // The fullest drive (see view.rs): its name ("C:"), the tile title
+    // ("Drive C: free"), and "1 of 3" when there are several drives.
+    in property <string> drive-name: "C:";
+    in property <string> drive-key: "Drive C: free";
     in property <string> drive-big: "";
     in property <string> drive-sub: "";
+    in property <string> drive-count: "";
+    in property <bool> drive-missing: false;
     in property <float> drive-frac;
     in property <string> net-big: "";
     in property <string> net-sub: "";
@@ -1619,9 +1639,12 @@ export component PanelWindow inherits Window {
         x: 133px;
         y: root.tiles-y;
         width: 114px;
-        k: "Drive C: free";
+        k: root.drive-key;
         v: root.drive-big;
         s: root.drive-sub;
+        note: root.drive-count;
+        small-v: root.drive-missing;
+        bar: !root.drive-missing;
         frac: root.drive-frac;
         accent: Theme.c-drive;
     }
@@ -1727,9 +1750,9 @@ export component PanelWindow inherits Window {
         }
 
         FootFig {
-            pre: "C:";
-            val: root.drive-big;
-            post: "free";
+            pre: root.drive-missing ? "Drive" : root.drive-name;
+            val: root.drive-missing ? "n/a" : root.drive-big;
+            post: root.drive-missing ? "" : root.drive-count != "" ? "free · " + root.drive-count : "free";
             accent: Theme.c-drive;
         }
 

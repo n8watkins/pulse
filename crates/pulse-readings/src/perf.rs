@@ -1,14 +1,14 @@
 //! Graphics, drive, network and battery readings, Windows only.
 
-use crate::Battery;
+use crate::drives::Drives;
 use crate::net::Counters;
+use crate::{Battery, Drive};
 use core::ffi::c_void;
 use core::ptr::null_mut;
 use std::time::{Duration, Instant};
 use windows_sys::Win32::NetworkManagement::IpHelper::{
     FreeMibTable, GetIfTable2, MIB_IF_ROW2, MIB_IF_TABLE2,
 };
-use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 use windows_sys::Win32::System::Performance::{
     PDH_FMT_COUNTERVALUE, PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_MORE_DATA,
     PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW,
@@ -16,7 +16,8 @@ use windows_sys::Win32::System::Performance::{
 };
 use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 
-/// Space and battery change slowly: read them at most this often.
+/// The battery changes slowly: read it at most this often (drives keep their
+/// own pace, see `drives.rs`).
 const SLOW: Duration = Duration::from_secs(30);
 /// A rate over a shorter span than this is noise: keep the previous figure.
 const MIN_SPAN: Duration = Duration::from_millis(250);
@@ -158,10 +159,7 @@ unsafe impl Send for Query {}
 #[derive(Default)]
 pub(crate) struct Extra {
     pub gpu_pct: Option<f32>,
-    pub disk_free: u64,
-    pub disk_total: u64,
-    pub disk_read_bps: u64,
-    pub disk_write_bps: u64,
+    pub drives: Vec<Drive>,
     pub net_down_bps: u64,
     pub net_up_bps: u64,
     pub battery: Option<Battery>,
@@ -170,11 +168,9 @@ pub(crate) struct Extra {
 pub(crate) struct Extras {
     gpu: Option<Query>,
     gpu_last: Option<f32>,
-    disk: Option<Query>,
-    disk_last: (u64, u64),
+    drives: Drives,
     net: Option<(Instant, Counters)>,
     net_last: (u64, u64),
-    space: Option<(Instant, u64, u64)>,
     battery: Option<(Instant, Option<Battery>)>,
 }
 
@@ -183,29 +179,20 @@ impl Extras {
         Self {
             gpu: Query::new(&[GPU_COUNTER]),
             gpu_last: None,
-            disk: Query::new(&[
-                r"\PhysicalDisk(_Total)\Disk Read Bytes/sec",
-                r"\PhysicalDisk(_Total)\Disk Write Bytes/sec",
-            ]),
-            disk_last: (0, 0),
+            drives: Drives::new(),
             net: None,
             net_last: (0, 0),
-            space: None,
             battery: None,
         }
     }
 
     pub fn read(&mut self) -> Extra {
         let gpu_pct = self.gpu();
-        let (disk_read_bps, disk_write_bps) = self.disk();
+        let drives = self.drives.read();
         let (net_down_bps, net_up_bps) = self.network();
-        let (disk_free, disk_total) = self.space();
         Extra {
             gpu_pct,
-            disk_free,
-            disk_total,
-            disk_read_bps,
-            disk_write_bps,
+            drives,
             net_down_bps,
             net_up_bps,
             battery: self.battery(),
@@ -224,16 +211,6 @@ impl Extras {
                     .map(|v| v as f32);
         }
         self.gpu_last
-    }
-
-    fn disk(&mut self) -> (u64, u64) {
-        if let Some(q) = &self.disk
-            && q.collect()
-        {
-            let f = |v: Option<f64>| v.map_or(0, |x| x.max(0.0) as u64);
-            self.disk_last = (f(q.value(0)), f(q.value(1)));
-        }
-        self.disk_last
     }
 
     /// Bytes per second since the previous read, over real adapters only.
@@ -256,21 +233,6 @@ impl Extras {
         }
         self.net = Some((now, cur));
         self.net_last
-    }
-
-    fn space(&mut self) -> (u64, u64) {
-        if let Some((t, free, total)) = self.space
-            && t.elapsed() < SLOW
-        {
-            return (free, total);
-        }
-        let root = wide("C:\\");
-        let (mut avail, mut total, mut free) = (0u64, 0u64, 0u64);
-        // SAFETY: valid out pointers.
-        let ok = unsafe { GetDiskFreeSpaceExW(root.as_ptr(), &mut avail, &mut total, &mut free) };
-        let r = if ok != 0 { (avail, total) } else { (0, 0) };
-        self.space = Some((Instant::now(), r.0, r.1));
-        r
     }
 
     fn battery(&mut self) -> Option<Battery> {

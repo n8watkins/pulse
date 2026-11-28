@@ -377,8 +377,12 @@ impl Panel {
         ui.set_gpu_big(t.gpu_big.into());
         ui.set_gpu_missing(t.gpu_missing);
         ui.set_gpu_frac(t.gpu_frac);
+        ui.set_drive_name(t.drive_name.into());
+        ui.set_drive_key(t.drive_key.into());
         ui.set_drive_big(t.drive_big.into());
         ui.set_drive_sub(t.drive_sub.into());
+        ui.set_drive_count(t.drive_count.into());
+        ui.set_drive_missing(t.drive_missing);
         ui.set_drive_frac(t.drive_frac);
         ui.set_net_big(t.net_big.into());
         ui.set_net_sub(t.net_sub.into());
@@ -1004,6 +1008,9 @@ fn spawn_reader(
         let stress = std::env::var_os("PULSE_STRESS").is_some();
         let warn = std::env::var_os("PULSE_WARN").is_some();
         let no_apps = std::env::var_os("PULSE_NOAPPS").is_some();
+        let drives_sim = std::env::var("PULSE_DRIVES")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok());
         let battery = std::env::var("PULSE_BATTERY")
             .ok()
             .and_then(|v| logic::parse_battery(&v));
@@ -1088,13 +1095,19 @@ fn spawn_reader(
                 snap.cpu_pct = 92.0;
                 snap.uptime_s = 9 * 86_400;
             }
+            if let Some(n) = drives_sim {
+                // A development knob: made-up drives after the real ones.
+                let mut drives = std::mem::take(&mut snap.drives);
+                pulse_readings::simulate_drives(&mut drives, n);
+                snap.set_drives(drives);
+            }
             force_apps = false;
             let now = Instant::now();
             hist.push(&snap, now);
             let key = tray::key_for(&snap, win::system_dpi());
             let mut extra = view::Extra::from_snapshot(&snap);
             if stress {
-                extra = view::Extra::stress();
+                extra = view::Extra::stress(snap.drives.len());
             }
             *latest
                 .lock()

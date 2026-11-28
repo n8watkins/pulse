@@ -9,6 +9,8 @@ use serde::Serialize;
 
 // The pure logic builds everywhere so its tests run on Linux too.
 #[cfg_attr(not(windows), allow(dead_code))]
+mod drives;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod gpu;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod group;
@@ -48,10 +50,15 @@ pub struct Snapshot {
     pub wsl: Option<Wsl>,
     /// 3D engine use, 0 to 100. `None` when the PC does not report it (never 0).
     pub gpu_pct: Option<f32>,
-    /// Drive C:, bytes.
+    /// Every drive the reader counts, in the system's order (letter order on
+    /// Windows: fixed local volumes with a letter, see the README). Empty when
+    /// none could be read.
+    pub drives: Vec<Drive>,
+    /// Drive C: (or the first drive when there is no C:), bytes. Kept for
+    /// older readers of the snapshot; set with [`Snapshot::set_drives`].
     pub disk_free: u64,
     pub disk_total: u64,
-    /// Drive activity, bytes per second.
+    /// Activity of all of `drives` together, bytes per second.
     pub disk_read_bps: u64,
     pub disk_write_bps: u64,
     /// Network over real adapters (Ethernet and Wi-Fi), bytes per second.
@@ -59,6 +66,107 @@ pub struct Snapshot {
     pub net_up_bps: u64,
     /// `None` when the PC has no battery.
     pub battery: Option<Battery>,
+}
+
+impl Snapshot {
+    /// Sets `drives` and the single-drive fields that follow from them.
+    pub fn set_drives(&mut self, drives: Vec<Drive>) {
+        let main = drives
+            .iter()
+            .find(|d| d.name.eq_ignore_ascii_case("C:"))
+            .or(drives.first());
+        (self.disk_free, self.disk_total) = main.map_or((0, 0), |d| (d.free, d.total));
+        self.disk_read_bps = drives.iter().map(|d| d.read_bps).sum();
+        self.disk_write_bps = drives.iter().map(|d| d.write_bps).sum();
+        self.drives = drives;
+    }
+}
+
+/// One drive as the user knows it. Platform neutral: a Windows reader names
+/// it by its letter ("C:"), another system may use a volume name.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct Drive {
+    /// The name to show, for example "C:". Never assumed to be a letter.
+    pub name: String,
+    /// The volume label, for example "Data". `None` when it has none.
+    pub label: Option<String>,
+    /// Bytes free for the user (what Explorer shows).
+    pub free: u64,
+    /// Size in bytes, never 0 for a listed drive.
+    pub total: u64,
+    /// Activity, bytes per second.
+    pub read_bps: u64,
+    pub write_bps: u64,
+}
+
+impl Drive {
+    /// Whether this drive has a smaller share free than `other`.
+    fn fuller_than(&self, other: &Drive) -> bool {
+        // free / total < other.free / other.total, exact in integers.
+        u128::from(self.free) * u128::from(other.total)
+            < u128::from(other.free) * u128::from(self.total)
+    }
+
+    /// Whether under `pct` percent of the drive is free.
+    #[must_use]
+    pub fn free_under(&self, pct: u8) -> bool {
+        self.total > 0 && u128::from(self.free) * 100 < u128::from(self.total) * u128::from(pct)
+    }
+
+    /// The share used, 0 to 1.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn used_share(&self) -> f32 {
+        if self.total == 0 {
+            return 0.0;
+        }
+        (self.total.saturating_sub(self.free) as f64 / self.total as f64) as f32
+    }
+}
+
+/// The fullest drive: the smallest share free. On a tie, the first in the
+/// list. Drives of no size are passed over.
+#[must_use]
+pub fn fullest(drives: &[Drive]) -> Option<&Drive> {
+    drives
+        .iter()
+        .filter(|d| d.total > 0)
+        .fold(None, |best: Option<&Drive>, d| match best {
+            Some(b) if !d.fuller_than(b) => Some(b),
+            _ => Some(d),
+        })
+}
+
+/// Extra made-up drives after the real ones, up to `count` drives in all
+/// (`PULSE_DRIVES=<count>`, a development knob for a PC with one drive). The
+/// first one added is nearly full; they take the next free letters.
+pub fn simulate_drives(drives: &mut Vec<Drive>, count: usize) {
+    const MADE_UP: [(&str, u64, u64, u64, u64); 4] = [
+        // label, total GB, free GB, read MB/s, write MB/s
+        ("Games", 931, 38, 42, 3),
+        ("Data", 1863, 1120, 0, 1),
+        ("Backup", 3726, 2900, 0, 0),
+        ("Spare", 466, 300, 0, 0),
+    ];
+    let mut letters = (b'D'..=b'Z')
+        .map(|b| format!("{}:", char::from(b)))
+        .filter(|n| !drives.iter().any(|d| d.name.eq_ignore_ascii_case(n)))
+        .collect::<Vec<_>>()
+        .into_iter();
+    let mut made = MADE_UP.iter().cycle();
+    while drives.len() < count.min(26) {
+        let (Some(name), Some(&(label, total, free, r, w))) = (letters.next(), made.next()) else {
+            break;
+        };
+        drives.push(Drive {
+            name,
+            label: Some(label.into()),
+            free: free * GB,
+            total: total * GB,
+            read_bps: r * MB,
+            write_bps: w * MB,
+        });
+    }
 }
 
 /// The battery of a laptop.
@@ -354,7 +462,16 @@ impl Source for Sample {
             dev_servers: Some(3),
         });
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        Snapshot {
+        let c = Drive {
+            name: "C:".into(),
+            label: Some("Windows".into()),
+            free: 296 * GB,
+            total: 953 * GB,
+            read_bps: (0.2 * MB as f64 + 3.0 * MB as f64 * busy) as u64,
+            write_bps: (0.1 * MB as f64 + 1.2 * MB as f64 * busy) as u64,
+        };
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let mut snap = Snapshot {
             cpu_pct: (24.0 + 14.0 * wave) as f32,
             cores: 16,
             uptime_s: 3 * 86_400 + 4 * 3_600 + u64::from(self.tick) * 2,
@@ -364,14 +481,13 @@ impl Source for Sample {
             apps_by_cpu,
             wsl,
             gpu_pct: Some((4.0 + 18.0 * busy) as f32),
-            disk_free: 296 * GB,
-            disk_total: 953 * GB,
-            disk_read_bps: (0.2 * MB as f64 + 3.0 * MB as f64 * busy) as u64,
-            disk_write_bps: (0.1 * MB as f64 + 1.2 * MB as f64 * busy) as u64,
             net_down_bps: (3.0e4 + (2.5e6 - 3.0e4) * busy) as u64,
             net_up_bps: (1.0e4 + (3.0e5 - 1.0e4) * busy) as u64,
             battery: None,
-        }
+            ..Snapshot::default()
+        };
+        snap.set_drives(vec![c]);
+        snap
     }
 }
 
@@ -422,5 +538,110 @@ mod tests {
         assert_eq!(Wsl::default().server_count(), 0);
         let off = s.read(false);
         assert!(off.apps_by_cpu.is_empty() && off.wsl.is_none());
+    }
+
+    fn drive(name: &str, free: u64, total: u64) -> Drive {
+        Drive {
+            name: name.into(),
+            free: free * GB,
+            total: total * GB,
+            ..Drive::default()
+        }
+    }
+
+    #[test]
+    fn the_sample_has_one_drive_and_the_old_fields_follow_it() {
+        let x = Sample::default().read(false);
+        assert_eq!(x.drives.len(), 1);
+        let c = &x.drives[0];
+        assert_eq!(c.name, "C:");
+        assert_eq!((x.disk_free, x.disk_total), (296 * GB, 953 * GB));
+        assert_eq!(x.disk_read_bps, c.read_bps);
+        assert!(c.read_bps > 0 && c.write_bps > 0);
+    }
+
+    #[test]
+    fn the_old_fields_take_c_and_add_up_the_speeds() {
+        let mut s = Snapshot::default();
+        let mut d = drive("D:", 10, 100);
+        d.read_bps = 5;
+        let mut c = drive("C:", 50, 200);
+        c.read_bps = 2;
+        c.write_bps = 1;
+        s.set_drives(vec![d.clone(), c]);
+        assert_eq!((s.disk_free, s.disk_total), (50 * GB, 200 * GB));
+        assert_eq!((s.disk_read_bps, s.disk_write_bps), (7, 1));
+        // No C: (another system, or a PC that boots from D:): the first one.
+        s.set_drives(vec![d]);
+        assert_eq!(s.disk_total, 100 * GB);
+        s.set_drives(Vec::new());
+        assert_eq!((s.disk_free, s.disk_total, s.disk_read_bps), (0, 0, 0));
+    }
+
+    #[test]
+    fn the_fullest_drive_has_the_smallest_share_free() {
+        assert_eq!(fullest(&[]), None);
+        let v = [
+            drive("C:", 300, 1000),
+            drive("D:", 100, 2000),
+            drive("E:", 50, 500),
+        ];
+        // D: has the most used bytes share (5% free), not E: with the fewest bytes free (10%).
+        assert_eq!(fullest(&v).unwrap().name, "D:");
+        // A tie goes to the first one.
+        let tie = [drive("C:", 10, 100), drive("D:", 20, 200)];
+        assert_eq!(fullest(&tie).unwrap().name, "C:");
+        // A drive of no size never wins.
+        let odd = [drive("C:", 500, 1000), drive("Z:", 0, 0)];
+        assert_eq!(fullest(&odd).unwrap().name, "C:");
+        // Huge sizes do not overflow.
+        let big = [
+            Drive {
+                name: "A".into(),
+                free: u64::MAX / 2,
+                total: u64::MAX,
+                ..Drive::default()
+            },
+            Drive {
+                name: "B".into(),
+                free: u64::MAX / 3,
+                total: u64::MAX,
+                ..Drive::default()
+            },
+        ];
+        assert_eq!(fullest(&big).unwrap().name, "B");
+    }
+
+    #[test]
+    fn free_under_is_strict_and_used_share_is_a_fraction() {
+        let d = drive("C:", 8, 100);
+        assert!(!d.free_under(8), "8% free is not under 8%");
+        assert!(drive("C:", 7, 100).free_under(8));
+        assert!(!Drive::default().free_under(8));
+        assert!((d.used_share() - 0.92).abs() < 1e-6);
+        assert_eq!(Drive::default().used_share(), 0.0);
+    }
+
+    #[test]
+    fn simulated_drives_add_up_to_the_count_with_one_nearly_full() {
+        let mut v = Sample::default().read(false).drives;
+        simulate_drives(&mut v, 3);
+        let names: Vec<&str> = v.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["C:", "D:", "E:"]);
+        assert!(v[1].free_under(8), "D: is nearly full");
+        assert!(!v[0].free_under(8) && !v[2].free_under(8));
+        assert_eq!(fullest(&v).unwrap().name, "D:");
+        // Never fewer than there are, never a letter twice, at most 26.
+        simulate_drives(&mut v, 1);
+        assert_eq!(v.len(), 3);
+        let mut w = vec![drive("C:", 1, 2), drive("D:", 1, 2)];
+        simulate_drives(&mut w, 3);
+        assert_eq!(w[2].name, "E:");
+        simulate_drives(&mut w, 99);
+        assert_eq!(w.len(), 24, "C: plus D: to Z:");
+        let mut seen: Vec<&str> = w.iter().map(|d| d.name.as_str()).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), 24);
     }
 }
