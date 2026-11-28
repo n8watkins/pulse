@@ -1,8 +1,9 @@
-//! Graphics, drive, network and battery readings, Windows only.
+//! Graphics (see `cards`), drive, network and battery readings, Windows only.
 
+use crate::cards::Cards;
 use crate::drives::Drives;
 use crate::net::Counters;
-use crate::{Battery, Drive};
+use crate::{Battery, Drive, Gpu};
 use core::ffi::c_void;
 use core::ptr::null_mut;
 use std::time::{Duration, Instant};
@@ -21,16 +22,6 @@ use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATU
 const SLOW: Duration = Duration::from_secs(30);
 /// A rate over a shorter span than this is noise: keep the previous figure.
 const MIN_SPAN: Duration = Duration::from_millis(250);
-
-/// The per-process 3D engine counter, one instance per (process, engine).
-///
-/// Added once and never rebuilt: PDH re-expands the wildcard on every collect.
-/// Observed on this PC (Windows 11, 2026-11-25) with a query held open while a
-/// process created a Direct3D 11 device and released it again: the instance
-/// of the new process appeared in the same sample and vanished again after the
-/// release, and the instance count matched a freshly built query on every
-/// sample. (A rebuild every 15 reads only dropped a reading and the history.)
-const GPU_COUNTER: &str = r"\GPU Engine(*engtype_3D)\Utilization Percentage";
 
 const IF_TYPE_ETHERNET: u32 = 6;
 const IF_TYPE_WIFI: u32 = 71;
@@ -158,7 +149,7 @@ unsafe impl Send for Query {}
 /// What one read adds to a snapshot.
 #[derive(Default)]
 pub(crate) struct Extra {
-    pub gpu_pct: Option<f32>,
+    pub gpus: Vec<Gpu>,
     pub drives: Vec<Drive>,
     pub net_down_bps: u64,
     pub net_up_bps: u64,
@@ -166,8 +157,7 @@ pub(crate) struct Extra {
 }
 
 pub(crate) struct Extras {
-    gpu: Option<Query>,
-    gpu_last: Option<f32>,
+    gpu: Cards,
     drives: Drives,
     net: Option<(Instant, Counters)>,
     net_last: (u64, u64),
@@ -177,8 +167,7 @@ pub(crate) struct Extras {
 impl Extras {
     pub fn new() -> Self {
         Self {
-            gpu: Query::new(&[GPU_COUNTER]),
-            gpu_last: None,
+            gpu: Cards::new(),
             drives: Drives::new(),
             net: None,
             net_last: (0, 0),
@@ -187,30 +176,16 @@ impl Extras {
     }
 
     pub fn read(&mut self) -> Extra {
-        let gpu_pct = self.gpu();
+        let gpus = self.gpu.read();
         let drives = self.drives.read();
         let (net_down_bps, net_up_bps) = self.network();
         Extra {
-            gpu_pct,
+            gpus,
             drives,
             net_down_bps,
             net_up_bps,
             battery: self.battery(),
         }
-    }
-
-    fn gpu(&mut self) -> Option<f32> {
-        let q = self.gpu.as_ref()?;
-        if !q.collect() {
-            return self.gpu_last;
-        }
-        if let Some(items) = q.instances(0) {
-            // No valid 3D engine at all means the PC does not report one.
-            self.gpu_last =
-                crate::gpu::busiest(items.iter().map(|(n, v, ok)| (n.as_str(), *v, *ok)))
-                    .map(|v| v as f32);
-        }
-        self.gpu_last
     }
 
     /// Bytes per second since the previous read, over real adapters only.

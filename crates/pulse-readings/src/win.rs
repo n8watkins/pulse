@@ -391,7 +391,8 @@ impl Source for Windows {
             apps,
             apps_by_cpu,
             wsl,
-            gpu_pct: x.gpu_pct,
+            gpu_pct: crate::busiest_gpu(&x.gpus).and_then(|g| g.busy_pct),
+            gpus: x.gpus,
             net_down_bps: x.net_down_bps,
             net_up_bps: x.net_up_bps,
             battery: x.battery,
@@ -471,6 +472,14 @@ mod tests {
         assert!(s.drives.iter().all(|d| d.total > 0 && d.free <= d.total));
         assert!(s.drives.iter().any(|d| d.name == "C:"));
         assert!(s.gpu_pct.is_none_or(|g| (0.0..=100.0).contains(&g)));
+        assert_eq!(
+            s.gpu_pct,
+            crate::busiest_gpu(&s.gpus).and_then(|g| g.busy_pct)
+        );
+        for g in &s.gpus {
+            assert!(g.busy_pct.is_none_or(|v| (0.0..=100.0).contains(&v)));
+            assert!(!g.name.contains("Basic Render"), "{}", g.name);
+        }
         assert!(s.battery.is_none_or(|b| b.pct <= 100));
     }
 
@@ -686,5 +695,38 @@ mod tests {
             compared += 1;
         }
         assert!(compared > 0, "nothing to compare");
+    }
+
+    /// This PC has a discrete card with video memory and the processor's
+    /// integrated graphics; the software adapter is left out.
+    #[test]
+    fn live_graphics_cards() {
+        if !live("live_graphics_cards") {
+            return;
+        }
+        let mut w = Windows::new();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let s = w.read(false);
+        for g in &s.gpus {
+            println!(
+                "{:#018x} {:<32} busy {:?} lead {:?} used {:?} MiB of {:?} MiB",
+                g.luid,
+                g.name,
+                g.busy_pct,
+                g.lead,
+                g.mem_used.map(|b| b >> 20),
+                g.mem_total.map(|b| b >> 20)
+            );
+        }
+        assert!(!s.gpus.is_empty(), "no card");
+        assert!(s.gpus.iter().all(|g| !g.name.is_empty()));
+        assert!(s.gpus.iter().all(|g| !g.name.contains("Microsoft Basic")));
+        let big = s.gpus.iter().max_by_key(|g| g.mem_total).expect("a card");
+        assert!(big.mem_total.unwrap_or(0) >= 4 << 30, "{big:?}");
+        assert!(
+            big.mem_used
+                .is_some_and(|u| u > 0 && u <= big.mem_total.unwrap())
+        );
+        assert!(big.busy_pct.is_some());
     }
 }
