@@ -1,5 +1,5 @@
 <meta name="claude:viewport-fit-sides" content="cover">
-<title>Pulse drives and cards</title>
+<title>Pulse with several drives and cards</title>
 <style>
 /* LAYOUT: a fixed stage (the Pulse panel at real size above a tray bar) with view and "this PC has" switches on top, beside (sideways) or above (upright) a scrolling list of grouped options. The page itself never scrolls. */
 :root{color-scheme:light;
@@ -21,22 +21,24 @@ body{touch-action:manipulation;margin:0;background:var(--pg);color:var(--pink);f
 button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
 button:focus-visible,.opt:focus-visible{outline:2px solid var(--pick);outline-offset:2px;border-radius:8px}
 .wrap{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr);gap:8px;max-width:1100px;margin:0 auto}
-.head{display:flex;align-items:flex-start;gap:10px}
-.head>div{flex:1}
+.head{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px 10px}
+.head>div:first-child{flex:1}
+.head .sbar{flex-basis:100%;order:3}
 .head h1{margin:0;font:700 18px/1.15 var(--display);text-wrap:balance}
 .head p{margin:2px 0 0;font-size:13px;color:var(--pmute)}
 .theme{flex:none;border:1px solid var(--pline);background:var(--card);border-radius:8px;padding:5px 10px;font-size:13px;font-weight:600;min-height:34px}
 .body{display:grid;grid-template-rows:minmax(0,64%) minmax(0,1fr);gap:10px}
-.left{display:grid;grid-template-rows:auto minmax(0,1fr);gap:6px}
+.left{display:grid;grid-template-rows:minmax(0,1fr)}
 
 /* switches and stage */
 .sbar{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
 .vseg{flex:none;display:flex;align-items:center;background:var(--card);border:1px solid var(--pline);border-radius:8px;padding:2px}
-.vseg button{font-size:12.5px;padding:4px 6px;border-radius:6px;color:var(--pmute);min-height:30px;min-width:28px;font-weight:500}
+.vseg button{font-size:12.5px;padding:4px 5px;border-radius:6px;color:var(--pmute);min-height:30px;min-width:28px;font-weight:500}
 .vseg [aria-pressed=true]{background:var(--pink);color:var(--pg);font-weight:600}
 .vseg .lead{font-size:11.5px;color:var(--pmute);padding:0 2px 0 4px;white-space:nowrap}
 .zoom{flex:none;font-size:12px;font-weight:600;border:1px solid var(--pline);background:var(--card);border-radius:6px;padding:2px 8px;min-height:26px;white-space:nowrap}
-.zoom[aria-pressed=true]{background:var(--pink);color:var(--pg);border-color:var(--pink)}
+@media (max-width:430px){.taskbar .clock{display:none}}
+@media (max-width:380px){.vseg button{padding:4px}}
 .stage{position:relative;overflow:hidden;border-radius:14px;background:var(--wall);border:1px solid var(--pline)}
 .taskbar{position:absolute;left:0;right:0;bottom:0;height:36px;background:var(--tbar);border-top:1px solid var(--pline);display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:0 8px;z-index:3}
 .taskbar .hint{margin-right:auto;font-size:12px;color:var(--pmute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
@@ -80,19 +82,22 @@ button:focus-visible,.opt:focus-visible{outline:2px solid var(--pick);outline-of
 }
 @media (orientation:landscape) and (max-height:480px){
   body{padding-block:6px}
-  .wrap{gap:4px}
+  .wrap{gap:6px}
+  .head{flex-wrap:nowrap;align-items:center}
   .head p{display:none}
-  .head h1{font-size:15px;padding-top:6px}
-  .theme{min-height:28px;padding:3px 8px;font-size:12px}
+  .head h1{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .head .sbar{flex-basis:auto;order:0;flex:none;flex-wrap:nowrap}
+  .theme{order:1;margin-left:auto;min-height:28px;padding:3px 8px;font-size:12px}
   .body{grid-template-columns:minmax(0,1fr) minmax(230px,42%)}
   .sbar{gap:4px}
-  .vseg button{min-height:26px;padding:2px 7px;font-size:12px}
+  .vseg button{min-height:26px;padding:2px 5px;font-size:12px}
   .vseg .lead{font-size:11.5px;padding:0 2px 0 4px}
   .taskbar{height:28px}
   .taskbar .clock{display:none}
   #tray{width:24px;height:24px}
   .holder{bottom:36px}
 }
+@media (orientation:landscape) and (max-height:480px) and (max-width:720px){.head>div:first-child{display:none}}
 @media (max-height:700px) and (orientation:portrait){.head p{display:none}}
 
 /* ---------- the Pulse panel, drawn from data; sizes from apps/native/ui/panel.slint ---------- */
@@ -255,13 +260,10 @@ button:focus-visible,.opt:focus-visible{outline:2px solid var(--pick);outline-of
 <div class="wrap">
   <header class="head">
     <div>
-      <h1>Pulse with more than one drive or graphics card</h1>
-      <p>Only a PC with two or more drives or cards shows these. With one of each, Pulse looks as it does today. Star what you keep.</p>
+      <h1>Pulse with several drives and cards</h1>
+      <p>Your PC has one drive and two graphics cards, so the card choices apply to it today and the drive choices do not. Star what you keep.</p>
     </div>
     <button class="theme" id="theme" type="button">Dark</button>
-  </header>
-  <div class="body">
-    <div class="left">
       <div class="sbar">
         <div class="vseg" role="group" aria-label="Which view the panel shows">
           <button type="button" data-view="expanded" aria-pressed="true">Expanded</button>
@@ -269,8 +271,8 @@ button:focus-visible,.opt:focus-visible{outline:2px solid var(--pick);outline-of
         </div>
         <div class="vseg" role="group" aria-label="This PC has how many drives">
           <span class="lead">Drives</span>
-          <button type="button" data-drives="1" aria-pressed="false" aria-label="1 drive">1</button>
-          <button type="button" data-drives="3" aria-pressed="true" aria-label="3 drives">3</button>
+          <button type="button" data-drives="1" aria-pressed="true" aria-label="1 drive">1</button>
+          <button type="button" data-drives="3" aria-pressed="false" aria-label="3 drives">3</button>
         </div>
         <div class="vseg" role="group" aria-label="This PC has how many graphics cards">
           <span class="lead">Cards</span>
@@ -278,10 +280,13 @@ button:focus-visible,.opt:focus-visible{outline:2px solid var(--pick);outline-of
           <button type="button" data-cards="2" aria-pressed="true" aria-label="2 cards">2</button>
         </div>
       </div>
+  </header>
+  <div class="body">
+    <div class="left">
       <section class="stage" id="stage" aria-label="Preview of the panel above the tray">
         <div class="holder" id="holder" data-open="1"><div class="pulse ex" id="pulse"></div></div>
         <div class="taskbar">
-          <button class="zoom" id="zoom" type="button" aria-pressed="true" title="Close-up shows the bottom of the panel at nearly real size">Close-up</button>
+          <button class="zoom" id="zoom" type="button">Whole panel</button>
           <span class="hint" id="hint"></span>
           <button id="tray" type="button" aria-label="Tray icon: hide or show the panel"><svg width="22" height="22" viewBox="0 0 256 256" aria-hidden="true"><rect x="16" y="16" width="224" height="224" rx="52" fill="#0d0f0e"/><path d="M50 140h42l20-52 28 94 20-62 14 20h32" fill="none" stroke="#b8f5d0" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           <span class="clock">9:41 AM<br>11/27/2026</span>
@@ -309,7 +314,7 @@ const D = {
   // Graphics cards: busy percent, the kind of work that leads, video memory in GB.
   cards: [
     { name: 'Radeon RX 7800 XT', short: 'RX 7800 XT', pct: 14, kind: '3D', used: 9.2, total: 16 },
-    { name: 'Radeon Graphics', short: 'Built-in', note: 'built in', pct: 3, kind: 'Video', used: 0.4, total: 2 }
+    { name: 'AMD Radeon Graphics', short: 'Built-in', note: 'built in', pct: 3, kind: 'Video', used: 0.4, total: 2 }
   ],
   apps: [
     { name: 'Google Chrome', exe: 'chrome.exe', procs: 24, mem: 2150, cpu: 6.1, c: '#4285F4' },
@@ -437,7 +442,7 @@ function popList(P) {
   const drv = P.pop === 'drv', items = drv ? drivesOf(P) : cardsOf(P);
   const rows = items.map((x, k) => drv
     ? rowX({ ico: letter(DRV_BG, x.l[0]), name: x.l, val: `${x.free} GB free`, warn: isLow(x), detail: `of ${x.tl} · ${x.speed}`, frac: share(x), color: isLow(x) ? 'var(--warn)' : 'var(--drv)', last: k === items.length - 1 })
-    : rowX({ ico: ico(GPU_BG, G_CHIP), name: x.name + (x.note ? ` (${x.note})` : ''), tg: `${x.kind} leads`, val: PC(x.pct), detail: `${vram(x)} video memory`, frac: x.pct / 100, color: 'var(--gpu)', last: k === items.length - 1 })).join('');
+    : rowX({ ico: ico(GPU_BG, G_CHIP), name: x.name, tg: `${x.kind} leads`, val: PC(x.pct), detail: `${x.note ? 'Built in · ' : ''}${vram(x)} video memory`, frac: x.pct / 100, color: 'var(--gpu)', last: k === items.length - 1 })).join('');
   return `<div class="pop" role="dialog" aria-label="${drv ? 'Every drive' : 'Every graphics card'}"><div class="ph"><b>${drv ? 'Drives' : 'Graphics cards'}</b><span>${items.length} ${drv ? 'drives' : 'cards'}</span><button class="ib" type="button" data-act="pop" data-k="${P.pop}" aria-label="Close the list">${I_X}</button></div>${rows}</div>`;
 }
 
@@ -474,26 +479,26 @@ function panelHTML(P) {
 
 /* ---------- choices ---------- */
 const GROUPS = [
-  { id: 'g1', title: '1. Several drives, expanded view', blurb: 'Only on a PC with two or more fixed drives. With one drive the Drive tile stays as it is today (set Drives to 1 above to check). Tap the tile or the Drives row in the panel to try each one.', rec: '<b>My pick: A.</b> The tiles keep their size and look, the tile shows the drive that needs you (the fullest one), and every drive is one tap away. B has no room for speeds at a third of the panel width. C reuses the WSL arrow you know, but it takes about one app row from the list for good, and three more when open.', opts: [
+  { id: 'g1', title: '1. Several drives, expanded view', blurb: 'Only on a PC with two or more fixed drives. Your PC has one drive, so this does not change it today. With one drive the Drive tile stays as it is now (set Drives to 1 above to check). Tap the tile or the Drives row in the panel to try each one.', rec: '<b>My pick: A.</b> The tiles keep their size and look, the tile shows the drive that needs you (the fullest one), and every drive is one tap away. B has no room for speeds at a third of the panel width. C reuses the WSL arrow you know, but it takes about one app row from the list for good, and about one and a half more when open.', opts: [
     { id: 'a', title: 'A Fullest drive, tap for all', d: 'The tile shows the fullest drive and a small "1 of 3". Tap it: a list over the tiles shows every drive with its free space, a thin bar and its speed. Tap again, or the X, to close.', tag: 'My pick' },
     { id: 'b', title: 'B Short rows inside the tile', d: 'Up to three one-line rows in the same tile height, each with free space and a thin bar. A fourth drive adds "+1" in the corner. No speeds.' },
     { id: 'c', title: 'C A Drives row with an arrow', d: 'The Drive tile goes. A Drives row sits above the tiles, like the WSL row: tap it to open one line per drive. Graphics and Network get wider.' },
     { id: 'd', title: 'D Today: always C:', d: 'The tile always shows C:, as now. Other drives are not shown anywhere.' }] },
-  { id: 'g2', title: '2. Several graphics cards, expanded view', blurb: 'Only on a PC with two or more cards, often a gaming card plus the one built into the processor. Every PC gets the video memory line ("9.2 of 16 GB") now: set Cards to 1 above to see that tile.', rec: '<b>My pick: A.</b> Same reason as drives: the tile stays calm and names the busy card, and the list has every card with its kind of work and video memory. The built-in card is idle most of the time, so it should not take space of its own.', opts: [
+  { id: 'g2', title: '2. Several graphics cards, expanded view', blurb: 'Only on a PC with two or more cards, often a gaming card plus the one built into the processor. Your PC is one: the RX 7800 XT and the built-in AMD Radeon Graphics. Today the tile shows the busiest card\'s number without saying which card it is. Every option also adds a video memory line ("9.2 of 16 GB"), on every PC: set Cards to 1 above to see that tile.', rec: '<b>My pick: A.</b> Same reason as drives: the tile stays calm and names the busy card, and the list has every card with its kind of work and video memory. The built-in card is idle most of the time, so it should not take space of its own.', opts: [
     { id: 'a', title: 'A Busiest card, tap for all', d: 'The tile names the busiest card, its busy percent, what kind of work leads, its video memory and "1 of 2". Tap it for every card.', tag: 'My pick' },
     { id: 'b', title: 'B Short rows inside the tile', d: 'Both cards as two rows inside the tile, each with busy percent and a thin bar. No room for the kind of work or video memory.' },
     { id: 'c', title: 'C A Graphics row with an arrow', d: 'The Graphics tile goes. A Graphics row above the tiles opens to one line per card with its work and video memory.' },
     { id: 'd', title: 'D Busiest card only', d: 'The one-card tile with video memory, showing the busiest card. The second card is not named anywhere.' }] },
-  { id: 'g3', title: '3. Compact view footer', blurb: 'The one line of small figures at the bottom of the compact view. With one drive and one card it stays as it is today.', rec: '<b>My pick: A.</b> It stays one line, it shows the drive that is nearly full in the warning color, and "+2" tells you there is more in the expanded view. B is complete but wraps to a second line on this sample, so the panel grows. C keeps showing C: while D: is the one running out.', opts: [
+  { id: 'g3', title: '3. Compact view footer', blurb: 'The one line of small figures at the bottom of the compact view. With one drive and one card it stays as it is today. Your PC has two cards, so the graphics part applies to it.', rec: '<b>My pick: A.</b> It stays one line, it shows the drive that is nearly full in the warning color, and "+2" tells you there is more in the expanded view. B is complete but wraps to a second line on this sample, so the panel grows. C keeps showing C: while D: is the one running out.', opts: [
     { id: 'a', title: 'A Worst drive and busiest card, with a count', d: '"Graphics 14% +1" and "D: 41 GB free +2": the fullest drive and the busiest card, plus how many more there are.', tag: 'My pick' },
     { id: 'b', title: 'B Every drive and card', d: 'Each card and each drive is its own small figure. The line wraps to a second one when they do not fit.' },
     { id: 'c', title: 'C Today', d: '"Graphics 14% · C: 296 GB free" as now. The other drives and cards show only in the expanded view.' }] },
-  { id: 'g4', title: '4. The "nearly full" warning', blurb: 'What the header line says when two drives are nearly full (under 8% free). For this group the sample makes E: low too, with 48 GB free. With only one low drive both say "Drive D: is nearly full". The compact view shows it next to the title.', rec: '<b>My pick: B.</b> Naming only D: hides that E: is running out too. With one low drive it still names that drive, so you know where to look. Both fit the compact header.', opts: [
+  { id: 'g4', title: '4. The "nearly full" warning', blurb: 'What the header line says when two drives are nearly full (under 8% free). For this group the sample changes: E: is low too, with 48 GB free, and the preview shows the whole panel so you can see the warning at the top. With only one low drive both say "Drive D: is nearly full". The compact view shows it next to the title.', rec: '<b>My pick: B.</b> Naming only D: hides that E: is running out too. With one low drive it still names that drive, so you know where to look. Both fit the compact header.', opts: [
     { id: 'name', title: 'A Name the fullest', d: '"Drive D: is nearly full", the one with the least space left.' },
     { id: 'count', title: 'B Count them', d: '"2 drives are nearly full". With one low drive it names it, as today.', tag: 'My pick' }] }
 ];
 const sel = { g1: 'a', g2: 'a', g3: 'a', g4: 'count' };
-const S = { view: 'expanded', drives: 3, cards: 2, sort: 'm', pop: null, openG: { wsl: false, drv: false, gpu: false }, twoLow: false, open: true, zoom: true};
+const S = { view: 'expanded', drives: 1, cards: 2, sort: 'm', pop: null, openG: { wsl: false, drv: false, gpu: false }, twoLow: false, open: true, zoom: true};
 const stars = store.get('stars', {});
 const P_of = (over = {}) => ({ view: S.view, drives: S.drives, cards: S.cards, sort: S.sort, pop: S.pop, openG: S.openG, twoLow: S.twoLow, ...sel, ...over });
 
@@ -509,22 +514,22 @@ const optsEl = $('#opts');
 const STAR = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.8z"/></svg>';
 optsEl.innerHTML = GROUPS.map(g => `<div class="grp"><div class="gh"><h2>${g.title}</h2><p>${g.blurb}</p></div><div class="rec">${g.rec}</div>${g.opts.map(o => `<article class="opt" tabindex="0" role="button" data-g="${g.id}" data-o="${o.id}" aria-pressed="false"><div class="ot"><h3>${o.title}</h3>${o.tag ? `<span class="tag">${o.tag}</span>` : ''}<button class="star" type="button" data-star="${g.id}.${o.id}" aria-pressed="false" aria-label="Star ${esc(o.title)}: keep this one">${STAR}</button></div><p class="d">${o.d}</p><p class="px" data-px="${g.id}.${o.id}"></p></article>`).join('')}</div>`).join('') +
   `<div class="picks"><p id="pickLine">Star what you want to keep. Starred = keep, unstarred = drop.</p><button type="button" id="copy"><b id="copyT">Copy my picks</b><small>Starred = keep, unstarred = drop</small></button><textarea id="copyOut" rows="5" readonly hidden aria-label="Your picks, to copy"></textarea></div>` +
-  `<p class="note"><b>Left out:</b> a drive tile that cycles through the drives every few seconds (moving text is hard to read at a glance and you cannot tell which drive you missed), and one tile per drive (four or more tiles do not fit a 380 px row). Heights are measured from the panel drawn on this page. The expanded panel is always 380 × 580, so for groups 1 and 2 what changes is the room left for the apps list. Names and numbers are sample data.</p>`;
+  `<p class="note"><b>Left out:</b> a drive tile that cycles through the drives every few seconds (moving text is hard to read at a glance and you cannot tell which drive you missed), and one tile per drive (four or more tiles do not fit a 380 px row). The preview opens in close-up: the top of the panel is hidden so the bottom tiles show near real size on a phone. Tap Whole panel to see all of it, smaller. Heights are measured from the panel drawn on this page, in your phone's font, so they can be a few pixels off from Pulse on Windows. The expanded panel is always 380 × 580, so for groups 1 and 2 what changes is the room left for the apps list. Names and numbers are sample data.</p>`;
 
 function px(id, html) { const e = optsEl.querySelector(`[data-px="${id}"]`); if (e && e.innerHTML !== html) e.innerHTML = html; }
 function stats() {
   const base = measure({ view: 'expanded', drives: 1, cards: 1 }).list;
   const dim = r => `${r.w} × ${r.h} px`;
   for (const o of ['a', 'b', 'c', 'd']) {
-    const r = measure({ view: 'expanded', drives: 3, g1: o });
+    const r = measure({ view: 'expanded', drives: 3, cards: 1, g1: o });
     let t = `${dim(r)}, apps list ${r.list} px <small>(today ${base} px)`;
-    if (o === 'a') t += `; list over the tiles ${measure({ view: 'expanded', drives: 3, g1: o, pop: 'drv' }).pop} px tall`;
-    if (o === 'c') t += `; ${measure({ view: 'expanded', drives: 3, g1: o, openG: { wsl: false, drv: true, gpu: false } }).list} px with the drives open`;
+    if (o === 'a') t += `; list over the tiles ${measure({ view: 'expanded', drives: 3, cards: 1, g1: o, pop: 'drv' }).pop} px tall`;
+    if (o === 'c') t += `; ${measure({ view: 'expanded', drives: 3, cards: 1, g1: o, openG: { wsl: false, drv: true, gpu: false } }).list} px with the drives open`;
     px('g1.' + o, t + '</small>');
-    const g = measure({ view: 'expanded', cards: 2, g2: o });
+    const g = measure({ view: 'expanded', drives: 1, cards: 2, g2: o });
     let u = `${dim(g)}, apps list ${g.list} px <small>(today ${base} px)`;
-    if (o === 'a') u += `; list over the tiles ${measure({ view: 'expanded', cards: 2, g2: o, pop: 'gpu' }).pop} px tall`;
-    if (o === 'c') u += `; ${measure({ view: 'expanded', cards: 2, g2: o, openG: { wsl: false, drv: false, gpu: true } }).list} px with the cards open`;
+    if (o === 'a') u += `; list over the tiles ${measure({ view: 'expanded', drives: 1, cards: 2, g2: o, pop: 'gpu' }).pop} px tall`;
+    if (o === 'c') u += `; ${measure({ view: 'expanded', drives: 1, cards: 2, g2: o, openG: { wsl: false, drv: false, gpu: true } }).list} px with the cards open`;
     px('g2.' + o, u + '</small>');
   }
   const ct = measure({ view: 'compact', drives: 1, cards: 1 }).h;
@@ -538,9 +543,10 @@ function fit() {
   h.style.setProperty('--s', '1'); const pw = p.offsetWidth, ph = p.offsetHeight;
   const whole = (H - tb - 18) / ph, s = Math.min(1, (W - 20) / pw, S.zoom ? Infinity : whole);
   h.style.setProperty('--s', Math.max(.1, s).toFixed(4)); h.style.bottom = (tb + 10) + 'px';
-  const pcs = `${S.drives === 1 ? '1 drive' : '3 drives'}, ${S.cards === 1 ? '1 card' : '2 cards'}`;
-  $('#zoom').setAttribute('aria-pressed', S.zoom);
-  $('#hint').innerHTML = `<b>${pcs}${S.drives === 1 && S.cards === 1 ? ': as today' : ''}</b>${S.twoLow && S.drives > 1 ? ', E: low too' : ''} · ${pw} × ${ph} px at ${Math.round(s * 100)}%${s > whole + .001 ? ', top cut off' : ''}`;
+  $('#zoom').textContent = S.zoom ? 'Whole panel' : 'Close-up';
+  $('#zoom').setAttribute('aria-label', S.zoom ? 'Show the whole panel, smaller' : 'Close-up: the bottom of the panel near real size, top hidden');
+  $('#hint').innerHTML = `${S.twoLow && S.drives > 1 ? '<b>E: low too</b> · ' : ''}shown at ${Math.round(s * 100)}%${s > whole + .001 ? ', top hidden' : ''}`;
+  $('#hint').title = `Panel ${pw} × ${ph} px shown at ${Math.round(s * 100)}%`;
 }
 function draw() {
   const P = P_of(), p = $('#pulse'), l = p.querySelector('.lst'), keep = l ? l.scrollTop : 0;
@@ -574,7 +580,7 @@ for (const b of document.querySelectorAll('[data-cards]')) b.onclick = () => { S
 function choose(g, o) {
   sel[g] = o; S.pop = null; S.open = true; S.twoLow = g === 'g4'; S.zoom = g !== 'g4';
   if (g === 'g1') { S.view = 'expanded'; S.drives = 3; S.openG = { ...S.openG, drv: false }; }
-  if (g === 'g2') { S.view = 'expanded'; S.cards = 2; S.openG = { ...S.openG, gpu: false }; }
+  if (g === 'g2') { S.view = 'expanded'; S.cards = 2; S.drives = 1; S.openG = { ...S.openG, gpu: false }; }
   if (g === 'g3') { S.view = 'compact'; S.drives = 3; S.cards = 2; }
   if (g === 'g4') S.drives = 3;
   draw();
