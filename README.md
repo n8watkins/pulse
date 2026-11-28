@@ -37,6 +37,7 @@ Pulse shows a Windows notification when memory in use stays at or above a level 
 It works while the panel is hidden, and clicking the notification opens the panel.
 Settings has one row, "Low memory alert", with a switch and a level of 80, 85, 90 or 95 percent.
 The default is on at 90 percent; a `settings.json` from before the alert loads with that default (the saved fields are `low_mem_alert` and `low_mem_level`).
+The header line ("Memory is nearly full") and the tray icon's warning color turn at the same level, with the same rounding, so they never disagree with the alert; with the alert switched off they turn at 90 percent.
 
 Rules (the logic is `apps/native/src/alert.rs`, tested with an injected clock):
 

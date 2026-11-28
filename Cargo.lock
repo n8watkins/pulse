@@ -3197,7 +3197,7 @@ dependencies = [
 
 [[package]]
 name = "pulse-native"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "embed-resource",
  "pulse-platform",
@@ -3210,7 +3210,7 @@ dependencies = [
 
 [[package]]
 name = "pulse-platform"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3219,7 +3219,7 @@ dependencies = [
 
 [[package]]
 name = "pulse-readings"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "serde",
  "windows-sys 0.61.2",
