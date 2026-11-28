@@ -1735,6 +1735,15 @@ export component PanelWindow inherits Window {
         background: Theme.line;
     }
 
+    // The compact footer's drive figure with the drive count, never shown:
+    // it only measures whether the count fits in the row.
+    drive-counted := FootFig {
+        visible: false;
+        pre: root.drive-name;
+        val: root.drive-big;
+        post: "free · " + root.drive-count;
+    }
+
     // footer, compact: small figures in one row (the battery has a second line)
     if root.compact: HorizontalLayout {
         x: 13px;
@@ -1743,7 +1752,7 @@ export component PanelWindow inherits Window {
         height: 17px;
         alignment: start;
         spacing: 10px;
-        FootFig {
+        gpu-fig := FootFig {
             pre: "Graphics";
             val: root.gpu-missing ? "n/a" : root.gpu-big;
             accent: Theme.c-gpu;
@@ -1752,11 +1761,12 @@ export component PanelWindow inherits Window {
         FootFig {
             pre: root.drive-missing ? "Drive" : root.drive-name;
             val: root.drive-missing ? "n/a" : root.drive-big;
-            post: root.drive-missing ? "" : root.drive-count != "" ? "free · " + root.drive-count : "free";
+            // "1 of 3" only when the whole row still fits.
+            post: root.drive-missing ? "" : root.drive-count != "" && gpu-fig.width + drive-counted.width + net-fig.width + 2 * 10px <= root.width - 26px ? "free · " + root.drive-count : "free";
             accent: Theme.c-drive;
         }
 
-        FootFig {
+        net-fig := FootFig {
             val: root.net-down;
             val2: root.net-up;
             accent: Theme.c-net;
