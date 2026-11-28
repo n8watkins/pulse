@@ -382,7 +382,7 @@ impl Source for Windows {
             (Vec::new(), Vec::new(), None)
         };
         let x = self.extras.read();
-        Snapshot {
+        let mut snap = Snapshot {
             cpu_pct,
             cores,
             uptime_s,
@@ -393,14 +393,13 @@ impl Source for Windows {
             wsl,
             gpu_pct: crate::busiest_gpu(&x.gpus).and_then(|g| g.busy_pct),
             gpus: x.gpus,
-            disk_free: x.disk_free,
-            disk_total: x.disk_total,
-            disk_read_bps: x.disk_read_bps,
-            disk_write_bps: x.disk_write_bps,
             net_down_bps: x.net_down_bps,
             net_up_bps: x.net_up_bps,
             battery: x.battery,
-        }
+            ..Snapshot::default()
+        };
+        snap.set_drives(x.drives);
+        snap
     }
 }
 
@@ -468,6 +467,10 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(400));
         let s = w.read(false);
         assert!(s.disk_total > 0 && s.disk_free <= s.disk_total);
+        // Every PC has its system drive among the fixed drives.
+        assert!(!s.drives.is_empty());
+        assert!(s.drives.iter().all(|d| d.total > 0 && d.free <= d.total));
+        assert!(s.drives.iter().any(|d| d.name == "C:"));
         assert!(s.gpu_pct.is_none_or(|g| (0.0..=100.0).contains(&g)));
         assert_eq!(
             s.gpu_pct,

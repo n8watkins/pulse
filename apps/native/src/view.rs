@@ -4,7 +4,7 @@
 use crate::marks::{self, Mark};
 use crate::sessions::{self, Line};
 use pulse_platform::{GroupsOpen, PanelView, Sort};
-use pulse_readings::{AppRow, Gpu, GpuEngine, Snapshot, Wsl, WslProc, WslSession};
+use pulse_readings::{AppRow, Drive, Gpu, GpuEngine, Snapshot, Wsl, WslProc, WslSession, fullest};
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
@@ -269,9 +269,20 @@ pub struct Tiles {
     /// No reading: smaller text, no bar fill.
     pub gpu_missing: bool,
     pub gpu_frac: f32,
+    /// The fullest drive: its name ("C:") for the compact footer, and the
+    /// tile's title ("Drive C: free", or "Drive" when none could be read).
+    pub drive_name: String,
+    pub drive_key: String,
     pub drive_big: String,
     pub drive_sub: String,
+    /// "1 of 3" with several drives, empty with one.
+    pub drive_count: String,
+    /// No drive could be read: smaller text, no bar fill.
+    pub drive_missing: bool,
     pub drive_frac: f32,
+    /// The drive shown is nearly full: its bar and dot take the warning
+    /// color, as the battery bar does.
+    pub drive_low: bool,
     pub net_big: String,
     pub net_sub: String,
     /// The compact footer's figures: no space after the arrow.
@@ -293,10 +304,7 @@ pub struct BatteryView {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Extra {
     pub gpus: Vec<Gpu>,
-    pub disk_free: u64,
-    pub disk_total: u64,
-    pub disk_read_bps: u64,
-    pub disk_write_bps: u64,
+    pub drives: Vec<Drive>,
     pub net_down_bps: u64,
     pub net_up_bps: u64,
     pub battery: Option<(u8, bool)>,
@@ -304,14 +312,34 @@ pub struct Extra {
 
 impl Extra {
     /// Longest plausible figures, for checking that no tile text is cut off
-    /// (PULSE_STRESS=1, a development knob).
-    pub fn stress() -> Self {
+    /// (PULSE_STRESS=1, a development knob). `drives` (at least one) is how
+    /// many drives there are; the shown one has the widest letter.
+    pub fn stress(drives: usize) -> Self {
+        let gb = 1u64 << 30;
+        let mut list = vec![Drive {
+            name: "W:".into(),
+            label: None,
+            free: 999 * gb,
+            total: 1000 * gb,
+            read_bps: 600 * (1 << 20),
+            write_bps: 399 * (1 << 20),
+        }];
+        for b in (b'A'..=b'Z')
+            .filter(|&b| b != b'W')
+            .take(drives.clamp(1, 26) - 1)
+        {
+            list.push(Drive {
+                name: format!("{}:", char::from(b)),
+                label: None,
+                free: 1000 * gb,
+                total: 1000 * gb,
+                read_bps: 0,
+                write_bps: 0,
+            });
+        }
         Self {
             gpus: stress_gpus(1),
-            disk_free: 999 * (1 << 30),
-            disk_total: 1000 * (1 << 30),
-            disk_read_bps: 600 * (1 << 20),
-            disk_write_bps: 399 * (1 << 20),
+            drives: list,
             net_down_bps: 999 * 1024,
             net_up_bps: 99 * (1 << 20) + (1 << 20) * 9 / 10,
             battery: Some((100, false)),
@@ -321,10 +349,7 @@ impl Extra {
     pub fn from_snapshot(s: &Snapshot) -> Self {
         Self {
             gpus: s.gpus.clone(),
-            disk_free: s.disk_free,
-            disk_total: s.disk_total,
-            disk_read_bps: s.disk_read_bps,
-            disk_write_bps: s.disk_write_bps,
+            drives: s.drives.clone(),
             net_down_bps: s.net_down_bps,
             net_up_bps: s.net_up_bps,
             battery: s.battery.as_ref().map(|b| (b.pct, b.plugged)),
@@ -517,8 +542,8 @@ pub fn set_mem_full_level(alert_level: Option<u8>) {
         std::sync::atomic::Ordering::Relaxed,
     );
 }
-/// Drive C: under this share free (percent) is "nearly full".
-const DISK_LOW: u64 = 8;
+/// A drive under this share free (percent) is "nearly full".
+const DISK_LOW: u8 = 8;
 /// On battery at or under this charge (percent) the battery bar warns.
 const BATTERY_LOW: u8 = 15;
 /// Uptime from which a restart is suggested.
@@ -544,8 +569,9 @@ pub fn status_at(snap: &Snapshot, sample: bool, apps_fresh: bool, mem_full: u8) 
     if snap.mem_total > 0 && crate::alert::percent(snap.mem_used, snap.mem_total) >= mem_full {
         return warn("Memory is nearly full".into());
     }
-    if snap.disk_total > 0 && snap.disk_free * 100 < snap.disk_total * DISK_LOW {
-        return warn("Drive C: is nearly full".into());
+    // Any drive: if one is under the line, the fullest one is too.
+    if let Some(d) = fullest(&snap.drives).filter(|d| d.free_under(DISK_LOW)) {
+        return warn(format!("Drive {} is nearly full", d.name));
     }
     Status {
         text: if sample {
@@ -1115,13 +1141,8 @@ pub fn build(
     }
 }
 
-#[allow(clippy::cast_precision_loss)]
 fn tiles(x: &Extra) -> Tiles {
-    let used_share = if x.disk_total == 0 {
-        0.0
-    } else {
-        x.disk_total.saturating_sub(x.disk_free) as f64 / x.disk_total as f64
-    };
+    let drive = fullest(&x.drives);
     let card = pulse_readings::busiest_gpu(&x.gpus);
     let busy = card.and_then(|g| g.busy_pct);
     Tiles {
@@ -1137,12 +1158,22 @@ fn tiles(x: &Extra) -> Tiles {
         gpu_sub: card.map_or_else(String::new, |g| video_memory(g.mem_used, g.mem_total)),
         gpu_missing: busy.is_none(),
         gpu_frac: busy.map_or(0.0, |g| (g / 100.0).clamp(0.0, 1.0)),
-        drive_big: format_bytes(x.disk_free),
-        drive_sub: format!(
-            "{}/s",
-            format_bytes_at(x.disk_read_bps + x.disk_write_bps, 10.0)
-        ),
-        drive_frac: used_share as f32,
+        drive_name: drive.map_or_else(String::new, |d| d.name.clone()),
+        drive_key: drive.map_or_else(|| "Drive".into(), |d| format!("Drive {} free", d.name)),
+        drive_big: drive.map_or_else(|| "Not reported".into(), |d| format_bytes(d.free)),
+        drive_sub: drive.map_or_else(String::new, |d| {
+            format!(
+                "{}/s",
+                format_bytes_at(d.read_bps.saturating_add(d.write_bps), 10.0)
+            )
+        }),
+        drive_count: match x.drives.len() {
+            0 | 1 => String::new(),
+            n => format!("1 of {n}"),
+        },
+        drive_missing: drive.is_none(),
+        drive_frac: drive.map_or(0.0, Drive::used_share),
+        drive_low: drive.is_some_and(|d| d.free_under(DISK_LOW)),
         net_big: format!("\u{2193} {}/s", format_bytes(x.net_down_bps)),
         net_sub: format!("\u{2191} {}/s", format_bytes(x.net_up_bps)),
         net_down: format!("\u{2193}{}/s", format_bytes(x.net_down_bps)),
@@ -1736,7 +1767,7 @@ mod tests {
             }
         );
         assert_eq!(status(&s, true, true).text, "Sample data, not this PC");
-        s.disk_free = s.disk_total / 20;
+        s.drives[0].free = s.drives[0].total / 20;
         assert_eq!(status(&s, false, true).text, "Drive C: is nearly full");
         assert!(status(&s, false, true).warn);
         s.mem_used = s.mem_total * 91 / 100;
@@ -1754,8 +1785,109 @@ mod tests {
         s.cpu_pct = 84.9;
         assert_eq!(status(&s, false, true).text, "Memory is nearly full");
         s.mem_used = s.mem_total * 89 / 100;
-        s.disk_free = s.disk_total * 8 / 100 + 1;
+        s.drives[0].free = s.drives[0].total * 8 / 100 + 1;
         assert_eq!(status(&s, false, true).text, "Running smoothly");
+    }
+
+    fn drive(name: &str, free_gb: u64, total_gb: u64, bps: u64) -> Drive {
+        Drive {
+            name: name.into(),
+            label: None,
+            free: free_gb << 30,
+            total: total_gb << 30,
+            read_bps: bps,
+            write_bps: bps,
+        }
+    }
+
+    #[test]
+    fn any_low_drive_warns_and_the_fullest_is_named() {
+        let mut s = sample();
+        // C: is fine; D: is not.
+        s.drives = vec![
+            drive("C:", 300, 1000, 0),
+            drive("D:", 70, 1000, 0),
+            drive("E:", 400, 500, 0),
+        ];
+        assert_eq!(status(&s, false, true).text, "Drive D: is nearly full");
+        assert!(status(&s, false, true).warn);
+        assert!(crate::tray::key_for(&s, 96).warn, "the tray warns too");
+        // Several low: the one with the smallest share free.
+        s.drives[2].free = 10 << 30;
+        assert_eq!(status(&s, false, true).text, "Drive E: is nearly full");
+        // The old single-drive fields no longer decide it.
+        s.disk_free = 0;
+        s.drives = vec![drive("C:", 300, 1000, 0)];
+        assert_eq!(status(&s, false, true).text, "Running smoothly");
+        // No drives read: no drive warning.
+        s.drives.clear();
+        assert_eq!(status(&s, false, true).text, "Running smoothly");
+        // Memory still comes before a drive, and the processor before both.
+        s.drives = vec![drive("D:", 1, 1000, 0)];
+        s.mem_used = s.mem_total * 91 / 100;
+        assert_eq!(status(&s, false, true).text, "Memory is nearly full");
+        s.cpu_pct = 90.0;
+        assert!(
+            status(&s, false, true)
+                .text
+                .starts_with("Processor is busy")
+        );
+    }
+
+    #[test]
+    fn the_drive_tile_shows_the_fullest_drive_and_how_many_there_are() {
+        // One drive: as before, with no count.
+        let one = tiles(&Extra::from_snapshot(&sample()));
+        assert_eq!(one.drive_key, "Drive C: free");
+        assert_eq!(one.drive_name, "C:");
+        assert_eq!(one.drive_big, "296 GB");
+        assert_eq!(one.drive_count, "");
+        assert!(!one.drive_missing);
+        assert!((one.drive_frac - (953.0 - 296.0) / 953.0).abs() < 1e-4);
+        // Three drives: D: is the fullest, with its own space and speed.
+        let x = Extra {
+            drives: vec![
+                drive("C:", 300, 1000, 5 << 20),
+                drive("D:", 40, 931, 21 << 20),
+                drive("E:", 1100, 1863, 0),
+            ],
+            ..Extra::default()
+        };
+        let t = tiles(&x);
+        assert_eq!(t.drive_key, "Drive D: free");
+        assert_eq!(t.drive_name, "D:");
+        assert_eq!(t.drive_big, "40.0 GB");
+        assert_eq!(t.drive_sub, "42 MB/s");
+        assert_eq!(t.drive_count, "1 of 3");
+        assert!((t.drive_frac - 891.0 / 931.0).abs() < 1e-4);
+        // Nearly full: the bar warns. A roomy drive's does not.
+        assert!(t.drive_low && !one.drive_low);
+        // None read: says so, with no bar.
+        let none = tiles(&Extra::default());
+        assert_eq!(
+            (none.drive_key.as_str(), none.drive_big.as_str()),
+            ("Drive", "Not reported")
+        );
+        assert!(none.drive_missing && none.drive_frac == 0.0 && !none.drive_low);
+        assert_eq!(
+            (none.drive_sub.as_str(), none.drive_count.as_str()),
+            ("", "")
+        );
+    }
+
+    #[test]
+    fn the_stress_drives_have_the_longest_figures() {
+        let t = tiles(&Extra::stress(1));
+        assert_eq!(t.drive_key, "Drive W: free");
+        assert_eq!(
+            (t.drive_big.as_str(), t.drive_sub.as_str()),
+            ("999 GB", "999 MB/s")
+        );
+        assert_eq!(t.drive_count, "");
+        let t = tiles(&Extra::stress(26));
+        assert_eq!(t.drive_key, "Drive W: free");
+        assert_eq!(t.drive_count, "1 of 26");
+        assert_eq!(Extra::stress(0).drives.len(), 1);
     }
 
     #[test]
@@ -2231,7 +2363,7 @@ mod tests {
 
     #[test]
     fn the_footer_shows_arrows_without_a_space_and_the_battery_only_when_there_is_one() {
-        let x = Extra::stress();
+        let x = Extra::stress(1);
         let t = tiles(&x);
         assert_eq!(t.net_down, "\u{2193}999 KB/s");
         assert_eq!(t.net_up, "\u{2191}99.9 MB/s");

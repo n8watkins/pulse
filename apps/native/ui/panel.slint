@@ -545,7 +545,8 @@ component Tile inherits Rectangle {
     in property <bool> bar: true;
     in property <float> frac;
     in property <color> accent;
-    // A muted word after the value, on the same line; empty for none.
+    // A muted word after the value, on the same line; empty for none
+    // (Graphics: the kind of work; Drive: "1 of 3").
     in property <string> tag;
     // No reading: the value text is smaller so "Not reported" fits.
     in property <bool> small-v: false;
@@ -1319,8 +1320,15 @@ export component PanelWindow inherits Window {
     in property <string> gpu-sub: "";
     in property <bool> gpu-missing: false;
     in property <float> gpu-frac;
+    // The fullest drive (see view.rs): its name ("C:"), the tile title
+    // ("Drive C: free"), and "1 of 3" when there are several drives.
+    in property <string> drive-name: "C:";
+    in property <string> drive-key: "Drive C: free";
     in property <string> drive-big: "";
     in property <string> drive-sub: "";
+    in property <string> drive-count: "";
+    in property <bool> drive-missing: false;
+    in property <bool> drive-low: false;
     in property <float> drive-frac;
     in property <string> net-big: "";
     in property <string> net-sub: "";
@@ -1643,11 +1651,14 @@ export component PanelWindow inherits Window {
         x: 133px;
         y: root.tiles-y;
         width: 114px;
-        k: "Drive C: free";
+        k: root.drive-key;
         v: root.drive-big;
         s: root.drive-sub;
+        tag: root.drive-count;
+        small-v: root.drive-missing;
+        bar: !root.drive-missing;
         frac: root.drive-frac;
-        accent: Theme.c-drive;
+        accent: root.drive-low ? Theme.warn : Theme.c-drive;
     }
 
     if !root.compact: Tile {
@@ -1736,6 +1747,15 @@ export component PanelWindow inherits Window {
         background: Theme.line;
     }
 
+    // The compact footer's drive figure with the drive count, never shown:
+    // it only measures whether the count fits in the row.
+    drive-counted := FootFig {
+        visible: false;
+        pre: root.drive-name;
+        val: root.drive-big;
+        post: "free · " + root.drive-count;
+    }
+
     // footer, compact: small figures in one row (the battery has a second line)
     if root.compact: HorizontalLayout {
         x: 13px;
@@ -1744,20 +1764,21 @@ export component PanelWindow inherits Window {
         height: 17px;
         alignment: start;
         spacing: 10px;
-        FootFig {
+        gpu-fig := FootFig {
             pre: "Graphics";
             val: root.gpu-missing ? "n/a" : root.gpu-big;
             accent: Theme.c-gpu;
         }
 
         FootFig {
-            pre: "C:";
-            val: root.drive-big;
-            post: "free";
-            accent: Theme.c-drive;
+            pre: root.drive-missing ? "Drive" : root.drive-name;
+            val: root.drive-missing ? "n/a" : root.drive-big;
+            // "1 of 3" only when the whole row still fits.
+            post: root.drive-missing ? "" : root.drive-count != "" && gpu-fig.width + drive-counted.width + net-fig.width + 2 * 10px <= root.width - 26px ? "free · " + root.drive-count : "free";
+            accent: root.drive-low ? Theme.warn : Theme.c-drive;
         }
 
-        FootFig {
+        net-fig := FootFig {
             val: root.net-down;
             val2: root.net-up;
             accent: Theme.c-net;
