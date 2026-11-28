@@ -1,0 +1,614 @@
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Pulse drives and cards</title>
+<style>
+/* LAYOUT: a fixed stage (the Pulse panel at real size above a tray bar) with view and "this PC has" switches on top, beside (sideways) or above (upright) a scrolling list of grouped options. The page itself never scrolls. */
+:root{color-scheme:light;
+  --pg:#eef0ef;--card:#ffffff;--pink:#0d0f0e;--pmute:#56605b;--pline:#dde2df;--wall:#d6dbd8;--tbar:#f7f8f8;--pick:#1d4ed8;--pickbg:#e6edfc;
+  --bg:#ffffff;--ink:#0d0f0e;--mute:#5b625f;--line:#e4e7e5;--soft:#f2f4f3;--dot:#2fbf71;--warn:#c2410c;
+  --cpu:#2563eb;--mem:#7c3aed;--gpu:#d97706;--drv:#0d9488;--net:#db2777;--busy:#1f9d5c;--idle:#9aa39f;
+  --display:"Segoe UI Variable Display","Segoe UI",-apple-system,BlinkMacSystemFont,Roboto,Arial,"Liberation Sans",sans-serif;--text:"Segoe UI Variable Text","Segoe UI",-apple-system,BlinkMacSystemFont,Roboto,Arial,"Liberation Sans",sans-serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;
+  --pg:#080a09;--card:#121513;--pink:#f1f4f2;--pmute:#9aa39f;--pline:#262c29;--wall:#1a1f1d;--tbar:#101412;--pick:#7dd3fc;--pickbg:#0f2230;
+  --bg:#0d0f0e;--ink:#f1f4f2;--mute:#98a19d;--line:#232926;--soft:#161a18;--warn:#ff9b6b;
+  --cpu:#60a5fa;--mem:#a78bfa;--gpu:#fbbf24;--drv:#2dd4bf;--net:#f472b6;--busy:#4ade80;--idle:#5d6662}}
+:root[data-theme="dark"]{color-scheme:dark;
+  --pg:#080a09;--card:#121513;--pink:#f1f4f2;--pmute:#9aa39f;--pline:#262c29;--wall:#1a1f1d;--tbar:#101412;--pick:#7dd3fc;--pickbg:#0f2230;
+  --bg:#0d0f0e;--ink:#f1f4f2;--mute:#98a19d;--line:#232926;--soft:#161a18;--warn:#ff9b6b;
+  --cpu:#60a5fa;--mem:#a78bfa;--gpu:#fbbf24;--drv:#2dd4bf;--net:#f472b6;--busy:#4ade80;--idle:#5d6662}
+*{box-sizing:border-box;min-width:0}
+html,body{height:100%}
+body{touch-action:manipulation;margin:0;background:var(--pg);color:var(--pink);font:14px/1.45 var(--text);overflow:hidden;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:10px}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+button:focus-visible,.opt:focus-visible{outline:2px solid var(--pick);outline-offset:2px;border-radius:8px}
+.wrap{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr);gap:8px;max-width:1100px;margin:0 auto}
+.head{display:flex;align-items:flex-start;gap:10px}
+.head>div{flex:1}
+.head h1{margin:0;font:700 18px/1.15 var(--display);text-wrap:balance}
+.head p{margin:2px 0 0;font-size:13px;color:var(--pmute)}
+.theme{flex:none;border:1px solid var(--pline);background:var(--card);border-radius:8px;padding:5px 10px;font-size:13px;font-weight:600;min-height:34px}
+.body{display:grid;grid-template-rows:minmax(0,64%) minmax(0,1fr);gap:10px}
+.left{display:grid;grid-template-rows:auto minmax(0,1fr);gap:6px}
+
+/* switches and stage */
+.sbar{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.vseg{flex:none;display:flex;align-items:center;background:var(--card);border:1px solid var(--pline);border-radius:8px;padding:2px}
+.vseg button{font-size:12.5px;padding:4px 6px;border-radius:6px;color:var(--pmute);min-height:30px;min-width:28px;font-weight:500}
+.vseg [aria-pressed=true]{background:var(--pink);color:var(--pg);font-weight:600}
+.vseg .lead{font-size:11.5px;color:var(--pmute);padding:0 2px 0 4px;white-space:nowrap}
+.zoom{flex:none;font-size:12px;font-weight:600;border:1px solid var(--pline);background:var(--card);border-radius:6px;padding:2px 8px;min-height:26px;white-space:nowrap}
+.zoom[aria-pressed=true]{background:var(--pink);color:var(--pg);border-color:var(--pink)}
+.stage{position:relative;overflow:hidden;border-radius:14px;background:var(--wall);border:1px solid var(--pline)}
+.taskbar{position:absolute;left:0;right:0;bottom:0;height:36px;background:var(--tbar);border-top:1px solid var(--pline);display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:0 8px;z-index:3}
+.taskbar .hint{margin-right:auto;font-size:12px;color:var(--pmute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.taskbar .hint b{color:var(--pink);font-weight:600}
+.taskbar .clock{font-size:11px;line-height:1.15;text-align:right;color:var(--pmute);flex:none}
+#tray{flex:none;width:30px;height:30px;border-radius:7px;display:grid;place-items:center}
+#tray:hover{background:var(--pline)}
+.holder{position:absolute;right:10px;bottom:46px;transform-origin:bottom right;transform:scale(var(--s,1));transition:opacity .12s;z-index:2}
+.holder[data-open="0"]{opacity:0;pointer-events:none}
+
+/* options */
+.opts{overflow-y:auto;scrollbar-width:thin;display:flex;flex-direction:column;gap:8px;padding-bottom:2px}
+.grp{display:flex;flex-direction:column;gap:6px}
+.gh{padding:4px 2px 0}
+.gh h2{margin:0;font:700 15px/1.25 var(--display)}
+.gh p{margin:2px 0 0;font-size:13px;color:var(--pmute)}
+.rec{background:var(--pickbg);color:var(--pick);border-radius:10px;padding:7px 10px;font-size:13px;line-height:1.4}
+.rec b{font-weight:700}
+.opt{background:var(--card);border:1px solid var(--pline);border-radius:12px;padding:9px 12px;cursor:pointer;display:grid;gap:4px}
+.opt[aria-pressed=true]{border-color:var(--pick);box-shadow:inset 0 0 0 1px var(--pick)}
+.ot{display:flex;align-items:center;gap:8px}
+.ot h3{margin:0;font:700 14.5px/1.2 var(--display);flex:1}
+.tag{font-size:11.5px;font-weight:600;background:var(--pickbg);color:var(--pick);border-radius:5px;padding:2px 6px;white-space:nowrap}
+.star{width:36px;height:36px;border-radius:8px;display:grid;place-items:center;color:var(--pmute);flex:none}
+.star:hover{background:var(--pg)}
+.star[aria-pressed=true]{color:var(--pick)}
+.star[aria-pressed=true] path{fill:currentColor}
+.opt .d{margin:0;font-size:13px;color:var(--pmute)}
+.opt .px{margin:0;font-size:12.5px;font-weight:600;font-variant-numeric:tabular-nums}
+.opt .px small{font-weight:400;color:var(--pmute);font-size:12px}
+.picks{background:var(--card);border:1px solid var(--pline);border-radius:12px;padding:10px 12px;display:grid;gap:8px}
+.picks p{margin:0;font-size:13px}
+.picks button{background:var(--pink);color:var(--pg);border-radius:8px;padding:7px 14px;min-height:40px;justify-self:start;display:grid;text-align:left;line-height:1.25}
+.picks button b{font-weight:600}
+.picks button small{font-size:12px;opacity:.8}
+.picks textarea{width:100%;font:13px/1.4 var(--text);border:1px solid var(--pline);border-radius:8px;padding:8px;background:var(--pg);color:var(--pink);resize:none}
+.note{margin:0;padding:0 2px 6px;font-size:12px;line-height:1.45;color:var(--pmute)}
+
+@media (min-width:700px),(orientation:landscape){
+  .body{grid-template-rows:minmax(0,1fr);grid-template-columns:minmax(0,1fr) minmax(280px,400px)}
+}
+@media (orientation:landscape) and (max-height:480px){
+  body{padding-block:6px}
+  .wrap{gap:4px}
+  .head p{display:none}
+  .head h1{font-size:15px;padding-top:6px}
+  .theme{min-height:28px;padding:3px 8px;font-size:12px}
+  .body{grid-template-columns:minmax(0,1fr) minmax(250px,46%)}
+  .sbar{gap:4px}
+  .vseg button{min-height:26px;padding:2px 7px;font-size:12px}
+  .vseg .lead{font-size:11.5px;padding:0 2px 0 4px}
+  .taskbar{height:28px}
+  .taskbar .clock{display:none}
+  #tray{width:24px;height:24px}
+  .holder{bottom:36px}
+}
+@media (max-height:700px) and (orientation:portrait){.head p{display:none}}
+
+/* ---------- the Pulse panel, drawn from data; sizes from apps/native/ui/panel.slint ---------- */
+.pulse{position:relative;display:flex;flex-direction:column;width:380px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.22);font:13px/1.25 var(--text);text-align:left}
+.pulse.ex{height:580px}
+.pulse.co{max-height:620px}
+.pulse button{cursor:pointer}
+.pulse .top{position:relative;flex:none;height:63px}
+.pulse .hd{position:absolute;left:14px;right:8px;top:8px;height:30px;display:flex;align-items:center}
+.pulse .logo{width:22px;height:22px;flex:none}
+.pulse .ttl{margin-left:7px;font:700 16px/18px var(--display);flex:none}
+.pulse .cwarn{flex:1 1 0;min-width:0;margin:0 8px 0 10px;font-size:12.5px;font-weight:500;color:var(--warn);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pulse .cwarn span{display:inline}
+.pulse .ctl{display:flex;gap:2px;margin-left:auto;flex:none}
+.pulse .ib{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--mute)}
+.pulse button.ib:hover{background:var(--soft);color:var(--ink)}
+.pulse .ib svg{width:16px;height:16px}
+.pulse .st{position:absolute;left:14px;right:13px;top:40px;height:19px;display:flex;align-items:center;gap:7px;font-size:13px;color:var(--mute);white-space:nowrap}
+.pulse .st::before{content:"";flex:none;width:8px;height:8px;border-radius:50%;background:var(--dot)}
+.pulse .st.w::before{background:var(--warn)}
+.pulse .st span{overflow:hidden;text-overflow:ellipsis}
+.pulse.co .top{height:42px}
+.pulse.co .hd{left:12px;right:6px;height:28px}
+.pulse.co .logo{width:20px;height:20px}
+.pulse.co .ttl{margin-left:8px;font-size:15px}
+.pulse.co .ib{width:28px;height:28px}
+/* processor and memory */
+.pulse .duo{display:grid;grid-template-columns:175px 175px;gap:8px;margin:0 10px;flex:none}
+.pulse .hero{position:relative;height:118px;border-radius:14px;background:var(--soft)}
+.pulse .o{box-shadow:inset 0 0 0 1px var(--line)}
+.pulse .hero>*{position:absolute}
+.pulse .sq{display:block;width:8px;height:8px;border-radius:2px;flex:none}
+.pulse .hero .sq{left:10px;top:13px}
+.pulse .hero .lab{left:24px;top:8px;line-height:19px;font-size:13px;font-weight:600;opacity:.75}
+.pulse .hero .big{left:10px;top:29px;font:700 28px/29px var(--display);letter-spacing:-.56px;font-variant-numeric:tabular-nums}
+.pulse .hero .fig{left:10px;right:10px;top:64px;height:26px}
+.pulse .hero .sub{left:10px;right:10px;top:92px;line-height:19px;font-size:13px;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pulse .duo.mini{grid-template-columns:177px 177px;margin:0 8px}
+.pulse .mt{height:49px;border-radius:10px;background:var(--soft);display:grid;grid-template-columns:auto minmax(10px,1fr);gap:8px;padding:0 9px;align-items:center}
+.pulse .mt .lab{font-size:11.5px;font-weight:600;line-height:14px;display:flex;align-items:center;gap:4px}
+.pulse .mt .lab span{opacity:.75}
+.pulse .mt .big{font:700 22px/23px var(--display);letter-spacing:-.2px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pulse .mt .big.sm{font-size:19px}
+.pulse .mt .fig{position:relative;height:28px}
+.pulse .spk{position:absolute;inset:0;width:100%;height:100%;display:block;overflow:visible}
+.pulse .spk .a{opacity:.16}
+.pulse .spk .l{fill:none;stroke-width:2;stroke-linejoin:round}
+/* top apps */
+.pulse .ah{display:flex;justify-content:space-between;align-items:center;height:30px;margin:9px 10px 4px;flex:none}
+.pulse.co .ah{margin:8px 8px 4px}
+.pulse .ah h2{margin:0;font-size:13.5px;font-weight:600}
+.pulse.co .ah h2{font-size:13px}
+.pulse .pseg{display:flex;background:var(--soft);border-radius:8px;padding:2px;height:30px}
+.pulse .pseg button{font-size:12.5px;padding:0 9px;height:26px;border-radius:6px;color:var(--mute)}
+.pulse .pseg [aria-pressed=true]{background:var(--bg);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.pulse .lst{flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-width:thin;margin:0 10px 9px}
+.pulse.co .lst{flex:0 1 auto;margin:0 8px}
+/* rows: expanded 53 px, compact 29, sub item 24 or 22 */
+.pulse .r{position:relative;display:block;width:100%;height:53px;text-align:left;color:inherit}
+.pulse .r.c{height:29px}
+.pulse .r.s{height:24px}
+.pulse .r.s.c{height:22px}
+.pulse .r>*{position:absolute}
+.pulse .r.f::before{content:"";position:absolute;inset:1px 0;border-radius:6px;background:var(--soft);opacity:0}
+.pulse .r.f:hover::before{opacity:1}
+.pulse .ico{left:2px;top:14px;width:24px;height:24px;border-radius:6px;display:grid;place-items:center;color:#fff;font:700 11px/1 var(--text)}
+.pulse .ico svg{width:15px;height:15px}
+.pulse .r.c .ico{top:4px;width:20px;height:20px;border-radius:5px;font-size:9.5px}
+.pulse .r.c .ico svg{width:13px;height:13px}
+.pulse .r.s .ico{left:8px;top:3px;width:18px;height:18px;border-radius:5px;font-size:10px}
+.pulse .r.s.c .ico{left:4px;top:2px}
+.pulse .r.s .ico svg{width:11px;height:11px}
+.pulse .l1{left:36px;right:2px;top:5px;height:20px;display:flex;align-items:center;gap:10px;font-size:13.5px;white-space:nowrap}
+.pulse .l1 .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+.pulse .l1 .nm.fit{flex:0 1 auto}
+.pulse .l1 .gap{flex:1 1 0}
+.pulse .l1 .tg{flex:none;margin-left:-4px;font-size:12.5px;color:var(--mute)}
+.pulse .val{flex:none;font-weight:600;font-variant-numeric:tabular-nums}
+.pulse .w{color:var(--warn)}
+.pulse .chev{flex:none;width:28px;height:28px;margin:-4px -3px -4px -13px;display:grid;place-items:center;color:var(--mute)}
+.pulse .chev svg{width:14px;height:14px}
+.pulse .l2{left:36px;right:2px;top:29px;height:19px;display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--mute)}
+.pulse .l2 .dt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pulse .l2 .bar{flex:none;width:90px}
+.pulse .sep{left:0;right:0;top:52px;height:1px;background:var(--line)}
+.pulse .r.c .sep{top:28px}
+.pulse .r.s .sep{top:auto;bottom:0}
+.pulse .r.c .l1{left:30px;top:5px;height:19px;gap:8px;font-size:13px}
+.pulse .r.c .bar{flex:none;width:56px;height:4px}
+.pulse .r.c .val{width:54px;text-align:right}
+.pulse .r.c.f .l1{right:28px;gap:6px}
+.pulse .r.c.f .val{width:auto;margin-left:2px}
+.pulse .r.c .nw{flex:none;font-weight:500}
+.pulse .r.c .dt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:12.5px;color:var(--mute)}
+.pulse .r.c>.chev{right:0;top:.5px;margin:0}
+.pulse .r.s .l1{left:34px;top:3px;height:18px;gap:0;font-size:12.5px}
+.pulse .r.s.c .l1{left:30px;top:2px}
+.pulse .r.s .nm{font-weight:400;flex:0 1 auto}
+.pulse .r.s .ex{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11px;color:var(--mute);margin-left:6px}
+.pulse .r.s .gap{min-width:8px}
+.pulse .r.s .val{font-weight:500;color:var(--mute)}
+.pulse .r.s .val.w{color:var(--warn)}
+.pulse .bar{display:block;height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+.pulse .bar i{display:block;height:100%;border-radius:3px;background:var(--c,var(--ink))}
+/* rows with a fold above the tiles (candidate C) */
+.pulse .grows{flex:none;margin:-4px 10px 9px;border-top:1px solid var(--line)}
+/* tiles */
+.pulse .tri{display:grid;gap:8px;margin:0 10px;height:83px;flex:none}
+.pulse .tile{position:relative;display:block;width:100%;height:83px;border-radius:12px;background:var(--soft);text-align:left;color:inherit;overflow:hidden}
+.pulse button.tile:hover{background:var(--line)}
+.pulse .tile.on{box-shadow:inset 0 0 0 1.5px var(--mute)}
+.pulse .tile>*{position:absolute}
+.pulse .tile .sq{left:9px;top:12px}
+.pulse .tile .k{left:23px;right:9px;top:7px;height:19px;line-height:19px;font-size:13px;font-weight:500;color:var(--mute);white-space:nowrap;display:flex;gap:4px}
+.pulse .tile .k span{overflow:hidden;text-overflow:ellipsis}
+.pulse .tile .k em{font-style:normal;margin-left:auto;font-size:11.5px;font-weight:600;color:var(--ink)}
+.pulse .tile .v{left:9px;right:9px;top:26px;height:19px;display:flex;align-items:baseline;gap:4px;white-space:nowrap}
+.pulse .tile .vv{font:700 15.5px/19px var(--display);font-variant-numeric:tabular-nums}
+.pulse .tile .v small{font-size:12px;color:var(--mute);font-weight:500}
+.pulse .tile .cnt{margin-left:auto;align-self:center;font-size:11.5px;color:var(--mute);display:flex;align-items:center;gap:1px}
+.pulse .tile .cnt svg{width:11px;height:11px}
+.pulse .tile .s{left:9px;right:9px;top:45px;line-height:19px;font-size:13px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pulse .tile>.bar{left:9px;right:9px;top:70px}
+.pulse .tile .rows{left:9px;right:9px;top:27px;display:flex;flex-direction:column}
+.pulse .tr{display:flex;align-items:center;gap:6px;height:17px}
+.pulse .tr .tt{flex:none;font-size:12px;line-height:15px;display:flex;gap:4px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.pulse .tr .tt .m{color:var(--mute)}
+.pulse .tr .tt b{font-weight:600}
+.pulse .tr .bar{flex:1 1 0;min-width:12px;height:4px}
+.pulse .tr.lg{height:26px;flex-direction:column;align-items:stretch;gap:0}
+.pulse .tr.lg .tt{flex:none}
+.pulse .tr.lg .bar{flex:none}
+.pulse .tr.lg .tt{justify-content:space-between;font-size:12px;line-height:16px}
+.pulse .tr.lg .tt .m{overflow:hidden;text-overflow:ellipsis}
+.pulse .tr.lg .bar{height:4px;margin-top:2px}
+/* the list over the tiles (candidate A) */
+.pulse .pop{position:absolute;left:10px;right:10px;bottom:42px;z-index:5;background:var(--bg);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:0 10px 2px}
+.pulse .pop .ph{display:flex;align-items:center;gap:8px;height:36px;border-bottom:1px solid var(--line)}
+.pulse .pop .ph b{font-size:13.5px;font-weight:600}
+.pulse .pop .ph span{font-size:12.5px;color:var(--mute)}
+.pulse .pop .ph .ib{margin-left:auto;width:28px;height:28px;margin-right:-6px}
+.pulse .pop .r{height:46px}
+.pulse .pop .ico{top:11px}
+.pulse .pop .l1{top:4px}
+.pulse .pop .l2{top:25px}
+.pulse .pop .sep{top:45px}
+/* footers */
+.pulse .foot{flex:none;margin-top:8px;height:34px;border-top:1px solid var(--line);display:flex;align-items:center;gap:4px;padding:0 13px 1px 14px;font-size:13px;color:var(--mute);white-space:nowrap}
+.pulse .foot kbd{font:600 12.5px/16px var(--text);background:var(--soft);border:1px solid var(--line);border-radius:5px;padding:0 5px;color:var(--ink)}
+.pulse .foot .ago{margin-left:auto}
+.pulse .cfoot{flex:none;margin-top:4px;border-top:1px solid var(--line);padding:6px 12px 8px;display:flex;flex-wrap:wrap;gap:2px 10px}
+.pulse .fg{display:flex;gap:4px;align-items:center;height:17px;font-size:11.5px;white-space:nowrap;color:var(--mute);font-variant-numeric:tabular-nums}
+.pulse .fg .sq{width:7px;height:7px}
+.pulse .fg b{color:var(--ink);font-weight:600}
+.pulse .fg b.w{color:var(--warn)}
+#meas{position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;z-index:-1}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header class="head">
+    <div>
+      <h1>Pulse with more than one drive or graphics card</h1>
+      <p>Only a PC with two or more drives or cards shows these. With one of each, Pulse looks as it does today. Star what you keep.</p>
+    </div>
+    <button class="theme" id="theme" type="button">Dark</button>
+  </header>
+  <div class="body">
+    <div class="left">
+      <div class="sbar">
+        <div class="vseg" role="group" aria-label="Which view the panel shows">
+          <button type="button" data-view="expanded" aria-pressed="true">Expanded</button>
+          <button type="button" data-view="compact" aria-pressed="false">Compact</button>
+        </div>
+        <div class="vseg" role="group" aria-label="This PC has how many drives">
+          <span class="lead">Drives</span>
+          <button type="button" data-drives="1" aria-pressed="false" aria-label="1 drive">1</button>
+          <button type="button" data-drives="3" aria-pressed="true" aria-label="3 drives">3</button>
+        </div>
+        <div class="vseg" role="group" aria-label="This PC has how many graphics cards">
+          <span class="lead">Cards</span>
+          <button type="button" data-cards="1" aria-pressed="false" aria-label="1 card">1</button>
+          <button type="button" data-cards="2" aria-pressed="true" aria-label="2 cards">2</button>
+        </div>
+      </div>
+      <section class="stage" id="stage" aria-label="Preview of the panel above the tray">
+        <div class="holder" id="holder" data-open="1"><div class="pulse ex" id="pulse"></div></div>
+        <div class="taskbar">
+          <button class="zoom" id="zoom" type="button" aria-pressed="true" title="Close-up shows the bottom of the panel at nearly real size">Close-up</button>
+          <span class="hint" id="hint"></span>
+          <button id="tray" type="button" aria-label="Tray icon: hide or show the panel"><svg width="22" height="22" viewBox="0 0 256 256" aria-hidden="true"><rect x="16" y="16" width="224" height="224" rx="52" fill="#0d0f0e"/><path d="M50 140h42l20-52 28 94 20-62 14 20h32" fill="none" stroke="#b8f5d0" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <span class="clock">9:41 AM<br>11/27/2026</span>
+        </div>
+      </section>
+    </div>
+    <section class="opts" id="opts" aria-label="Options"></section>
+  </div>
+</div>
+<div id="meas" aria-hidden="true"><div class="pulse ex" id="measp"></div></div>
+
+<script>
+{
+/* ---------- data: everything the panel draws comes from here ---------- */
+const D = {
+  cpu: { pct: 26, cores: 16, up: '3d 4h' },
+  mem: { used: 13.4, total: 32 },
+  net: { down: '1.3 MB/s', up: '166 KB/s' },
+  // Fixed drives. free and total in GB; tl is how the total is written.
+  drives: [
+    { l: 'C:', free: 296, total: 931, tl: '931 GB', speed: '2.6 MB/s' },
+    { l: 'D:', free: 41, total: 1800, tl: '1.8 TB', speed: '0 B/s' },
+    { l: 'E:', free: 512, total: 931, tl: '931 GB', speed: '120 KB/s' }
+  ],
+  // Graphics cards: busy percent, the kind of work that leads, video memory in GB.
+  cards: [
+    { name: 'Radeon RX 7800 XT', short: 'RX 7800 XT', pct: 14, kind: '3D', used: 9.2, total: 16 },
+    { name: 'Radeon Graphics', short: 'Built-in', note: 'built in', pct: 3, kind: 'Video', used: 0.4, total: 2 }
+  ],
+  apps: [
+    { name: 'Google Chrome', exe: 'chrome.exe', procs: 24, mem: 2150, cpu: 6.1, c: '#4285F4' },
+    { name: 'Visual Studio Code', exe: 'Code.exe', procs: 11, mem: 1330, cpu: 3.4, c: '#2b7cd3' },
+    { name: 'Discord', exe: 'Discord.exe', procs: 6, mem: 635, cpu: 1.8, c: '#5865F2' },
+    { name: 'OBS Studio', exe: 'obs64.exe', procs: 1, mem: 420, cpu: 1.5, c: '#5a5a66' },
+    { name: 'Spotify', exe: 'Spotify.exe', procs: 5, mem: 340, cpu: 0.8, c: '#1a9e4b' }
+  ],
+  wsl: { name: 'WSL (Linux)', mem: 3480, cpu: 9.9, detail: '10 programs · 5 agents', items: [
+    { name: 'Claude Code', c: '#D97757', count: '×3', mem: 640, cpu: 4.7, agent: 1 },
+    { name: 'Codex CLI', c: '#4b5563', count: '×2', mem: 236, cpu: 3.4, agent: 1 },
+    { name: 'node: next-server', c: '#5FA04E', port: ':3000', mem: 318, cpu: 0.9 },
+    { name: 'Docker', c: '#2496ED', count: '×2', mem: 174, cpu: 0.4 }
+  ] }
+};
+const LOW = 0.08; // under 8% free is "nearly full", as in src/view.rs
+const series = (seed, end, n = 60) => Array.from({ length: n }, (_, i) => { const t = i / (n - 1), w = Math.sin(seed + i / 5) * 16 + Math.sin(seed * 2 + i / 2.3) * 7; return Math.max(3, Math.min(97, end + w * (1 - t * .9))); });
+D.cpu.hist = series(1.3, D.cpu.pct); D.mem.hist = series(4.1, D.mem.used / D.mem.total * 100);
+
+/* ---------- small helpers ---------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const MB = n => n >= 1024 ? (n / 1024).toFixed(1) + ' GB' : Math.round(n) + ' MB';
+const PC = n => (n >= 10 || Number.isInteger(n) ? Math.round(n) : n.toFixed(1)) + '%';
+const store = { get(k, d) { try { const v = localStorage.getItem('pulsemulti.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem('pulsemulti.' + k, JSON.stringify(v)); } catch {} } };
+const drivesOf = P => { const all = D.drives.map(d => P.twoLow && d.l === 'E:' ? { ...d, free: 48 } : d); return P.drives === 1 ? [all[0]] : all; };
+const cardsOf = P => P.cards === 1 ? [D.cards[0]] : D.cards;
+const isLow = d => d.free / d.total < LOW;
+const share = d => 1 - d.free / d.total;
+const fullest = ds => ds.reduce((a, b) => (b.free / b.total < a.free / a.total ? b : a));
+const busiest = cs => cs.reduce((a, b) => (b.pct > a.pct ? b : a));
+const vram = c => `${c.used} of ${c.total} GB`;
+function spark(v, color) {
+  const pts = v.map((y, i) => [i / (v.length - 1) * 100, 28 - y / 100 * 25]), l = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join('');
+  return `<svg class="spk" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true"><path class="a" fill="${color}" d="${l}L100,30L0,30Z"/><path class="l" stroke="${color}" d="${l}" vector-effect="non-scaling-stroke"/></svg>`;
+}
+const svg = (d, w = 2) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const LOGO = '<svg class="logo" viewBox="0 0 256 256" aria-hidden="true"><rect x="16" y="16" width="224" height="224" rx="52" fill="#0d0f0e"/><path d="M50 140h42l20-52 28 94 20-62 14 20h32" fill="none" stroke="#b8f5d0" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const I_TO_COMPACT = svg('<polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" x2="21" y1="10" y2="3"/><line x1="3" x2="10" y1="21" y2="14"/>');
+const I_TO_EXPANDED = svg('<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/>');
+const I_GEAR = svg('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>');
+const I_X = svg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>');
+const CH_DN = svg('<path d="M6 9l6 6 6-6"/>', 1.6), CH_UP = svg('<path d="M6 15l6-6 6 6"/>', 1.6), CH_UP_B = svg('<path d="M6 15l6-6 6 6"/>', 2.4);
+const G_DRIVE = svg('<rect x="3" y="7" width="18" height="10" rx="2"/><path d="M16.5 12h.01" stroke-width="3"/>');
+const G_CHIP = svg('<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>');
+const sq = c => `<span class="sq" style="background:${c}"></span>`;
+const ico = (bg, inner) => `<span class="ico" style="background:${bg}">${inner}</span>`;
+const DRV_BG = '#0d9488', GPU_BG = '#c26a05';
+const bar = (f, c) => `<span class="bar" style="--c:${c}"><i style="width:${(Math.max(0, Math.min(1, f)) * 100).toFixed(1)}%"></i></span>`;
+
+/* ---------- rows ---------- */
+// A two-line row of the expanded view (an app, or a group head with an arrow).
+function rowX(o) {
+  const fold = !!o.key, tag = fold ? 'button' : 'div';
+  const at = fold ? ` type="button" data-act="grp" data-k="${o.key}" aria-expanded="${!!o.open}" aria-label="${o.open ? 'Close' : 'Open'} ${esc(o.name)}"` : '';
+  return `<${tag} class="r x${fold ? ' f' : ''}"${at}>${o.ico}<span class="l1"><span class="nm${fold || o.tg ? ' fit' : ''}">${esc(o.name)}</span>${o.tg ? `<span class="tg">${o.tg}</span><span class="gap"></span>` : ''}${fold ? `<span class="chev">${o.open ? CH_UP : CH_DN}</span><span class="gap"></span>` : ''}<span class="val${o.warn ? ' w' : ''}">${o.val}</span></span><span class="l2"><span class="dt">${o.detail}</span>${bar(o.frac, o.color)}</span>${o.last || o.open ? '' : '<i class="sep"></i>'}</${tag}>`;
+}
+// A one-line row of the compact view.
+function rowC(o) {
+  if (o.key) return `<button class="r c f" type="button" data-act="grp" data-k="${o.key}" aria-expanded="${!!o.open}" aria-label="${o.open ? 'Close' : 'Open'} ${esc(o.name)}">${o.ico}<span class="l1"><span class="nw">${esc(o.name)}</span><span class="dt">· ${o.detail}</span><span class="val">${o.val}</span></span><span class="chev">${o.open ? CH_UP : CH_DN}</span>${o.last || o.open ? '' : '<i class="sep"></i>'}</button>`;
+  return `<div class="r c">${o.ico}<span class="l1"><span class="nm">${esc(o.name)}</span>${bar(o.frac, o.color)}<span class="val">${o.val}</span></span>${o.last ? '' : '<i class="sep"></i>'}</div>`;
+}
+// An item inside a group (a Linux program, a drive, a card).
+function rowS(o, compact) {
+  return `<div class="r s${compact ? ' c' : ''}">${o.ico}<span class="l1"><span class="nm">${esc(o.name)}</span>${o.ex ? `<span class="ex">${o.ex}</span>` : ''}<span class="gap"></span><span class="val${o.warn ? ' w' : ''}">${o.val}</span></span>${o.end && !compact ? '<i class="sep"></i>' : ''}</div>`;
+}
+const letter = (c, t) => ico(c, esc(t));
+
+/* the three groups that open and close: WSL, and drives and cards for candidate C */
+function wslRows(P, compact, last) {
+  const m = P.sort === 'm', w = D.wsl, open = P.openG.wsl;
+  const max = m ? Math.max(...D.apps.map(a => a.mem), w.mem) : Math.max(5, ...D.apps.map(a => a.cpu), w.cpu);
+  const head = { key: 'wsl', open, name: w.name, ico: letter('#7c5c3b', 'W'), detail: w.detail, val: m ? MB(w.mem) : PC(w.cpu), frac: (m ? w.mem : w.cpu) / max, color: m ? 'var(--mem)' : 'var(--cpu)', last };
+  const subs = open ? w.items.map((i, k) => rowS({ ico: letter(i.c, i.name[0]), name: i.name, ex: [i.count, i.port, i.agent ? 'agent' : ''].filter(Boolean).join(' · '), val: m ? MB(i.mem) : PC(i.cpu), end: k === w.items.length - 1 }, compact)).join('') : '';
+  return (compact ? rowC(head) : rowX(head)) + subs;
+}
+function lowWords(ds, P) {
+  const lows = ds.filter(isLow);
+  if (!lows.length) return '';
+  return lows.length > 1 && P.g4 === 'count' ? `${lows.length} drives are nearly full` : `Drive ${fullest(lows).l} is nearly full`;
+}
+function driveGroup(P) {
+  const ds = drivesOf(P), open = P.openG.drv, free = ds.reduce((a, d) => a + d.free, 0), tot = ds.reduce((a, d) => a + d.total, 0), lw = lowWords(ds, P);
+  const head = rowX({ key: 'drv', open, name: 'Drives', ico: ico(DRV_BG, G_DRIVE), detail: `${ds.length} drives · ${lw ? `<span class="w">${lw.replace(/^Drive /, '')}</span>` : 'none nearly full'}`, val: `${free} GB free`, frac: 1 - free / tot, color: 'var(--drv)', last: true });
+  const subs = open ? ds.map((d, k) => rowS({ ico: letter(DRV_BG, d.l[0]), name: d.l, ex: `of ${d.tl} · ${d.speed}`, val: `${d.free} GB free`, warn: isLow(d), end: k === ds.length - 1 }, false)).join('') : '';
+  return head + subs;
+}
+function cardGroup(P) {
+  const cs = cardsOf(P), open = P.openG.gpu, b = busiest(cs);
+  const head = rowX({ key: 'gpu', open, name: 'Graphics', ico: ico(GPU_BG, G_CHIP), detail: `${cs.length} cards · ${esc(b.short)} is busiest`, val: PC(b.pct), frac: b.pct / 100, color: 'var(--gpu)', last: true });
+  const subs = open ? cs.map((c, k) => rowS({ ico: ico(GPU_BG, G_CHIP), name: c.name, ex: `${c.kind} · ${vram(c)}`, val: PC(c.pct), end: k === cs.length - 1 }, false)).join('') : '';
+  return head + subs;
+}
+
+/* ---------- tiles ---------- */
+function tile(o) {
+  const tag = o.pop ? 'button' : 'div';
+  const at = o.pop ? ` type="button" data-act="pop" data-k="${o.pop}" aria-expanded="${!!o.on}" aria-label="${o.on ? 'Close' : 'Open'} the list of ${o.pop === 'drv' ? 'drives' : 'graphics cards'}"` : '';
+  const head = `${sq(o.color)}<span class="k"><span>${esc(o.k)}</span>${o.more ? `<em>${o.more}</em>` : ''}</span>`;
+  if (o.rows) return `<${tag} class="tile"${at}>${head}<span class="rows">${o.rows.join('')}</span></${tag}>`;
+  const v = `<span class="v"><span class="vv${o.warn ? ' w' : ''}">${o.v}</span>${o.vs ? `<small>${o.vs}</small>` : ''}${o.cnt ? `<span class="cnt">${o.cnt}${o.on ? svg('<path d="M6 9l6 6 6-6"/>', 2.4) : CH_UP_B}</span>` : ''}</span>`;
+  return `<${tag} class="tile${o.on ? ' on' : ''}"${at}>${head}${v}<span class="s">${esc(o.s)}</span>${o.frac == null ? '' : bar(o.frac, o.warn ? 'var(--warn)' : o.color)}</${tag}>`;
+}
+function driveTile(P) {
+  const ds = drivesOf(P), c = 'var(--drv)';
+  const today = d => tile({ k: `Drive ${d.l} free`, v: `${d.free} GB`, s: d.speed, frac: share(d), color: c });
+  if (ds.length === 1 || P.g1 === 'd') return today(ds[0]);
+  if (P.g1 === 'a') { const f = fullest(ds); return tile({ pop: 'drv', on: P.pop === 'drv', k: `Drive ${f.l} free`, v: `${f.free} GB`, warn: isLow(f), cnt: `1 of ${ds.length}`, s: f.speed, frac: share(f), color: c }); }
+  if (P.g1 === 'b') {
+    const shown = ds.slice(0, 3), more = ds.length - shown.length;
+    return tile({ k: 'Drives free', more: more > 0 ? '+' + more : '', color: c, rows: shown.map(d => `<span class="tr"><span class="tt"><span class="m">${d.l}</span><b class="${isLow(d) ? 'w' : ''}">${d.free} GB</b></span>${bar(share(d), isLow(d) ? 'var(--warn)' : c)}</span>`) });
+  }
+  return '';
+}
+function cardTile(P) {
+  const cs = cardsOf(P), c = 'var(--gpu)', b = busiest(cs);
+  const one = x => tile({ k: 'Graphics', v: PC(x.pct), vs: x.kind, s: vram(x), frac: x.pct / 100, color: c });
+  if (cs.length === 1 || P.g2 === 'd') return one(b);
+  if (P.g2 === 'a') return tile({ pop: 'gpu', on: P.pop === 'gpu', k: b.short, v: PC(b.pct), vs: b.kind, cnt: `1 of ${cs.length}`, s: vram(b), frac: b.pct / 100, color: c });
+  if (P.g2 === 'b') return tile({ k: 'Graphics', color: c, rows: cs.slice(0, 2).map(x => `<span class="tr lg"><span class="tt"><span class="m">${esc(x.short)}</span><b>${PC(x.pct)}</b></span>${bar(x.pct / 100, c)}</span>`), more: cs.length > 2 ? '+' + (cs.length - 2) : '' });
+  return '';
+}
+function popList(P) {
+  if (!P.pop) return '';
+  const drv = P.pop === 'drv', items = drv ? drivesOf(P) : cardsOf(P);
+  const rows = items.map((x, k) => drv
+    ? rowX({ ico: letter(DRV_BG, x.l[0]), name: x.l, val: `${x.free} GB free`, warn: isLow(x), detail: `of ${x.tl} · ${x.speed}`, frac: share(x), color: isLow(x) ? 'var(--warn)' : 'var(--drv)', last: k === items.length - 1 })
+    : rowX({ ico: ico(GPU_BG, G_CHIP), name: x.name + (x.note ? ` (${x.note})` : ''), tg: `${x.kind} leads`, val: PC(x.pct), detail: `${vram(x)} video memory`, frac: x.pct / 100, color: 'var(--gpu)', last: k === items.length - 1 })).join('');
+  return `<div class="pop" role="dialog" aria-label="${drv ? 'Every drive' : 'Every graphics card'}"><div class="ph"><b>${drv ? 'Drives' : 'Graphics cards'}</b><span>${items.length} ${drv ? 'drives' : 'cards'}</span><button class="ib" type="button" data-act="pop" data-k="${P.pop}" aria-label="Close the list">${I_X}</button></div>${rows}</div>`;
+}
+
+/* ---------- compact footer figures ---------- */
+const fig = (color, pre, val, post, opts = {}) => `<span class="fg">${sq(color)}${pre ? `<span>${pre}</span>` : ''}<b class="${opts.warn ? 'w' : ''}">${val}</b>${post ? `<span>${post}</span>` : ''}${opts.val2 ? `<b>${opts.val2}</b>` : ''}${opts.more ? `<span>${opts.more}</span>` : ''}</span>`;
+function footFigs(P) {
+  const ds = drivesOf(P), cs = cardsOf(P), b = busiest(cs), net = fig('var(--net)', '', '↓' + D.net.down, '', { val2: '↑' + D.net.up });
+  if (P.g3 === 'b') return [...cs.map(c => fig('var(--gpu)', cs.length > 1 ? esc(c.short) : 'Graphics', PC(c.pct))), ...ds.map(d => fig('var(--drv)', d.l, `${d.free} GB`, 'free', { warn: isLow(d) })), net].join('');
+  if (P.g3 === 'a') { const f = fullest(ds); return fig('var(--gpu)', 'Graphics', PC(b.pct), '', { more: cs.length > 1 ? '+' + (cs.length - 1) : '' }) + fig('var(--drv)', f.l, `${f.free} GB`, 'free', { warn: isLow(f), more: ds.length > 1 ? '+' + (ds.length - 1) : '' }) + net; }
+  return fig('var(--gpu)', 'Graphics', PC(b.pct)) + fig('var(--drv)', 'C:', `${ds[0].free} GB`, 'free') + net;
+}
+
+/* ---------- the panel as a renderer: panelHTML(P) -> html ---------- */
+function panelHTML(P) {
+  const co = P.view === 'compact', m = P.sort === 'm', used = D.mem.used.toFixed(1) + ' GB', lw = lowWords(drivesOf(P), P);
+  const ctl = `<div class="ctl"><button class="ib" type="button" data-act="view" aria-label="${co ? 'Switch to the expanded view' : 'Switch to the compact view'}">${co ? I_TO_EXPANDED : I_TO_COMPACT}</button><span class="ib" aria-hidden="true">${I_GEAR}</span><button class="ib" type="button" data-act="close" aria-label="Hide the panel">${I_X}</button></div>`;
+  const top = `<div class="top"><div class="hd">${LOGO}<span class="ttl">Pulse</span>${co && lw ? `<span class="cwarn"><span>${lw}</span></span>` : ''}${ctl}</div>${co ? '' : `<p class="st${lw ? ' w' : ''}" style="margin:0"><span>${lw || 'Running smoothly'}</span></p>`}</div>`;
+  const pct = Math.round(D.mem.used / D.mem.total * 100);
+  const heroes = co
+    ? `<section class="duo mini"><div class="mt o"><div><div class="lab">${sq('var(--cpu)')}<span>Processor</span></div><div class="big">${D.cpu.pct}%</div></div><div class="fig">${spark(D.cpu.hist, 'var(--cpu)')}</div></div><div class="mt"><div><div class="lab">${sq('var(--mem)')}<span>Memory</span></div><div class="big sm">${used}</div></div><div class="fig">${spark(D.mem.hist, 'var(--mem)')}</div></div></section>`
+    : `<section class="duo"><div class="hero o">${sq('var(--cpu)')}<div class="lab">Processor</div><div class="big">${D.cpu.pct}%</div><div class="fig">${spark(D.cpu.hist, 'var(--cpu)')}</div><div class="sub">${D.cpu.cores} cores · up ${D.cpu.up}</div></div><div class="hero">${sq('var(--mem)')}<div class="lab">Memory</div><div class="big">${used}</div><div class="fig">${spark(D.mem.hist, 'var(--mem)')}</div><div class="sub">of ${D.mem.total} GB · ${pct}%</div></div></section>`;
+  const seg = `<div class="pseg"><button type="button" data-act="sort" data-s="m" aria-pressed="${m}">Memory</button><button type="button" data-act="sort" data-s="c" aria-pressed="${!m}">Processor</button></div>`;
+  const apps = [...D.apps].sort((a, b) => (m ? b.mem - a.mem : b.cpu - a.cpu)).slice(0, co ? 3 : 5);
+  const max = m ? Math.max(...D.apps.map(a => a.mem), D.wsl.mem) : Math.max(5, ...D.apps.map(a => a.cpu), D.wsl.cpu);
+  const appRows = apps.map(a => { const o = { ico: letter(a.c, a.name[0]), name: a.name, val: m ? MB(a.mem) : PC(a.cpu), frac: (m ? a.mem : a.cpu) / max, color: m ? 'var(--mem)' : 'var(--cpu)', detail: esc(a.exe) + (a.procs > 1 ? ` · ${a.procs} processes` : '') }; return co ? rowC(o) : rowX(o); }).join('');
+  const list = `<section class="ah"><h2>Top apps</h2>${seg}</section><div class="lst">${appRows}${wslRows(P, co, true)}</div>`;
+  if (co) return `${top}${heroes}${list}<footer class="cfoot">${footFigs(P)}</footer>`;
+  const dg = P.drives > 1 && P.g1 === 'c', cg = P.cards > 1 && P.g2 === 'c';
+  const grows = dg || cg ? `<div class="grows">${cg ? cardGroup(P) : ''}${dg ? driveGroup(P) : ''}</div>` : '';
+  const tiles = [cg ? '' : cardTile(P), dg ? '' : driveTile(P), tile({ k: 'Network', v: '↓ ' + D.net.down, s: '↑ ' + D.net.up, color: 'var(--net)' })].filter(Boolean);
+  const tri = `<section class="tri" style="grid-template-columns:repeat(${tiles.length},minmax(0,1fr))">${tiles.join('')}</section>`;
+  return `${top}${heroes}${list}${grows}${tri}<footer class="foot"><kbd>Alt+Shift+P</kbd><span>opens and closes Pulse</span><span class="ago">2s ago</span></footer>${popList(P)}`;
+}
+
+/* ---------- choices ---------- */
+const GROUPS = [
+  { id: 'g1', title: '1. Several drives, expanded view', blurb: 'Only on a PC with two or more fixed drives. With one drive the Drive tile stays as it is today (set Drives to 1 above to check). Tap the tile or the Drives row in the panel to try each one.', rec: '<b>My pick: A.</b> The tiles keep their size and look, the tile shows the drive that needs you (the fullest one), and every drive is one tap away. B has no room for speeds at a third of the panel width. C reuses the WSL arrow you know, but it takes about one app row from the list for good, and three more when open.', opts: [
+    { id: 'a', title: 'A Fullest drive, tap for all', d: 'The tile shows the fullest drive and a small "1 of 3". Tap it: a list over the tiles shows every drive with its free space, a thin bar and its speed. Tap again, or the X, to close.', tag: 'My pick' },
+    { id: 'b', title: 'B Short rows inside the tile', d: 'Up to three one-line rows in the same tile height, each with free space and a thin bar. A fourth drive adds "+1" in the corner. No speeds.' },
+    { id: 'c', title: 'C A Drives row with an arrow', d: 'The Drive tile goes. A Drives row sits above the tiles, like the WSL row: tap it to open one line per drive. Graphics and Network get wider.' },
+    { id: 'd', title: 'D Today: always C:', d: 'The tile always shows C:, as now. Other drives are not shown anywhere.' }] },
+  { id: 'g2', title: '2. Several graphics cards, expanded view', blurb: 'Only on a PC with two or more cards, often a gaming card plus the one built into the processor. Every PC gets the video memory line ("9.2 of 16 GB") now: set Cards to 1 above to see that tile.', rec: '<b>My pick: A.</b> Same reason as drives: the tile stays calm and names the busy card, and the list has every card with its kind of work and video memory. The built-in card is idle most of the time, so it should not take space of its own.', opts: [
+    { id: 'a', title: 'A Busiest card, tap for all', d: 'The tile names the busiest card, its busy percent, what kind of work leads, its video memory and "1 of 2". Tap it for every card.', tag: 'My pick' },
+    { id: 'b', title: 'B Short rows inside the tile', d: 'Both cards as two rows inside the tile, each with busy percent and a thin bar. No room for the kind of work or video memory.' },
+    { id: 'c', title: 'C A Graphics row with an arrow', d: 'The Graphics tile goes. A Graphics row above the tiles opens to one line per card with its work and video memory.' },
+    { id: 'd', title: 'D Busiest card only', d: 'The one-card tile with video memory, showing the busiest card. The second card is not named anywhere.' }] },
+  { id: 'g3', title: '3. Compact view footer', blurb: 'The one line of small figures at the bottom of the compact view. With one drive and one card it stays as it is today.', rec: '<b>My pick: A.</b> It stays one line, it shows the drive that is nearly full in the warning color, and "+2" tells you there is more in the expanded view. B is complete but wraps to a second line on this sample, so the panel grows. C keeps showing C: while D: is the one running out.', opts: [
+    { id: 'a', title: 'A Worst drive and busiest card, with a count', d: '"Graphics 14% +1" and "D: 41 GB free +2": the fullest drive and the busiest card, plus how many more there are.', tag: 'My pick' },
+    { id: 'b', title: 'B Every drive and card', d: 'Each card and each drive is its own small figure. The line wraps to a second one when they do not fit.' },
+    { id: 'c', title: 'C Today', d: '"Graphics 14% · C: 296 GB free" as now. The other drives and cards show only in the expanded view.' }] },
+  { id: 'g4', title: '4. The "nearly full" warning', blurb: 'What the header line says when two drives are nearly full (under 8% free). For this group the sample makes E: low too, with 48 GB free. With only one low drive both say "Drive D: is nearly full". The compact view shows it next to the title.', rec: '<b>My pick: B.</b> Naming only D: hides that E: is running out too. With one low drive it still names that drive, so you know where to look. Both fit the compact header.', opts: [
+    { id: 'name', title: 'A Name the fullest', d: '"Drive D: is nearly full", the one with the least space left.' },
+    { id: 'count', title: 'B Count them', d: '"2 drives are nearly full". With one low drive it names it, as today.', tag: 'My pick' }] }
+];
+const sel = { g1: 'a', g2: 'a', g3: 'a', g4: 'count' };
+const S = { view: 'expanded', drives: 3, cards: 2, sort: 'm', pop: null, openG: { wsl: false, drv: false, gpu: false }, twoLow: false, open: true, zoom: true};
+const stars = store.get('stars', {});
+const P_of = (over = {}) => ({ view: S.view, drives: S.drives, cards: S.cards, sort: S.sort, pop: S.pop, openG: S.openG, twoLow: S.twoLow, ...sel, ...over });
+
+function paint(el, P) { el.className = 'pulse ' + (P.view === 'compact' ? 'co' : 'ex'); el.innerHTML = panelHTML(P); }
+function measure(over) {
+  const el = $('#measp'); paint(el, P_of({ pop: null, openG: { wsl: false, drv: false, gpu: false }, ...over }));
+  const l = el.querySelector('.lst'), p = el.querySelector('.pop'), w = el.querySelector('.cwarn'), f = el.querySelector('.cfoot');
+  return { h: el.offsetHeight, w: el.offsetWidth, list: l ? l.clientHeight : 0, pop: p ? p.offsetHeight : 0, need: w ? Math.ceil(w.firstChild.getBoundingClientRect().width) : 0, room: w ? w.clientWidth : 0, lines: f ? new Set([...f.children].map(c => c.offsetTop)).size : 0 };
+}
+
+/* ---------- options list ---------- */
+const optsEl = $('#opts');
+const STAR = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.8z"/></svg>';
+optsEl.innerHTML = GROUPS.map(g => `<div class="grp"><div class="gh"><h2>${g.title}</h2><p>${g.blurb}</p></div><div class="rec">${g.rec}</div>${g.opts.map(o => `<article class="opt" tabindex="0" role="button" data-g="${g.id}" data-o="${o.id}" aria-pressed="false"><div class="ot"><h3>${o.title}</h3>${o.tag ? `<span class="tag">${o.tag}</span>` : ''}<button class="star" type="button" data-star="${g.id}.${o.id}" aria-pressed="false" aria-label="Star ${esc(o.title)}: keep this one">${STAR}</button></div><p class="d">${o.d}</p><p class="px" data-px="${g.id}.${o.id}"></p></article>`).join('')}</div>`).join('') +
+  `<div class="picks"><p id="pickLine">Star what you want to keep. Starred = keep, unstarred = drop.</p><button type="button" id="copy"><b id="copyT">Copy my picks</b><small>Starred = keep, unstarred = drop</small></button><textarea id="copyOut" rows="5" readonly hidden aria-label="Your picks, to copy"></textarea></div>` +
+  `<p class="note"><b>Left out:</b> a drive tile that cycles through the drives every few seconds (moving text is hard to read at a glance and you cannot tell which drive you missed), and one tile per drive (four or more tiles do not fit a 380 px row). Heights are measured from the panel drawn on this page. The expanded panel is always 380 × 580, so for groups 1 and 2 what changes is the room left for the apps list. Names and numbers are sample data.</p>`;
+
+function px(id, html) { const e = optsEl.querySelector(`[data-px="${id}"]`); if (e && e.innerHTML !== html) e.innerHTML = html; }
+function stats() {
+  const base = measure({ view: 'expanded', drives: 1, cards: 1 }).list;
+  const dim = r => `${r.w} × ${r.h} px`;
+  for (const o of ['a', 'b', 'c', 'd']) {
+    const r = measure({ view: 'expanded', drives: 3, g1: o });
+    let t = `${dim(r)}, apps list ${r.list} px <small>(today ${base} px)`;
+    if (o === 'a') t += `; list over the tiles ${measure({ view: 'expanded', drives: 3, g1: o, pop: 'drv' }).pop} px tall`;
+    if (o === 'c') t += `; ${measure({ view: 'expanded', drives: 3, g1: o, openG: { wsl: false, drv: true, gpu: false } }).list} px with the drives open`;
+    px('g1.' + o, t + '</small>');
+    const g = measure({ view: 'expanded', cards: 2, g2: o });
+    let u = `${dim(g)}, apps list ${g.list} px <small>(today ${base} px)`;
+    if (o === 'a') u += `; list over the tiles ${measure({ view: 'expanded', cards: 2, g2: o, pop: 'gpu' }).pop} px tall`;
+    if (o === 'c') u += `; ${measure({ view: 'expanded', cards: 2, g2: o, openG: { wsl: false, drv: false, gpu: true } }).list} px with the cards open`;
+    px('g2.' + o, u + '</small>');
+  }
+  const ct = measure({ view: 'compact', drives: 1, cards: 1 }).h;
+  for (const o of ['a', 'b', 'c']) { const r = measure({ view: 'compact', drives: 3, cards: 2, g3: o }); px('g3.' + o, `${dim(r)}, footer ${r.lines} line${r.lines > 1 ? 's' : ''} <small>(today ${ct} px)</small>`); }
+  for (const o of ['name', 'count']) { const r = measure({ view: 'compact', drives: 3, twoLow: true, g4: o }); px('g4.' + o, `Compact header: needs ${r.need} px of ${r.room} px <small>${r.need <= r.room ? 'fits' : 'cut off'}</small>`); }
+}
+
+/* ---------- stage ---------- */
+function fit() {
+  const st = $('#stage'), h = $('#holder'), p = $('#pulse'), tb = st.querySelector('.taskbar').offsetHeight, W = st.clientWidth, H = st.clientHeight;
+  h.style.setProperty('--s', '1'); const pw = p.offsetWidth, ph = p.offsetHeight;
+  const whole = (H - tb - 18) / ph, s = Math.min(1, (W - 20) / pw, S.zoom ? Infinity : whole);
+  h.style.setProperty('--s', Math.max(.1, s).toFixed(4)); h.style.bottom = (tb + 10) + 'px';
+  const pcs = `${S.drives === 1 ? '1 drive' : '3 drives'}, ${S.cards === 1 ? '1 card' : '2 cards'}`;
+  $('#zoom').setAttribute('aria-pressed', S.zoom);
+  $('#hint').innerHTML = `<b>${pcs}${S.drives === 1 && S.cards === 1 ? ': as today' : ''}</b>${S.twoLow && S.drives > 1 ? ', E: low too' : ''} · ${pw} × ${ph} px at ${Math.round(s * 100)}%${s > whole + .001 ? ', top cut off' : ''}`;
+}
+function draw() {
+  const P = P_of(), p = $('#pulse'), l = p.querySelector('.lst'), keep = l ? l.scrollTop : 0;
+  paint(p, P);
+  const nl = p.querySelector('.lst'); if (nl) nl.scrollTop = keep;
+  for (const b of document.querySelectorAll('[data-view]')) b.setAttribute('aria-pressed', b.dataset.view === S.view);
+  for (const b of document.querySelectorAll('[data-drives]')) b.setAttribute('aria-pressed', +b.dataset.drives === S.drives);
+  for (const b of document.querySelectorAll('[data-cards]')) b.setAttribute('aria-pressed', +b.dataset.cards === S.cards);
+  for (const o of optsEl.querySelectorAll('.opt')) o.setAttribute('aria-pressed', sel[o.dataset.g] === o.dataset.o);
+  $('#holder').dataset.open = S.open ? '1' : '0';
+  fit(); stats();
+}
+
+/* ---------- interactions ---------- */
+$('#pulse').addEventListener('click', e => {
+  const t = e.target.closest('[data-act]');
+  if (!t) { if (S.pop) { S.pop = null; draw(); } return; }
+  const a = t.dataset.act, k = t.dataset.k;
+  if (a === 'view') { S.view = S.view === 'compact' ? 'expanded' : 'compact'; S.pop = null; }
+  else if (a === 'close') { S.open = false; S.pop = null; }
+  else if (a === 'sort') { S.sort = t.dataset.s; S.pop = null; }
+  else if (a === 'grp') { S.openG = { ...S.openG, [k]: !S.openG[k] }; S.pop = null; }
+  else if (a === 'pop') S.pop = S.pop === k ? null : k;
+  draw();
+});
+$('#tray').onclick = () => { S.open = !S.open; S.pop = null; draw(); };
+$('#zoom').onclick = () => { S.zoom = !S.zoom; fit(); };
+for (const b of document.querySelectorAll('[data-view]')) b.onclick = () => { S.view = b.dataset.view; S.pop = null; draw(); };
+for (const b of document.querySelectorAll('[data-drives]')) b.onclick = () => { S.drives = +b.dataset.drives; S.pop = null; S.openG = { ...S.openG, drv: false }; draw(); };
+for (const b of document.querySelectorAll('[data-cards]')) b.onclick = () => { S.cards = +b.dataset.cards; S.pop = null; S.openG = { ...S.openG, gpu: false }; draw(); };
+function choose(g, o) {
+  sel[g] = o; S.pop = null; S.open = true; S.twoLow = g === 'g4'; S.zoom = g !== 'g4';
+  if (g === 'g1') { S.view = 'expanded'; S.drives = 3; S.openG = { ...S.openG, drv: false }; }
+  if (g === 'g2') { S.view = 'expanded'; S.cards = 2; S.openG = { ...S.openG, gpu: false }; }
+  if (g === 'g3') { S.view = 'compact'; S.drives = 3; S.cards = 2; }
+  if (g === 'g4') S.drives = 3;
+  draw();
+}
+optsEl.addEventListener('click', e => {
+  const st = e.target.closest('.star');
+  if (st) { stars[st.dataset.star] = !stars[st.dataset.star]; store.set('stars', stars); picks(); $('#copyOut').hidden = true; $('#copyT').textContent = 'Copy my picks'; return; }
+  const o = e.target.closest('.opt'); if (o) choose(o.dataset.g, o.dataset.o);
+});
+optsEl.addEventListener('keydown', e => { const o = e.target.closest('.opt'); if (o && e.target === o && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); choose(o.dataset.g, o.dataset.o); } });
+
+function picks() {
+  const lines = [];
+  for (const g of GROUPS) {
+    const keep = g.opts.filter(o => stars[g.id + '.' + o.id]).map(o => o.title), drop = g.opts.filter(o => !stars[g.id + '.' + o.id]).map(o => o.title);
+    lines.push(g.title.replace(/^\d+\. /, '') + '\n  Keep: ' + (keep.join('; ') || 'nothing starred') + '\n  Drop: ' + (drop.join('; ') || 'nothing'));
+  }
+  for (const b of optsEl.querySelectorAll('.star')) b.setAttribute('aria-pressed', !!stars[b.dataset.star]);
+  const n = Object.values(stars).filter(Boolean).length;
+  $('#pickLine').textContent = (n ? n + ' starred. ' : 'Star what you want to keep. ') + 'Starred = keep, unstarred = drop.';
+  return 'Pulse with several drives or graphics cards, my picks. Starred = keep, unstarred = drop.\n\n' + lines.join('\n\n');
+}
+$('#copy').onclick = () => {
+  const t = picks(), out = $('#copyOut'), show = () => { out.value = t; out.hidden = false; out.focus(); out.select(); $('#copyT').textContent = 'Select and copy the text below'; };
+  try { navigator.clipboard.writeText(t).then(() => { $('#copyT').textContent = 'Copied'; }, show); } catch { show(); }
+};
+
+/* light and dark */
+const isDark = () => { const t = document.documentElement.dataset.theme; return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; };
+const themeLabel = () => { $('#theme').textContent = isDark() ? 'Light' : 'Dark'; };
+$('#theme').onclick = () => { document.documentElement.dataset.theme = isDark() ? 'light' : 'dark'; themeLabel(); };
+matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', themeLabel);
+
+new ResizeObserver(fit).observe($('#stage'));
+themeLabel(); picks(); draw();
+}
+</script>
