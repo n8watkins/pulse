@@ -50,6 +50,26 @@ The notification is the tray icon's own (`Shell_NotifyIconW`, shown by Windows 1
 The alert runs on the reader that already refreshes while the panel is hidden; the per-process scan for the top app happens once, when a notification is due.
 The Windows call lives in `apps/native/src/notice.rs`, so another platform can supply its own.
 
+## Graphics
+
+The Graphics tile shows how busy the graphics card is, the way Task Manager's GPU page does: each engine's use is summed over the processes, and the busiest engine of any kind is the figure.
+A card running a local model is busy on its compute engines while its 3D engine idles, so reading only 3D (as Pulse used to) showed about 1% on a card that was really working.
+When the leading engine is not drawing, a muted word after the percent says what it is: "Compute", "Video" (decode, encode or AMD's combined video engine), "Copying" or "Other".
+The second line is dedicated video memory in use and the card's total, for example "2.7 of 16 GB".
+The compact view's footer keeps only the percent: the memory does not fit next to the drive and network figures without crowding them.
+
+Where the figures come from (Windows, `crates/pulse-readings/src/cards.rs`, the pure rules in `gpu.rs`):
+
+- `\GPU Engine(*)\Utilization Percentage` for use, one instance per process and engine, keyed by the adapter's LUID.
+- `\GPU Adapter Memory(*)\Dedicated Usage` for memory in use, matched to the card by LUID.
+- DXGI for each card's name, total dedicated memory and whether it is a software adapter.
+  `dxgi.dll` is loaded once at start and released, and again only when the counters name a card the list does not have (a new card, or a driver restart that gave a card a new LUID), at most once a minute.
+- Software adapters (such as "Microsoft Basic Render Driver") are left out; the processor's integrated graphics is a card like any other.
+
+`Snapshot::gpus` lists every card and `Snapshot::gpu_pct` stays the busiest card's figure.
+With several cards the tile shows the busiest one (a tie goes to the card with more video memory, so an idle discrete card wins over idle integrated graphics) and its title is that card's short name ("RX 7800 XT" for "AMD Radeon RX 7800 XT") in place of "Graphics".
+No reading at all stays "Not reported", never 0%.
+
 ## Coding-agent sessions in the WSL list
 
 Inside "WSL (Linux)", each coding-agent session (Claude Code, Codex CLI, Gemini CLI, Cursor Agent, Aider, opencode and the other agents the labeller marks) is one row: the product mark, the agent, "·" and the name of the folder it runs in, a dot (green when busy, grey when idle) and the value of the active sort (memory in Memory sort, percent in Processor sort).
@@ -183,6 +203,8 @@ Environment hooks, for tests and screenshots:
 - `PULSE_STRESS=1` feeds worst-case tile values and very long names (app names, exe lines, Linux program labels with a count, 14 agent sessions (busy and idle, a long folder name, the home folder, none readable, two in one folder), 128 dev servers with 5-digit and several ports, the busy status line), to check that every text ends in an ellipsis or wraps and nothing is cut.
 - `PULSE_SCALE=<factor>` (1.0 to 4.0) forces the display scale: Slint draws at that factor, the window is sized and placed (12 logical px from the work-area corner) at that factor, the app icons are asked for at the scaled pixel size (36 px at 1.5) and the tray icon size follows it.
   It simulates scaling on a 100% monitor for screenshots; it is not a real scaled monitor, and per-monitor DPI changes when dragging between monitors are untested.
+- `PULSE_GPUS=0|1|2` replaces the graphics readings with that many made-up cards: none (the tile says "Not reported"), one, or two (the second, busier one is the card shown, named in the title).
+  It works with `PULSE_SAMPLE=1`, with the real reader, and with `PULSE_STRESS=1`, whose cards carry the widest figures (100% on compute, a very long name, "95.9 of 96 GB"); without it the sample and the stress data have one card.
 - `PULSE_BATTERY=<percent>,<plugged 0|1>` replaces the battery reading (for example `12,0` or `80,1`), to see the Battery tile on a desktop PC.
 - `PULSE_WORK_H=<logical px>` pretends the work area is that tall, to check the panel on a short display.
 - `PULSE_OPEN=settings` starts with the Settings screen open (for screenshots).

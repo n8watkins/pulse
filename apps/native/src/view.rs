@@ -4,7 +4,7 @@
 use crate::marks::{self, Mark};
 use crate::sessions::{self, Line};
 use pulse_platform::{GroupsOpen, PanelView, Sort};
-use pulse_readings::{AppRow, Snapshot, Wsl, WslProc, WslSession};
+use pulse_readings::{AppRow, Gpu, GpuEngine, Snapshot, Wsl, WslProc, WslSession};
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
@@ -257,7 +257,15 @@ pub struct Status {
 /// The bottom row of tiles (and the battery tile when there is a battery).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tiles {
+    /// The Graphics tile's title: "Graphics", or with several cards the short
+    /// name of the one shown (the busiest).
+    pub gpu_head: String,
     pub gpu_big: String,
+    /// The kind of work that leads, after the figure, when it is not drawing
+    /// ("Compute", "Video"); empty otherwise.
+    pub gpu_tag: String,
+    /// Video memory: "9.2 of 16 GB".
+    pub gpu_sub: String,
     /// No reading: smaller text, no bar fill.
     pub gpu_missing: bool,
     pub gpu_frac: f32,
@@ -284,7 +292,7 @@ pub struct BatteryView {
 /// Readings beyond the first panel half. Stand-in until `Snapshot` carries them.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Extra {
-    pub gpu_pct: Option<f32>,
+    pub gpus: Vec<Gpu>,
     pub disk_free: u64,
     pub disk_total: u64,
     pub disk_read_bps: u64,
@@ -299,7 +307,7 @@ impl Extra {
     /// (PULSE_STRESS=1, a development knob).
     pub fn stress() -> Self {
         Self {
-            gpu_pct: None,
+            gpus: stress_gpus(1),
             disk_free: 999 * (1 << 30),
             disk_total: 1000 * (1 << 30),
             disk_read_bps: 600 * (1 << 20),
@@ -312,7 +320,7 @@ impl Extra {
 
     pub fn from_snapshot(s: &Snapshot) -> Self {
         Self {
-            gpu_pct: s.gpu_pct,
+            gpus: s.gpus.clone(),
             disk_free: s.disk_free,
             disk_total: s.disk_total,
             disk_read_bps: s.disk_read_bps,
@@ -437,6 +445,35 @@ fn stress_sessions() -> Vec<WslSession> {
         x.pid = 100 + u32::try_from(i).unwrap_or(0);
     }
     v
+}
+
+/// Graphics cards with the widest figures (`PULSE_STRESS=1`, `PULSE_GPUS`
+/// picks 0, 1 or 2 of them): 100% on compute, a long name, "95.9 of 96 GB";
+/// the second card is nearly as busy, so the first is the one shown.
+pub fn stress_gpus(cards: usize) -> Vec<Gpu> {
+    let gb = |tenths: u64| tenths * (1 << 30) / 10;
+    let card = |name: &str, busy: f32, lead: GpuEngine, used: u64, total: u64| Gpu {
+        // Any distinct key will do.
+        luid: name.len().try_into().unwrap_or(0),
+        name: name.into(),
+        busy_pct: Some(busy),
+        lead: Some(lead),
+        mem_used: Some(gb(used)),
+        mem_total: Some(gb(total)),
+    };
+    [
+        card(
+            "NVIDIA GeForce RTX 4090 Laptop GPU with a very long name",
+            100.0,
+            GpuEngine::Compute,
+            959,
+            960,
+        ),
+        card("AMD Radeon RX 7800 XT", 99.0, GpuEngine::Copy, 159, 160),
+    ]
+    .into_iter()
+    .take(cards)
+    .collect()
 }
 
 /// The first Linux label of the stress rows. `PULSE_STRESS_LEN=<n>` cuts or
@@ -1085,13 +1122,21 @@ fn tiles(x: &Extra) -> Tiles {
     } else {
         x.disk_total.saturating_sub(x.disk_free) as f64 / x.disk_total as f64
     };
+    let card = pulse_readings::busiest_gpu(&x.gpus);
+    let busy = card.and_then(|g| g.busy_pct);
     Tiles {
-        gpu_big: x.gpu_pct.map_or_else(
+        gpu_head: match card {
+            Some(g) if x.gpus.len() > 1 && !g.name.is_empty() => short_gpu_name(&g.name),
+            _ => "Graphics".into(),
+        },
+        gpu_big: busy.map_or_else(
             || "Not reported".into(),
             |g| format!("{}%", round_half_up(f64::from(g))),
         ),
-        gpu_missing: x.gpu_pct.is_none(),
-        gpu_frac: x.gpu_pct.map_or(0.0, |g| (g / 100.0).clamp(0.0, 1.0)),
+        gpu_tag: card.map_or_else(String::new, |g| gpu_tag(g).into()),
+        gpu_sub: card.map_or_else(String::new, |g| video_memory(g.mem_used, g.mem_total)),
+        gpu_missing: busy.is_none(),
+        gpu_frac: busy.map_or(0.0, |g| (g / 100.0).clamp(0.0, 1.0)),
         drive_big: format_bytes(x.disk_free),
         drive_sub: format!(
             "{}/s",
@@ -1108,6 +1153,82 @@ fn tiles(x: &Extra) -> Tiles {
             sub: if plugged { "Plugged in" } else { "On battery" }.into(),
             frac: f32::from(pct.min(100)) / 100.0,
         }),
+    }
+}
+
+/// The kind of work that leads on a card, in plain words, when it is not
+/// drawing (3D) and the card does something (1% or more). Short, so it fits
+/// after "100%" on the 114 px tile.
+fn gpu_tag(g: &Gpu) -> &'static str {
+    if g.busy_pct.is_none_or(|b| round_half_up(f64::from(b)) < 1) {
+        return "";
+    }
+    match g.lead {
+        None | Some(GpuEngine::ThreeD) => "",
+        Some(GpuEngine::Compute) => "Compute",
+        Some(GpuEngine::Copy) => "Copying",
+        Some(GpuEngine::VideoDecode | GpuEngine::VideoEncode | GpuEngine::Video) => "Video",
+        Some(GpuEngine::Other) => "Other",
+    }
+}
+
+/// "9.2 of 16 GB"; under 2 GB of total the total has a decimal too ("0.1 of
+/// 0.5 GB"). Only the use when the total is unknown ("9.2 GB used"), empty
+/// when neither is known.
+#[allow(clippy::cast_precision_loss)]
+fn video_memory(used: Option<u64>, total: Option<u64>) -> String {
+    let gb = |b: u64| b as f64 / GB;
+    let one = |v: f64| {
+        if v >= 99.95 {
+            format!("{}", round_half_up(v))
+        } else {
+            format!("{v:.1}")
+        }
+    };
+    match (used, total) {
+        (Some(u), Some(t)) if t > 0 => {
+            let t = gb(t);
+            let total = if t >= 2.0 {
+                round_half_up(t).to_string()
+            } else {
+                format!("{t:.1}")
+            };
+            format!("{} of {total} GB", one(gb(u)))
+        }
+        (Some(u), _) => format!("{} GB used", one(gb(u))),
+        (None, _) => String::new(),
+    }
+}
+
+/// A card's name without the maker and brand words that every card of that
+/// maker shares: "AMD Radeon RX 7800 XT" is "RX 7800 XT", "NVIDIA GeForce
+/// RTX 4090" is "RTX 4090", "Intel(R) UHD Graphics 770" is "UHD Graphics 770".
+/// A brand stays when only generic words follow ("Radeon Graphics").
+fn short_gpu_name(name: &str) -> String {
+    let clean = name
+        .replace("(TM)", "")
+        .replace("(tm)", "")
+        .replace("(R)", "")
+        .replace("(r)", "")
+        .replace(['\u{2122}', '\u{ae}'], "");
+    let mut words: Vec<&str> = clean.split_whitespace().collect();
+    let maker = ["amd", "ati", "nvidia", "intel"];
+    if words.len() > 1 && maker.contains(&words[0].to_ascii_lowercase().as_str()) {
+        words.remove(0);
+    }
+    let brand = ["radeon", "geforce"];
+    if words.len() > 1
+        && brand.contains(&words[0].to_ascii_lowercase().as_str())
+        && words[1..]
+            .iter()
+            .any(|w| w.chars().any(|c| c.is_ascii_digit()))
+    {
+        words.remove(0);
+    }
+    if words.is_empty() {
+        name.trim().to_owned()
+    } else {
+        words.join(" ")
     }
 }
 
@@ -2149,6 +2270,186 @@ mod tests {
         assert!(low(15, false) && low(12, false) && low(0, false));
         assert!(!low(16, false), "above the line");
         assert!(!low(12, true), "plugged in is not a warning");
+    }
+
+    fn card(name: &str, busy: Option<f32>, lead: GpuEngine, used: u64, total: u64) -> Gpu {
+        Gpu {
+            luid: name.len().try_into().unwrap(),
+            name: name.into(),
+            busy_pct: busy,
+            lead: busy.map(|_| lead),
+            mem_used: Some(used),
+            mem_total: Some(total),
+        }
+    }
+
+    fn gpu_tiles(gpus: Vec<Gpu>) -> Tiles {
+        tiles(&Extra {
+            gpus,
+            ..Extra::default()
+        })
+    }
+
+    #[test]
+    fn one_card_shows_its_use_and_video_memory() {
+        let gb = 1u64 << 30;
+        let t = gpu_tiles(vec![card(
+            "AMD Radeon RX 7800 XT",
+            Some(12.4),
+            GpuEngine::ThreeD,
+            gb * 92 / 10,
+            16_368 << 20,
+        )]);
+        assert_eq!(t.gpu_head, "Graphics");
+        assert_eq!(t.gpu_big, "12%");
+        assert_eq!(t.gpu_tag, "", "drawing needs no word");
+        assert_eq!(t.gpu_sub, "9.2 of 16 GB");
+        assert!(!t.gpu_missing && (t.gpu_frac - 0.124).abs() < 1e-6);
+        // Compute leads: the tile says so.
+        let t = gpu_tiles(vec![card("X", Some(97.0), GpuEngine::Compute, gb, 8 * gb)]);
+        assert_eq!((t.gpu_big.as_str(), t.gpu_tag.as_str()), ("97%", "Compute"));
+        assert_eq!(t.gpu_sub, "1.0 of 8 GB");
+    }
+
+    #[test]
+    fn every_kind_of_work_has_plain_words_and_idle_has_none() {
+        let tag = |lead, busy| gpu_tiles(vec![card("X", Some(busy), lead, 0, 1 << 30)]).gpu_tag;
+        assert_eq!(tag(GpuEngine::ThreeD, 50.0), "");
+        assert_eq!(tag(GpuEngine::Compute, 50.0), "Compute");
+        assert_eq!(tag(GpuEngine::Copy, 50.0), "Copying");
+        assert_eq!(tag(GpuEngine::VideoDecode, 50.0), "Video");
+        assert_eq!(tag(GpuEngine::VideoEncode, 50.0), "Video");
+        assert_eq!(tag(GpuEngine::Video, 9.3), "Video");
+        assert_eq!(tag(GpuEngine::Other, 50.0), "Other");
+        // Under half a percent reads 0%: no word for it.
+        assert_eq!(tag(GpuEngine::Compute, 0.4), "");
+        assert_eq!(tag(GpuEngine::Compute, 0.5), "Compute");
+    }
+
+    #[test]
+    fn video_memory_reads_used_of_total() {
+        let (gb, mb) = (1u64 << 30, 1u64 << 20);
+        assert_eq!(
+            video_memory(Some(gb * 92 / 10), Some(16 * gb)),
+            "9.2 of 16 GB"
+        );
+        assert_eq!(video_memory(Some(0), Some(16_368 * mb)), "0.0 of 16 GB");
+        assert_eq!(
+            video_memory(Some(100 * mb), Some(512 * mb)),
+            "0.1 of 0.5 GB"
+        );
+        assert_eq!(
+            video_memory(Some(gb * 959 / 10), Some(96 * gb)),
+            "95.9 of 96 GB"
+        );
+        assert_eq!(
+            video_memory(Some(120 * gb), Some(128 * gb)),
+            "120 of 128 GB"
+        );
+        assert_eq!(video_memory(Some(gb * 3), None), "3.0 GB used");
+        assert_eq!(video_memory(Some(gb * 3), Some(0)), "3.0 GB used");
+        assert_eq!(video_memory(None, Some(gb)), "");
+    }
+
+    #[test]
+    fn several_cards_show_the_busiest_by_its_short_name() {
+        let gb = 1u64 << 30;
+        let t = gpu_tiles(vec![
+            card(
+                "AMD Radeon(TM) Graphics",
+                Some(1.0),
+                GpuEngine::ThreeD,
+                0,
+                gb / 2,
+            ),
+            card(
+                "NVIDIA GeForce RTX 4090",
+                Some(64.0),
+                GpuEngine::Compute,
+                20 * gb,
+                24 * gb,
+            ),
+        ]);
+        assert_eq!(t.gpu_head, "RTX 4090");
+        assert_eq!((t.gpu_big.as_str(), t.gpu_tag.as_str()), ("64%", "Compute"));
+        assert_eq!(t.gpu_sub, "20.0 of 24 GB");
+        // Both idle: the card with more memory, not the integrated graphics.
+        let t = gpu_tiles(vec![
+            card(
+                "AMD Radeon(TM) Graphics",
+                Some(0.0),
+                GpuEngine::ThreeD,
+                0,
+                gb / 2,
+            ),
+            card(
+                "AMD Radeon RX 7800 XT",
+                Some(0.0),
+                GpuEngine::ThreeD,
+                gb,
+                16 * gb,
+            ),
+        ]);
+        assert_eq!(t.gpu_head, "RX 7800 XT");
+        // A card without a name keeps the plain title.
+        let t = gpu_tiles(vec![
+            card("", Some(5.0), GpuEngine::ThreeD, 0, gb),
+            card("", Some(1.0), GpuEngine::ThreeD, 0, gb),
+        ]);
+        assert_eq!(t.gpu_head, "Graphics");
+    }
+
+    #[test]
+    fn card_names_lose_the_shared_maker_words() {
+        for (name, short) in [
+            ("AMD Radeon RX 7800 XT", "RX 7800 XT"),
+            ("NVIDIA GeForce RTX 4090", "RTX 4090"),
+            ("NVIDIA RTX A6000", "RTX A6000"),
+            ("AMD Radeon(TM) Graphics", "Radeon Graphics"),
+            ("Intel(R) UHD Graphics 770", "UHD Graphics 770"),
+            ("Intel(R) Arc(TM) A770 Graphics", "Arc A770 Graphics"),
+            ("Intel(R) Iris(R) Xe Graphics", "Iris Xe Graphics"),
+            ("NVIDIA", "NVIDIA"),
+            (
+                "Qualcomm(R) Adreno(TM) X1-85 GPU",
+                "Qualcomm Adreno X1-85 GPU",
+            ),
+            ("  AMD   Radeon RX 6600  ", "RX 6600"),
+        ] {
+            assert_eq!(short_gpu_name(name), short, "{name}");
+        }
+    }
+
+    #[test]
+    fn no_reading_stays_not_reported() {
+        // No card at all.
+        let t = gpu_tiles(Vec::new());
+        assert_eq!(
+            (t.gpu_head.as_str(), t.gpu_big.as_str()),
+            ("Graphics", "Not reported")
+        );
+        assert!(t.gpu_missing && t.gpu_frac == 0.0);
+        assert_eq!((t.gpu_tag.as_str(), t.gpu_sub.as_str()), ("", ""));
+        // A card without an engine reading: still "Not reported", never 0%,
+        // with its memory when that is known.
+        let t = gpu_tiles(vec![card("X", None, GpuEngine::Compute, 1 << 30, 4 << 30)]);
+        assert_eq!(t.gpu_big, "Not reported");
+        assert!(t.gpu_missing && t.gpu_tag.is_empty());
+        assert_eq!(t.gpu_sub, "1.0 of 4 GB");
+    }
+
+    #[test]
+    fn the_stress_cards_are_the_widest_figures() {
+        let t = gpu_tiles(stress_gpus(2));
+        assert_eq!(t.gpu_head, "RTX 4090 Laptop GPU with a very long name");
+        assert_eq!(
+            (t.gpu_big.as_str(), t.gpu_tag.as_str()),
+            ("100%", "Compute")
+        );
+        assert_eq!(t.gpu_sub, "95.9 of 96 GB");
+        let t = gpu_tiles(stress_gpus(1));
+        assert_eq!(t.gpu_head, "Graphics");
+        assert!(stress_gpus(0).is_empty());
     }
 
     fn row(name: &str, exe: &str, mem_mb: u64, cpu: f32) -> AppRow {

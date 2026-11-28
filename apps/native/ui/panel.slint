@@ -545,6 +545,8 @@ component Tile inherits Rectangle {
     in property <bool> bar: true;
     in property <float> frac;
     in property <color> accent;
+    // A muted word after the value, on the same line; empty for none.
+    in property <string> tag;
     // No reading: the value text is smaller so "Not reported" fits.
     in property <bool> small-v: false;
     height: 83px;
@@ -574,16 +576,32 @@ component Tile inherits Rectangle {
         overflow: elide;
     }
 
-    Text {
+    big := Text {
         x: 9px;
         y: 26px;
-        width: parent.width - 18px;
+        width: min(self.preferred-width, parent.width - 18px);
         height: 19px;
         text: root.v;
         font-family: "Space Grotesk";
         font-size: root.small-v ? 13px : 15.5px;
         font-weight: 700;
         color: Theme.ink;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // A muted word after the figure ("Compute"). 1 px lower, so its
+    // baseline meets the bigger figure's.
+    // 11 px regular so "Compute" fits after "100%" in the 114 px tile.
+    if root.tag != "": Text {
+        x: big.x + big.width + 4px;
+        y: 27px;
+        width: max(0px, parent.width - 9px - self.x);
+        height: 19px;
+        text: root.tag;
+        font-family: "Inter";
+        font-size: 11px;
+        color: Theme.mute;
         vertical-alignment: center;
         overflow: elide;
     }
@@ -1293,7 +1311,12 @@ export component PanelWindow inherits Window {
     in property <string> mem-line: "";
     in property <string> mem-fill: "";
     in property <[AppItem]> apps;
+    // Graphics: the title ("Graphics" or the shown card's name), the percent,
+    // the leading kind of work (empty for drawing) and the video memory line.
+    in property <string> gpu-head: "Graphics";
     in property <string> gpu-big: "";
+    in property <string> gpu-tag: "";
+    in property <string> gpu-sub: "";
     in property <bool> gpu-missing: false;
     in property <float> gpu-frac;
     in property <string> drive-big: "";
@@ -1606,9 +1629,10 @@ export component PanelWindow inherits Window {
         x: 11px;
         y: root.tiles-y;
         width: 114px;
-        k: "Graphics";
+        k: root.gpu-head;
         v: root.gpu-big;
-        s: root.gpu-missing ? "" : "3D engine";
+        tag: root.gpu-tag;
+        s: root.gpu-sub;
         small-v: root.gpu-missing;
         bar: !root.gpu-missing;
         frac: root.gpu-frac;
