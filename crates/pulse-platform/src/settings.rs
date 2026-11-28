@@ -139,7 +139,15 @@ pub struct Settings {
     /// view. A file from before the views has a single `wsl_open`, which
     /// becomes the compact view's state.
     pub groups_open: GroupsOpen,
+    /// Notify when memory stays at or above `low_mem_level`. On by default.
+    pub low_mem_alert: bool,
+    /// The alert's level in percent: 80, 85, 90 or 95 (90 by default).
+    pub low_mem_level: u8,
 }
+
+/// The levels the low memory alert offers, and the default.
+pub const LOW_MEM_LEVELS: [u8; 4] = [80, 85, 90, 95];
+pub const DEFAULT_LOW_MEM_LEVEL: u8 = 90;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -153,6 +161,8 @@ impl Default for Settings {
             appearance: Appearance::System,
             view: PanelView::Expanded,
             groups_open: GroupsOpen::default(),
+            low_mem_alert: true,
+            low_mem_level: DEFAULT_LOW_MEM_LEVEL,
         }
     }
 }
@@ -293,6 +303,15 @@ impl Settings {
         {
             out.view = v;
         }
+        if let Some(b) = map.get("low_mem_alert").and_then(Value::as_bool) {
+            out.low_mem_alert = b;
+        }
+        if let Some(n) = map.get("low_mem_level").and_then(Value::as_u64) {
+            out.low_mem_level = match u8::try_from(n) {
+                Ok(l) if LOW_MEM_LEVELS.contains(&l) => l,
+                _ => DEFAULT_LOW_MEM_LEVEL,
+            };
+        }
         // The single field of older files is the compact view's state.
         if let Some(b) = map.get("wsl_open").and_then(Value::as_bool) {
             out.groups_open.set(PanelView::Compact, "wsl", b);
@@ -328,6 +347,26 @@ mod tests {
         assert_eq!(s.view, PanelView::Expanded);
         assert!(!s.groups_open.is_open(PanelView::Compact, "wsl"));
         assert!(s.groups_open.is_open(PanelView::Expanded, "wsl"));
+        assert!(s.low_mem_alert);
+        assert_eq!(s.low_mem_level, 90);
+    }
+
+    #[test]
+    fn an_old_file_gets_the_low_memory_alert_on_at_90() {
+        let s = Settings::from_json(r#"{"hotkey":"Alt+Shift+P","sort":"processor"}"#);
+        assert!(s.low_mem_alert);
+        assert_eq!(s.low_mem_level, 90);
+    }
+
+    #[test]
+    fn the_low_memory_alert_reads_its_fields_and_rejects_odd_levels() {
+        let s = Settings::from_json(r#"{"low_mem_alert":false,"low_mem_level":85}"#);
+        assert!(!s.low_mem_alert);
+        assert_eq!(s.low_mem_level, 85);
+        for bad in ["70", "91", "300", "-5", "\"90\"", "null"] {
+            let s = Settings::from_json(&format!(r#"{{"low_mem_level":{bad}}}"#));
+            assert_eq!(s.low_mem_level, 90, "{bad}");
+        }
     }
 
     #[test]
@@ -347,6 +386,8 @@ mod tests {
                 expanded: BTreeMap::from([("wsl".to_owned(), false)]),
                 compact: BTreeMap::from([("wsl".to_owned(), true)]),
             },
+            low_mem_alert: false,
+            low_mem_level: 95,
         };
         s.save_to(&path).unwrap();
         assert!(!dir.join("settings.json.tmp").exists());

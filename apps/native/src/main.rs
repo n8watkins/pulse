@@ -4,10 +4,13 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 #![cfg_attr(not(windows), allow(dead_code))]
 
+mod alert;
 #[cfg(windows)]
 mod app;
 mod logic;
 mod marks;
+#[cfg(windows)]
+mod notice;
 mod record;
 mod sessions;
 mod tray;
