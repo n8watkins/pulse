@@ -488,8 +488,20 @@ fn wsl_proc(label: &str, agent: bool, count: u32, mem_mb: u64, cpu: f32) -> WslP
 
 /// Processor use at or above this is "busy".
 const CPU_BUSY: f32 = 85.0;
-/// Memory use at or above this (percent) is "nearly full".
-const MEM_FULL: u64 = 90;
+/// Memory use at or above this (percent) is "nearly full": the level picked
+/// for the low memory alert, so the header, the tray icon and the alert all
+/// turn at the same point. 90 until the settings are applied, and whenever
+/// the alert is switched off.
+static MEM_FULL: std::sync::atomic::AtomicU8 =
+    std::sync::atomic::AtomicU8::new(pulse_platform::DEFAULT_LOW_MEM_LEVEL);
+
+/// Follows the low memory alert: its level, or the default when it is off.
+pub fn set_mem_full_level(alert_level: Option<u8>) {
+    MEM_FULL.store(
+        alert_level.unwrap_or(pulse_platform::DEFAULT_LOW_MEM_LEVEL),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
 /// A drive under this share free (percent) is "nearly full".
 const DISK_LOW: u8 = 8;
 /// On battery at or under this charge (percent) the battery bar warns.
@@ -499,8 +511,14 @@ const RESTART_AFTER_S: u64 = 7 * 86_400;
 
 /// The header line, first match wins. `apps_fresh`: the app rows are recent
 /// enough to say which app uses the most.
-#[allow(clippy::cast_precision_loss)]
 pub fn status(snap: &Snapshot, sample: bool, apps_fresh: bool) -> Status {
+    let level = MEM_FULL.load(std::sync::atomic::Ordering::Relaxed);
+    status_at(snap, sample, apps_fresh, level)
+}
+
+/// [`status`] with the memory level given: memory counts as nearly full at
+/// the same rounded percent the low memory alert uses.
+pub fn status_at(snap: &Snapshot, sample: bool, apps_fresh: bool, mem_full: u8) -> Status {
     let warn = |text: String| Status { text, warn: true };
     if snap.cpu_pct >= CPU_BUSY {
         return warn(match snap.apps_by_cpu.first().filter(|_| apps_fresh) {
@@ -508,7 +526,7 @@ pub fn status(snap: &Snapshot, sample: bool, apps_fresh: bool) -> Status {
             None => "Processor is busy".into(),
         });
     }
-    if snap.mem_total > 0 && snap.mem_used * 100 >= snap.mem_total * MEM_FULL {
+    if snap.mem_total > 0 && crate::alert::percent(snap.mem_used, snap.mem_total) >= mem_full {
         return warn("Memory is nearly full".into());
     }
     // Any drive: if one is under the line, the fullest one is too.
@@ -1743,6 +1761,29 @@ mod tests {
         assert_eq!(t.drive_key, "Drive W: free");
         assert_eq!(t.drive_count, "1 of 26");
         assert_eq!(Extra::stress(0).drives.len(), 1);
+    }
+
+    #[test]
+    fn memory_is_nearly_full_at_the_alert_level() {
+        let mut s = sample();
+        s.cpu_pct = 10.0;
+        s.disk_free = s.disk_total / 2;
+        for level in pulse_platform::LOW_MEM_LEVELS {
+            let at = |pct: u64, s: &mut Snapshot| {
+                s.mem_used = s.mem_total * pct / 100;
+                status_at(s, false, true, level)
+            };
+            let under = at(u64::from(level) - 2, &mut s);
+            assert_eq!(under.text, "Running smoothly", "{level}");
+            assert!(!under.warn);
+            let over = at(u64::from(level), &mut s);
+            assert_eq!(over.text, "Memory is nearly full", "{level}");
+            assert!(over.warn);
+        }
+        // The same rounding as the alert: 89.6 percent counts as 90.
+        s.mem_used = s.mem_total * 896 / 1000;
+        assert!(status_at(&s, false, true, 90).warn);
+        assert_eq!(crate::alert::percent(s.mem_used, s.mem_total), 90);
     }
 
     #[test]
