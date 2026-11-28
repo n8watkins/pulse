@@ -108,6 +108,11 @@ pub struct Wsl {
     /// particular order. They replace the agent groups that used to sit in
     /// `procs`: the number of agents is [`Wsl::agent_count`].
     pub sessions: Vec<WslSession>,
+    /// How many dev servers run in Linux (Linux processes listening on a TCP
+    /// port that are development programs, see the README), counted from all
+    /// processes, not only those among `procs`. `None` when it could not be
+    /// read: then no count is shown, never a wrong one.
+    pub dev_servers: Option<u32>,
 }
 
 impl Wsl {
@@ -115,6 +120,12 @@ impl Wsl {
     #[must_use]
     pub fn agent_count(&self) -> usize {
         self.sessions.len()
+    }
+
+    /// How many dev servers run in Linux, 0 when unknown.
+    #[must_use]
+    pub fn server_count(&self) -> u32 {
+        self.dev_servers.unwrap_or(0)
     }
 }
 
@@ -155,6 +166,9 @@ pub struct WslProc {
     /// `AppRow::cpu_pct` (processor time used between two queries, over the
     /// logical processors of Windows). 0 on the first query.
     pub cpu_pct: f32,
+    /// The TCP ports this group's dev servers listen on, ascending; empty when
+    /// it has none.
+    pub ports: Vec<u16>,
 }
 
 /// An icon as straight (non-premultiplied) RGBA, top-down.
@@ -300,6 +314,11 @@ impl Source for Sample {
                 mem_bytes,
                 #[allow(clippy::cast_possible_truncation)]
                 cpu_pct: (cpu * factor) as f32,
+                ports: match label {
+                    "next-server (v16.4.6)" => vec![3000],
+                    "python3: worker.py" => vec![8000, 8001],
+                    _ => Vec::new(),
+                },
             })
             .collect(),
             // Two sessions share a folder (told apart by run time), one
@@ -331,6 +350,8 @@ impl Source for Sample {
                 pid,
             })
             .collect(),
+            // The two with ports above, and one small server not among the rows.
+            dev_servers: Some(3),
         });
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         Snapshot {
@@ -394,6 +415,11 @@ mod tests {
             .filter(|x| x.folder.as_deref() == Some("pulse"))
             .count();
         assert_eq!(pulse, 2);
+        // Dev servers: counted, two of them with ports on a row, one not on a row.
+        assert_eq!(w.dev_servers, Some(3));
+        assert_eq!(w.server_count(), 3);
+        assert_eq!(w.procs.iter().filter(|p| !p.ports.is_empty()).count(), 2);
+        assert_eq!(Wsl::default().server_count(), 0);
         let off = s.read(false);
         assert!(off.apps_by_cpu.is_empty() && off.wsl.is_none());
     }

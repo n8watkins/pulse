@@ -24,6 +24,14 @@ const FOLDER_MAX: usize = 40;
 const STAT_MARK: &str = "@@PULSE_STAT";
 const META_MARK: &str = "@@PULSE_META";
 const CWD_MARK: &str = "@@PULSE_CWD";
+const PORTS_MARK: &str = "@@PULSE_PORTS";
+const LPS_MARK: &str = "@@PULSE_LPS";
+const LCWD_MARK: &str = "@@PULSE_LCWD";
+
+#[cfg_attr(not(windows), allow(dead_code))]
+mod servers;
+#[cfg(windows)]
+pub(crate) use servers::find_servers;
 
 /// The command run inside the default distro (through `sh -c`), one call:
 /// - the 120 biggest processes by memory (`ps`), each line cut to 240
@@ -35,10 +43,20 @@ const CWD_MARK: &str = "@@PULSE_CWD";
 /// - the home folder and the uptime (to turn a start into a run time);
 /// - the working folder of every process (`ls -l` of `/proc/<pid>/cwd`, at
 ///   most 400 lines; only the user's own processes are readable, which is
-///   every session).
+///   every session);
+/// - the listening TCP sockets (`ss -ltnpH`, run once, at most 300 lines), with
+///   the process rows (`ps -p`) and working folders (`pwdx`) of the processes
+///   that own them (at most 100): a small dev server is not among the 120
+///   biggest, so it is looked up by its id. Without `ss` the part says so
+///   ([`PORTS_MISSING`]) and no server is counted. `set -f` and an empty `IFS`
+///   keep the unquoted output of `ss` in one piece (lines, no globbing); `IFS`
+///   is a comma again for the last command.
 ///
 /// There is no quote character in it: `wsl.exe` would mangle it.
-pub(crate) const PS_COMMAND: &str = "ps -eo pid=,rss=,comm=,args= --sort=-rss | head -n 120 | cut -c1-240; echo @@PULSE_STAT; cat /proc/[0-9]*/stat 2>/dev/null; echo @@PULSE_META; echo H=$HOME; cat /proc/uptime; echo @@PULSE_CWD; ls -l /proc/[0-9]*/cwd 2>/dev/null | head -n 400";
+pub(crate) const PS_COMMAND: &str = "ps -eo pid=,rss=,comm=,args= --sort=-rss | head -n 120 | cut -c1-240; echo @@PULSE_STAT; cat /proc/[0-9]*/stat 2>/dev/null; echo @@PULSE_META; echo H=$HOME; cat /proc/uptime; echo @@PULSE_CWD; ls -l /proc/[0-9]*/cwd 2>/dev/null | head -n 400; echo @@PULSE_PORTS; set -f; IFS=; S=$(ss -ltnpH 2>/dev/null || echo @@PULSE_NOSS); printf %s $S | head -n 300; echo; L=$(printf %s $S | grep -o pid=[0-9]* | cut -d= -f2 | sort -nu | head -n 100 | paste -sd,); echo @@PULSE_LPS; [ ${#L} -gt 0 ] && ps -o pid=,rss=,comm=,args= -p $L 2>/dev/null | cut -c1-240; echo @@PULSE_LCWD; IFS=,; [ ${#L} -gt 0 ] && pwdx $L 2>/dev/null; :";
+
+/// The line the port part holds when `ss` is missing or failed.
+pub(crate) const PORTS_MISSING: &str = "@@PULSE_NOSS";
 
 /// Clock ticks per second of the times in `/proc/<pid>/stat` (`USER_HZ`, 100
 /// on every Linux kernel WSL ships).
@@ -51,6 +69,12 @@ pub(crate) struct Sections<'a> {
     pub stat: &'a str,
     pub meta: &'a str,
     pub cwd: &'a str,
+    /// Listening sockets (see [`servers`]).
+    pub ports: &'a str,
+    /// Process rows of the listening processes, like `ps`.
+    pub lps: &'a str,
+    /// Their working folders (`pwdx`).
+    pub lcwd: &'a str,
 }
 
 /// Splits the output of [`PS_COMMAND`] at its marker lines. A marker is a line
@@ -70,12 +94,18 @@ pub(crate) fn split_output(out: &str) -> Sections<'_> {
     }
     let (ps, rest) = cut(out, STAT_MARK);
     let (stat, rest) = cut(rest, META_MARK);
-    let (meta, cwd) = cut(rest, CWD_MARK);
+    let (meta, rest) = cut(rest, CWD_MARK);
+    let (cwd, rest) = cut(rest, PORTS_MARK);
+    let (ports, rest) = cut(rest, LPS_MARK);
+    let (lps, lcwd) = cut(rest, LCWD_MARK);
     Sections {
         ps,
         stat,
         meta,
         cwd,
+        ports,
+        lps,
+        lcwd,
     }
 }
 
@@ -353,7 +383,12 @@ const RUNTIMES: &[&str] = &[
 ];
 
 fn is_runtime(exe: &str) -> bool {
-    RUNTIMES.contains(&exe)
+    RUNTIMES.contains(&exe) || is_python(exe)
+}
+
+/// `python`, `python3` and `python3.<minor>`.
+fn is_python(exe: &str) -> bool {
+    matches!(exe, "python" | "python3")
         || exe
             .strip_prefix("python3.")
             .is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
@@ -694,6 +729,7 @@ pub(crate) fn build(r: &Reading<'_>) -> (Vec<WslProc>, Vec<WslSession>) {
             count: 0,
             mem_bytes: 0,
             cpu_pct: 0.0,
+            ports: Vec::new(),
         });
         g.count += 1;
         g.mem_bytes += row.rss_kib * 1024;
@@ -721,6 +757,15 @@ pub(crate) fn build(r: &Reading<'_>) -> (Vec<WslProc>, Vec<WslSession>) {
     (by_mem, sessions)
 }
 
+/// Puts the ports of the dev servers on the groups of the same label.
+pub(crate) fn apply_ports(procs: &mut [WslProc], ports: &HashMap<String, Vec<u16>>) {
+    for p in procs {
+        if let Some(found) = ports.get(&p.label) {
+            p.ports.clone_from(found);
+        }
+    }
+}
+
 #[cfg(windows)]
 pub(crate) use runner::Query;
 
@@ -728,8 +773,8 @@ pub(crate) use runner::Query;
 #[cfg(windows)]
 mod runner {
     use super::{
-        PS_COMMAND, Reading, build, cpu_shares, decode_utf16le, default_is_running, parse_cwds,
-        parse_meta, parse_stat, split_output, ticks,
+        PS_COMMAND, Reading, apply_ports, build, cpu_shares, decode_utf16le, default_is_running,
+        find_servers, parse_cwds, parse_meta, parse_stat, split_output, ticks,
     };
     use crate::{WslProc, WslSession};
     use std::collections::HashMap;
@@ -750,6 +795,7 @@ mod runner {
     pub(crate) struct Found {
         pub procs: Vec<WslProc>,
         pub sessions: Vec<WslSession>,
+        pub dev_servers: Option<u32>,
     }
 
     #[derive(Default)]
@@ -850,7 +896,7 @@ mod runner {
             ),
             None => (HashMap::new(), HashMap::new()),
         };
-        let (procs, sessions) = build(&Reading {
+        let (mut procs, sessions) = build(&Reading {
             ps: parts.ps,
             stats: &stats,
             cpu: &shares,
@@ -861,7 +907,26 @@ mod runner {
             was_busy: &was_busy,
         });
         let busy = sessions.iter().map(|x| (x.pid, x.busy)).collect();
-        (Found { procs, sessions }, Some((at, now_ticks, busy)))
+        let servers = find_servers(
+            parts.ports,
+            parts.lps,
+            parts.lcwd,
+            &cwds,
+            &stats,
+            home.as_deref(),
+        );
+        let dev_servers = servers.as_ref().map(|s| s.count);
+        if let Some(s) = &servers {
+            apply_ports(&mut procs, &s.ports);
+        }
+        (
+            Found {
+                procs,
+                sessions,
+                dev_servers,
+            },
+            Some((at, now_ticks, busy)),
+        )
     }
 
     /// Runs `wsl.exe` with no window and returns stdout, or `None` on failure
@@ -1038,9 +1103,59 @@ mod tests {
         assert!(PS_COMMAND.contains("head -n 120"));
         assert!(PS_COMMAND.contains("cut -c1-240"));
         assert!(PS_COMMAND.contains("head -n 400"));
-        for mark in [STAT_MARK, META_MARK, CWD_MARK] {
+        for mark in [
+            STAT_MARK,
+            META_MARK,
+            CWD_MARK,
+            PORTS_MARK,
+            LPS_MARK,
+            LCWD_MARK,
+            PORTS_MISSING,
+        ] {
             assert!(PS_COMMAND.contains(mark));
         }
+        // The sockets are read once, bounded, and the part cannot fail the
+        // whole call.
+        assert_eq!(PS_COMMAND.matches("ss -ltnpH").count(), 1);
+        assert!(PS_COMMAND.contains("head -n 300") && PS_COMMAND.contains("head -n 100"));
+        assert!(PS_COMMAND.trim_end().ends_with("; :"));
+    }
+
+    #[test]
+    fn splits_the_port_parts() {
+        let text = format!(
+            "1 2 a b\n{STAT_MARK}\n{META_MARK}\nH=/h\n{CWD_MARK}\nc\n{PORTS_MARK}\nLISTEN x\n\n{LPS_MARK}\n5 6 n n\n{LCWD_MARK}\n5: /w\n"
+        );
+        let p = split_output(&text);
+        assert_eq!(p.cwd, "c\n");
+        assert_eq!(p.ports, "LISTEN x\n\n");
+        assert_eq!(p.lps, "5 6 n n\n");
+        assert_eq!(p.lcwd, "5: /w\n");
+        // An old or cut output has no port parts.
+        let p = split_output("1 2 a b\n");
+        assert_eq!((p.ports, p.lps, p.lcwd), ("", "", ""));
+    }
+
+    #[test]
+    fn ports_go_to_the_group_of_the_same_label() {
+        let mut procs = vec![
+            WslProc {
+                label: "next-server (v16.4.6)".into(),
+                ..WslProc::default()
+            },
+            WslProc {
+                label: "rust-analyzer".into(),
+                ..WslProc::default()
+            },
+        ];
+        let ports: HashMap<String, Vec<u16>> = [
+            ("next-server (v16.4.6)".to_string(), vec![3000, 3001]),
+            ("not shown".to_string(), vec![1]),
+        ]
+        .into();
+        apply_ports(&mut procs, &ports);
+        assert_eq!(procs[0].ports, vec![3000, 3001]);
+        assert!(procs[1].ports.is_empty());
     }
 
     #[test]

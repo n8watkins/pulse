@@ -371,6 +371,7 @@ impl Source for Windows {
                     cpu_pct,
                     procs: found.procs,
                     sessions: found.sessions,
+                    dev_servers: found.dev_servers,
                 }
             });
             if wsl.is_none() {
@@ -513,13 +514,23 @@ mod tests {
         println!("wsl: {} MiB, {:.1}%", wsl.mem_bytes >> 20, wsl.cpu_pct);
         for p in &wsl.procs {
             println!(
-                "  {:<30} agent={} x{} {} MiB",
+                "  {:<30} agent={} x{} {} MiB ports={:?}",
                 p.label,
                 p.agent,
                 p.count,
-                p.mem_bytes >> 20
+                p.mem_bytes >> 20,
+                p.ports
             );
         }
+        println!("dev servers: {:?}", wsl.dev_servers);
+        // `ss` is part of the distro here, so the count is known; ports are
+        // ascending and only on rows that are dev servers.
+        assert!(wsl.dev_servers.is_some(), "no dev server count");
+        assert!(
+            wsl.procs
+                .iter()
+                .all(|p| p.ports.windows(2).all(|w| w[0] < w[1]))
+        );
         println!("sessions: {}", wsl.agent_count());
         for x in &wsl.sessions {
             println!(

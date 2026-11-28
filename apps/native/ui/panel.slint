@@ -54,6 +54,8 @@ export struct AppItem {
     // it has run, shown only when another session looks the same.
     state: int,
     age: string,
+    // A Linux program that is a dev server: its port (":3000", ":3000 +1").
+    port: string,
     group-end: bool,
     // A Linux program with a product mark: the glyph path (24 x 24) replaces
     // the letter on a tile in the brand color (`color`).
@@ -940,6 +942,8 @@ component AppRow inherits Rectangle {
             width: root.width - 30px - 2px - tail - val-c.preferred-width - 8px;
             alignment: start;
             spacing: 6px;
+            // The name keeps its width: a long summary (with the dev server
+            // count) is the text that ends in an ellipsis.
             Text {
                 text: root.item.name;
                 font-family: "Inter";
@@ -948,7 +952,7 @@ component AppRow inherits Rectangle {
                 color: Theme.ink;
                 vertical-alignment: center;
                 overflow: elide;
-                min-width: 0px;
+                min-width: self.preferred-width;
             }
 
             if root.item.detail != "": Text {
@@ -1063,6 +1067,17 @@ component AppRow inherits Rectangle {
             }
             if root.item.age != "": Text {
                 text: root.item.age;
+                font-family: "Inter";
+                font-size: 11px;
+                color: Theme.mute;
+                vertical-alignment: center;
+            }
+
+            if root.item.port != "": Rectangle {
+                width: 5px;
+            }
+            if root.item.port != "": Text {
+                text: root.item.port;
                 font-family: "Inter";
                 font-size: 11px;
                 color: Theme.mute;
