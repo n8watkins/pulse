@@ -566,6 +566,8 @@ impl Panel {
             if s.low_mem_alert { s.low_mem_level } else { 0 },
             Ordering::Relaxed,
         );
+        // The header line and the tray icon warn at the alert's level.
+        view::set_mem_full_level(s.low_mem_alert.then_some(s.low_mem_level));
         let shown = if self.hotkey_ok.get() { &s.hotkey } else { "" };
         let (cap, foot) = view::footer_hint(shown);
         ui.set_cap(cap.into());
