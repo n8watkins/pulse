@@ -387,6 +387,7 @@ impl Panel {
         ui.set_drive_count(t.drive_count.into());
         ui.set_drive_missing(t.drive_missing);
         ui.set_drive_frac(t.drive_frac);
+        ui.set_drive_low(t.drive_low);
         ui.set_net_big(t.net_big.into());
         ui.set_net_sub(t.net_sub.into());
         ui.set_net_down(t.net_down.into());

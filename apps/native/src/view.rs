@@ -280,6 +280,9 @@ pub struct Tiles {
     /// No drive could be read: smaller text, no bar fill.
     pub drive_missing: bool,
     pub drive_frac: f32,
+    /// The drive shown is nearly full: its bar and dot take the warning
+    /// color, as the battery bar does.
+    pub drive_low: bool,
     pub net_big: String,
     pub net_sub: String,
     /// The compact footer's figures: no space after the arrow.
@@ -1170,6 +1173,7 @@ fn tiles(x: &Extra) -> Tiles {
         },
         drive_missing: drive.is_none(),
         drive_frac: drive.map_or(0.0, Drive::used_share),
+        drive_low: drive.is_some_and(|d| d.free_under(DISK_LOW)),
         net_big: format!("\u{2193} {}/s", format_bytes(x.net_down_bps)),
         net_sub: format!("\u{2191} {}/s", format_bytes(x.net_up_bps)),
         net_down: format!("\u{2193}{}/s", format_bytes(x.net_down_bps)),
@@ -1856,13 +1860,15 @@ mod tests {
         assert_eq!(t.drive_sub, "42 MB/s");
         assert_eq!(t.drive_count, "1 of 3");
         assert!((t.drive_frac - 891.0 / 931.0).abs() < 1e-4);
+        // Nearly full: the bar warns. A roomy drive's does not.
+        assert!(t.drive_low && !one.drive_low);
         // None read: says so, with no bar.
         let none = tiles(&Extra::default());
         assert_eq!(
             (none.drive_key.as_str(), none.drive_big.as_str()),
             ("Drive", "Not reported")
         );
-        assert!(none.drive_missing && none.drive_frac == 0.0);
+        assert!(none.drive_missing && none.drive_frac == 0.0 && !none.drive_low);
         assert_eq!(
             (none.drive_sub.as_str(), none.drive_count.as_str()),
             ("", "")

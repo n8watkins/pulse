@@ -1328,6 +1328,7 @@ export component PanelWindow inherits Window {
     in property <string> drive-sub: "";
     in property <string> drive-count: "";
     in property <bool> drive-missing: false;
+    in property <bool> drive-low: false;
     in property <float> drive-frac;
     in property <string> net-big: "";
     in property <string> net-sub: "";
@@ -1657,7 +1658,7 @@ export component PanelWindow inherits Window {
         small-v: root.drive-missing;
         bar: !root.drive-missing;
         frac: root.drive-frac;
-        accent: Theme.c-drive;
+        accent: root.drive-low ? Theme.warn : Theme.c-drive;
     }
 
     if !root.compact: Tile {
@@ -1774,7 +1775,7 @@ export component PanelWindow inherits Window {
             val: root.drive-missing ? "n/a" : root.drive-big;
             // "1 of 3" only when the whole row still fits.
             post: root.drive-missing ? "" : root.drive-count != "" && gpu-fig.width + drive-counted.width + net-fig.width + 2 * 10px <= root.width - 26px ? "free · " + root.drive-count : "free";
-            accent: Theme.c-drive;
+            accent: root.drive-low ? Theme.warn : Theme.c-drive;
         }
 
         net-fig := FootFig {
