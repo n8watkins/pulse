@@ -13,9 +13,17 @@
 #                                 {"shell":..., "open_ms":[...]} and keep running
 # -View expanded|compact (and -WslOpen 0|1) start every run in that view, for
 # comparing the views' memory with PULSE_VIEW and PULSE_WSL_OPEN.
-# Every start also gets its own PULSE_SETTINGS_DIR (a scratch folder under -Out)
-# and PULSE_INSTANCE_NAME (a unique name), so measuring never touches the real
-# settings, the running Pulse or the Run key.
+# Every start also gets its own PULSE_SETTINGS_DIR (a scratch folder under -Out,
+# with a settings file whose shortcut is Ctrl+Shift+F20), PULSE_INSTANCE_NAME (a
+# unique name) and PULSE_AUTOSTART_NAME, so measuring never touches the real
+# settings, the running Pulse, its shortcut or the Run key.
+#
+# The hidden figures are taken with the REAL reader (report keys "hidden" and
+# "hiddenNoTrim"): that is what an installed Pulse does all day. The sample
+# reader does almost no work between refreshes, so its hidden figure (keys
+# "hiddenSample" and "hiddenSampleNoTrim") is far lower and is only useful for
+# comparing two builds, never as the app's memory use. Each hidden entry also
+# has processorPctOfOneCore, the process's processor time over the idle wait.
 # The panel window is titled "Pulse" (a visible top-level window of the process
 # is used when no window has that title).
 #
@@ -96,7 +104,7 @@ function Descendants([int]$root) {
 $all_started = New-Object System.Collections.Generic.List[int]
 $runs = 0
 function Start-Shell([hashtable]$envVars) {
-  foreach ($k in @("PULSE_SAMPLE", "PULSE_SHOW", "PULSE_THEME", "PULSE_SELFTEST", "PULSE_REPORT", "PULSE_NOTRIM", "PULSE_SETTINGS_DIR", "PULSE_INSTANCE_NAME", "PULSE_VIEW", "PULSE_WSL_OPEN")) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+  foreach ($k in @("PULSE_SAMPLE", "PULSE_SHOW", "PULSE_THEME", "PULSE_SELFTEST", "PULSE_REPORT", "PULSE_NOTRIM", "PULSE_SETTINGS_DIR", "PULSE_INSTANCE_NAME", "PULSE_AUTOSTART_NAME", "PULSE_VIEW", "PULSE_WSL_OPEN")) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
   foreach ($k in $envVars.Keys) { Set-Item "env:$k" $envVars[$k] }
   if ($View) { $env:PULSE_VIEW = $View }
   if ($WslOpen) { $env:PULSE_WSL_OPEN = $WslOpen }
@@ -104,14 +112,17 @@ function Start-Shell([hashtable]$envVars) {
   $runNo = $script:runs + 1
   $env:PULSE_SETTINGS_DIR = Join-Path $out "settings\run$runNo"
   New-Item -ItemType Directory -Force $env:PULSE_SETTINGS_DIR | Out-Null
+  # A test shortcut, so a measured copy never takes (or fights over) the real one.
+  [IO.File]::WriteAllText((Join-Path $env:PULSE_SETTINGS_DIR "settings.json"), '{"hotkey":"Ctrl+Shift+F20"}')
   $env:PULSE_INSTANCE_NAME = "Pulse-measure-" + [guid]::NewGuid().ToString("N")
+  $env:PULSE_AUTOSTART_NAME = "Pulse-measure-test"
   # A fresh WebView2 profile folder per start (ignored by shells without a
   # webview), so a run never waits on the previous run's dying processes.
   $script:runs++
   $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $out "profiles\run$($script:runs)"
   try { $p = Start-Process $exe -PassThru } finally {
     foreach ($k in $envVars.Keys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
-    Remove-Item env:PULSE_SETTINGS_DIR, env:PULSE_INSTANCE_NAME, env:PULSE_VIEW, env:PULSE_WSL_OPEN -ErrorAction SilentlyContinue
+    Remove-Item env:PULSE_SETTINGS_DIR, env:PULSE_INSTANCE_NAME, env:PULSE_AUTOSTART_NAME, env:PULSE_VIEW, env:PULSE_WSL_OPEN -ErrorAction SilentlyContinue
     Remove-Item env:WEBVIEW2_USER_DATA_FOLDER -ErrorAction SilentlyContinue
   }
   $all_started.Add($p.Id); Add-Content $pidFile $p.Id
@@ -204,21 +215,32 @@ try {
   $area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
   $report.workArea = "$($area.X),$($area.Y) $($area.Width)x$($area.Height)"
 
-  # (a) Hidden: the panel never shown, sample readings.
-  # Trimmed (the default) and with PULSE_NOTRIM=1 (a shell that trims itself
-  # on hide stops doing so).
-  foreach ($trim in @("trim", "notrim")) {
-    Log "hidden ($trim): start, wait $IdleSeconds s"
-    $vars = @{ PULSE_SAMPLE = "1" }
-    if ($trim -eq "notrim") { $vars.PULSE_NOTRIM = "1" }
-    $proc = Start-Shell $vars
-    Pause-Bounded $IdleSeconds
-    if ($proc.HasExited) { throw "the exe exited while hidden (code $($proc.ExitCode))" }
-    $key = if ($trim -eq "trim") { "hidden" } else { "hiddenNoTrim" }
-    $report[$key] = Memory-Series $proc.Id
-    $report[$key].visibleWindows = @([W]::Windows([uint32]$proc.Id) | Where-Object { $_[2] -eq "1" }).Count
-    Log ("hidden ({0}): private working set {1} MB, commit {2} MB" -f $trim, $report[$key].meanPrivateWorkingSetMb, $report[$key].meanCommitMb)
-    Stop-Shell $proc; $proc = $null
+  # (a) Hidden: the panel never shown. The real reader first (what an installed
+  # copy does), then the sample reader (only for comparing builds). Each one
+  # trimmed (the default) and with PULSE_NOTRIM=1 (a shell that trims itself on
+  # hide stops doing so).
+  foreach ($reader in @("real", "sample")) {
+    foreach ($trim in @("trim", "notrim")) {
+      Log "hidden ($reader, $trim): start, wait $IdleSeconds s"
+      $vars = @{}
+      if ($reader -eq "sample") { $vars.PULSE_SAMPLE = "1" }
+      if ($trim -eq "notrim") { $vars.PULSE_NOTRIM = "1" }
+      $proc = Start-Shell $vars
+      # Processor time over the idle wait, after a short start-up allowance.
+      Pause-Bounded ([math]::Min(10, $IdleSeconds / 3))
+      $proc.Refresh(); $cpu0 = $proc.TotalProcessorTime; $t0 = Get-Date
+      Pause-Bounded ($IdleSeconds - [math]::Min(10, $IdleSeconds / 3))
+      if ($proc.HasExited) { throw "the exe exited while hidden (code $($proc.ExitCode))" }
+      $proc.Refresh(); $cpu1 = $proc.TotalProcessorTime; $t1 = Get-Date
+      $key = if ($reader -eq "real") { "hidden" } else { "hiddenSample" }
+      if ($trim -eq "notrim") { $key += "NoTrim" }
+      $report[$key] = Memory-Series $proc.Id
+      $report[$key].reader = $reader
+      $report[$key].processorPctOfOneCore = [math]::Round(100 * ($cpu1 - $cpu0).TotalSeconds / [math]::Max(1, ($t1 - $t0).TotalSeconds), 2)
+      $report[$key].visibleWindows = @([W]::Windows([uint32]$proc.Id) | Where-Object { $_[2] -eq "1" }).Count
+      Log ("hidden ({0}, {1}): private working set {2} MB, commit {3} MB, processor {4}% of one core" -f $reader, $trim, $report[$key].meanPrivateWorkingSetMb, $report[$key].meanCommitMb, $report[$key].processorPctOfOneCore)
+      Stop-Shell $proc; $proc = $null
+    }
   }
 
   # (b) Self-test: sample readings, the real reader, and sample without the trim.
