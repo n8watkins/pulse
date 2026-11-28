@@ -14,7 +14,10 @@ To remove it, use "Installed apps" in Windows Settings.
 ## Status
 
 The panel is drawn natively with Slint (software Skia renderer), with no webview.
-The owner chose this on 2026-11-25 after comparing it with a Tauri webview shell: the native panel used about 5 MB while open against about 100 MB for the webview.
+The owner chose this on 2026-11-25 after comparing it with a Tauri webview shell, for memory.
+Measured on version 0.4.1 with the real reader (private working set, `scripts/measure.ps1`): about 7 MB while hidden in the tray, using about 0.3 percent of one processor core, and about 12 MB while the panel is open.
+The webview shell measured about 28 MB hidden at best and about 100 MB open.
+Earlier notes and the 0.2.0 release said "about 1 MB hidden": that figure came from a run on sample readings and is the low point right after the panel hides, not what an installed copy holds.
 
 - `apps/native`: the tray app.
 - `crates/pulse-readings`: the system reader (processor, memory, top apps with icons, graphics, drive, network, battery).
@@ -202,11 +205,12 @@ Environment hooks, for tests and screenshots:
 - With any of `PULSE_SAMPLE`, `PULSE_SHOW`, `PULSE_SELFTEST`, `PULSE_MEM_PCT`, `PULSE_SETTINGS_DIR` or `PULSE_INSTANCE_NAME` set, the app does not bring the Run key in line with the setting at start.
   Neither does any exe not named `Pulse.exe` (development builds are `pulse-native.exe`).
   The check at start never takes the Run value over from another existing copy of Pulse; the Settings switch and the tray item write it for the running exe.
-- `scripts/measure.ps1` gives every start its own `PULSE_SETTINGS_DIR` and `PULSE_INSTANCE_NAME`.
+- `scripts/measure.ps1` gives every start its own `PULSE_SETTINGS_DIR` (with the test shortcut Ctrl+Shift+F20), `PULSE_INSTANCE_NAME` and `PULSE_AUTOSTART_NAME`.
 - `--quit` as an argument asks the running app to quit and exits (0 when it is gone, 1 after 5 s); the installer uses it.
 
 Measure with `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\measure.ps1 -Exe <exe> -Out <folder>`.
 It sends no keys, makes no clicks, does not touch the clipboard and never takes focus.
+Its hidden figures (`hidden`, `hiddenNoTrim` in `report.json`) use the real reader and include the processor time over the wait; `hiddenSample` and `hiddenSampleNoTrim` use the sample reader and are only for comparing two builds.
 
 Lint and tests:
 
