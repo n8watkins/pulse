@@ -54,7 +54,7 @@ The Windows call lives in `apps/native/src/notice.rs`, so another platform can s
 The reader lists every fixed local drive with a letter, for example C: and D:.
 Network drives, removable drives (USB sticks, card readers), optical and RAM drives are left out, since asking a sleeping or disconnected one for its size can stall the reader: `GetDriveTypeW` decides, and no size is asked of a drive that is not fixed.
 Volumes without a letter are left out, and so is a drive whose size cannot be read (for example a locked BitLocker drive); it is skipped, never shown as an empty drive.
-The list, the free space and the labels are read again every 30 seconds, so a drive that is plugged in or removed shows up or goes away within 30 seconds, without a restart.
+The list and the free space are read again every 30 seconds (a volume label once, when its drive shows up), so a drive that is plugged in or removed shows up or goes away within 30 seconds, without a restart.
 The speed of each drive comes from its own `\LogicalDisk(<letter>:)\Disk Read Bytes/sec` and `Disk Write Bytes/sec` counters, read on every refresh; a drive that goes away has its counters closed.
 
 The Drive tile shows the fullest drive (the smallest share free) with its own free space and speed, titled with its letter, for example "Drive D: free".

@@ -124,9 +124,9 @@ mod win {
         GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
     };
 
-    /// Drives rarely come and go and space changes slowly: the list, the
-    /// sizes and the labels are read at most this often. Speeds are read on
-    /// every call.
+    /// Drives rarely come and go and space changes slowly: the list and the
+    /// sizes are read at most this often (a label only when its drive first
+    /// shows up). Speeds are read on every call.
     pub(crate) const LIST_EVERY: Duration = Duration::from_secs(30);
 
     fn wide(s: &str) -> Vec<u16> {
@@ -195,7 +195,13 @@ mod win {
             if self.listed.is_none_or(|t| t.elapsed() >= LIST_EVERY) {
                 // SAFETY: no arguments.
                 let mask = unsafe { GetLogicalDrives() };
-                self.list = scan(mask, kind, space, label);
+                // A label is read once, when the drive first shows up.
+                let old = std::mem::take(&mut self.list);
+                self.list = scan(mask, kind, space, |name| {
+                    old.iter()
+                        .find(|d| d.name == name)
+                        .map_or_else(|| label(name), |d| d.label.clone())
+                });
                 let names: Vec<&str> = self.list.iter().map(|d| d.name.as_str()).collect();
                 self.meters.sync(&names, |name| {
                     let [r, w] = counter_paths(name);
