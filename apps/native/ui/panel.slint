@@ -592,15 +592,15 @@ component Tile inherits Rectangle {
 
     // A muted word after the figure ("Compute"). 1 px lower, so its
     // baseline meets the bigger figure's.
+    // 11 px regular so "Compute" fits after "100%" in the 114 px tile.
     if root.tag != "": Text {
-        x: big.x + big.width + 5px;
+        x: big.x + big.width + 4px;
         y: 27px;
         width: max(0px, parent.width - 9px - self.x);
         height: 19px;
         text: root.tag;
         font-family: "Inter";
-        font-size: 12px;
-        font-weight: 500;
+        font-size: 11px;
         color: Theme.mute;
         vertical-alignment: center;
         overflow: elide;
