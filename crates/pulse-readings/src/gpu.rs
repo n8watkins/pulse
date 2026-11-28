@@ -195,9 +195,27 @@ pub(crate) fn unknown_luids<'a>(
     engines.keys().copied().filter(move |l| !known.contains(l))
 }
 
+/// Whether a DXGI adapter is a software one, left out of the cards. The flag
+/// is not always set for the "Microsoft Basic Render Driver" (seen on a
+/// virtual machine with no graphics card), so its vendor and device ids
+/// (Microsoft, 0x1414 and 0x8c) count as well.
+pub(crate) fn is_software_adapter(flagged: bool, vendor_id: u32, device_id: u32) -> bool {
+    flagged || (vendor_id == 0x1414 && device_id == 0x8c)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_basic_render_driver_is_software_with_or_without_the_flag() {
+        assert!(is_software_adapter(true, 0x1002, 0x747e));
+        assert!(is_software_adapter(false, 0x1414, 0x8c));
+        assert!(is_software_adapter(true, 0x1414, 0x8c));
+        // A real card, and Microsoft's Hyper-V video adapter, are not.
+        assert!(!is_software_adapter(false, 0x1002, 0x747e));
+        assert!(!is_software_adapter(false, 0x1414, 0x5353));
+    }
 
     const CARD: Luid = 0x0001_8B3A;
     const A: &str = "pid_100_luid_0x00000000_0x00018B3A_phys_0_eng_0_engtype_3D";

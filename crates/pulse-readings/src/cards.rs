@@ -184,7 +184,11 @@ fn list() -> Option<(Vec<Adapter>, Vec<Luid>)> {
                 if get_desc(adapter, &mut d) >= 0 {
                     let luid =
                         gpu::luid_from_parts(d.adapter_luid.LowPart, d.adapter_luid.HighPart);
-                    if d.flags & DXGI_ADAPTER_FLAG_SOFTWARE != 0 {
+                    if gpu::is_software_adapter(
+                        d.flags & DXGI_ADAPTER_FLAG_SOFTWARE != 0,
+                        d.vendor_id,
+                        d.device_id,
+                    ) {
                         software.push(luid);
                     } else if !cards.iter().any(|c: &Adapter| c.luid == luid) {
                         let n = d.description.iter().position(|&u| u == 0).unwrap_or(128);
