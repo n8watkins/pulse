@@ -374,7 +374,10 @@ impl Panel {
         ui.set_mem_line(v.mem_line.into());
         ui.set_mem_fill(v.mem_fill.into());
         let t = v.tiles;
+        ui.set_gpu_head(t.gpu_head.into());
         ui.set_gpu_big(t.gpu_big.into());
+        ui.set_gpu_tag(t.gpu_tag.into());
+        ui.set_gpu_sub(t.gpu_sub.into());
         ui.set_gpu_missing(t.gpu_missing);
         ui.set_gpu_frac(t.gpu_frac);
         ui.set_drive_big(t.drive_big.into());
@@ -996,8 +999,13 @@ fn spawn_reader(
     rx: mpsc::Receiver<ReaderCmd>,
 ) {
     std::thread::spawn(move || {
+        // A development knob: 0, 1 or 2 made-up graphics cards.
+        let cards = std::env::var("PULSE_GPUS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .map(|n| n.min(2));
         let mut src: Box<dyn Source> = if sample {
-            Box::new(Sample::default())
+            Box::new(Sample::with_cards(cards.unwrap_or(1)))
         } else {
             pulse_readings::system()
         };
@@ -1082,6 +1090,10 @@ fn spawn_reader(
             if stress {
                 // A development knob: very long names everywhere.
                 view::stress_snapshot(&mut snap);
+                snap.set_gpus(view::stress_gpus(cards.unwrap_or(1)));
+            } else if let Some(n) = cards.filter(|_| !sample) {
+                // The real reader with made-up cards in place of the real ones.
+                snap.set_gpus(pulse_readings::sample_gpus(n, 0.5));
             }
             if warn {
                 // A development knob: shows the warning colors.
@@ -1095,6 +1107,7 @@ fn spawn_reader(
             let mut extra = view::Extra::from_snapshot(&snap);
             if stress {
                 extra = view::Extra::stress();
+                extra.gpus.clone_from(&snap.gpus);
             }
             *latest
                 .lock()

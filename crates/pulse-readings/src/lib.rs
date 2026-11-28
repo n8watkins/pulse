@@ -7,6 +7,8 @@
 
 use serde::Serialize;
 
+#[cfg(windows)]
+mod cards;
 // The pure logic builds everywhere so its tests run on Linux too.
 #[cfg_attr(not(windows), allow(dead_code))]
 mod gpu;
@@ -46,8 +48,14 @@ pub struct Snapshot {
     /// The WSL 2 virtual machine and the Linux programs in it. `Some` whenever
     /// a `vmmemWSL` (or `vmmem`) process exists and `with_apps` is true.
     pub wsl: Option<Wsl>,
-    /// 3D engine use, 0 to 100. `None` when the PC does not report it (never 0).
+    /// The busiest graphics card's use, 0 to 100 (see [`Gpu::busy_pct`]):
+    /// `gpus`' busiest, kept for readers of one figure. `None` when no card
+    /// reports it (never 0).
     pub gpu_pct: Option<f32>,
+    /// The graphics cards, software adapters (such as "Microsoft Basic Render
+    /// Driver") left out, in the order Windows lists them. Empty when none is
+    /// found.
+    pub gpus: Vec<Gpu>,
     /// Drive C:, bytes.
     pub disk_free: u64,
     pub disk_total: u64,
@@ -59,6 +67,101 @@ pub struct Snapshot {
     pub net_up_bps: u64,
     /// `None` when the PC has no battery.
     pub battery: Option<Battery>,
+}
+
+impl Snapshot {
+    /// Replaces the cards and keeps `gpu_pct` in step with them.
+    pub fn set_gpus(&mut self, gpus: Vec<Gpu>) {
+        self.gpu_pct = busiest_gpu(&gpus).and_then(|g| g.busy_pct);
+        self.gpus = gpus;
+    }
+}
+
+/// One graphics card. Filled on Windows from the engine and adapter memory
+/// counters and the adapter list; another platform's reader fills the same
+/// fields.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Gpu {
+    /// The adapter's LUID (high word above the low one), the key that ties
+    /// the counters to the card. Stable until the driver restarts.
+    pub luid: u64,
+    /// As the driver names it, for example "AMD Radeon RX 7800 XT". Empty
+    /// when the adapter list could not be read.
+    pub name: String,
+    /// The busiest engine's use, 0 to 100, as Task Manager's GPU page shows
+    /// it: summed over processes per engine, the largest engine of any kind.
+    /// `None` when the PC does not report it (never 0 for "unknown").
+    pub busy_pct: Option<f32>,
+    /// The kind of work of that busiest engine. `None` with `busy_pct`.
+    pub lead: Option<GpuEngine>,
+    /// Dedicated video memory in use, bytes. `None` when not reported.
+    pub mem_used: Option<u64>,
+    /// Dedicated video memory of the card, bytes. `None` when not known.
+    pub mem_total: Option<u64>,
+}
+
+/// The kind of work an engine of a graphics card does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub enum GpuEngine {
+    /// Drawing: games, the desktop, browsers.
+    #[default]
+    ThreeD,
+    /// General computing, for example local AI models.
+    Compute,
+    /// Moving data in and out of video memory.
+    Copy,
+    VideoDecode,
+    VideoEncode,
+    /// A video engine that does both (AMD's "Video Codec") or other video work.
+    Video,
+    /// Anything else (security, timers, audio).
+    Other,
+}
+
+/// The card the panel shows: the busiest (no reading counts as least busy),
+/// a tie going to the one with more video memory, then to the first listed.
+#[must_use]
+pub fn busiest_gpu(gpus: &[Gpu]) -> Option<&Gpu> {
+    let key = |g: &Gpu| (g.busy_pct.unwrap_or(-1.0), g.mem_total.unwrap_or(0));
+    gpus.iter().reduce(|best, g| {
+        let (a, b) = (key(best), key(g));
+        if b.0 > a.0 || (b.0 == a.0 && b.1 > a.1) {
+            g
+        } else {
+            best
+        }
+    })
+}
+
+/// Made-up cards for the sample data and for `PULSE_GPUS` (0 to 2 of them).
+/// `busy` is the activity factor, 0 to 1. The first is a 16 GB card at
+/// moderate use, drawing or (when busier) running a model on its compute
+/// engines; the second a busier 24 GB card running a model.
+#[must_use]
+pub fn sample_gpus(cards: usize, busy: f64) -> Vec<Gpu> {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let first = Gpu {
+        luid: 0x0001_8B3A,
+        name: "AMD Radeon RX 7800 XT".into(),
+        busy_pct: Some((4.0 + 18.0 * busy) as f32),
+        lead: Some(if busy > 0.55 {
+            GpuEngine::Compute
+        } else {
+            GpuEngine::ThreeD
+        }),
+        mem_used: Some((6.2 * GB as f64 + 3.0 * GB as f64 * busy) as u64),
+        mem_total: Some(16_368 * MB),
+    };
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let second = Gpu {
+        luid: 0x0002_1C40,
+        name: "NVIDIA GeForce RTX 4090".into(),
+        busy_pct: Some((55.0 + 30.0 * busy) as f32),
+        lead: Some(GpuEngine::Compute),
+        mem_used: Some((18.4 * GB as f64 + 2.0 * GB as f64 * busy) as u64),
+        mem_total: Some(24 * GB - 400 * MB),
+    };
+    [first, second].into_iter().take(cards).collect()
 }
 
 /// The battery of a laptop.
@@ -254,9 +357,25 @@ const MB: u64 = 1 << 20;
 
 /// Deterministic sample data: the same sequence on every run, so screenshots
 /// of two panels can be compared pixel for pixel.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Sample {
     tick: u32,
+    cards: usize,
+}
+
+impl Default for Sample {
+    /// One graphics card.
+    fn default() -> Self {
+        Self::with_cards(1)
+    }
+}
+
+impl Sample {
+    /// Sample data with that many graphics cards (see [`sample_gpus`]).
+    #[must_use]
+    pub fn with_cards(cards: usize) -> Self {
+        Self { tick: 0, cards }
+    }
 }
 
 impl Source for Sample {
@@ -353,6 +472,7 @@ impl Source for Sample {
             // The two with ports above, and one small server not among the rows.
             dev_servers: Some(3),
         });
+        let gpus = sample_gpus(self.cards, busy);
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         Snapshot {
             cpu_pct: (24.0 + 14.0 * wave) as f32,
@@ -363,7 +483,8 @@ impl Source for Sample {
             apps,
             apps_by_cpu,
             wsl,
-            gpu_pct: Some((4.0 + 18.0 * busy) as f32),
+            gpu_pct: busiest_gpu(&gpus).and_then(|g| g.busy_pct),
+            gpus,
             disk_free: 296 * GB,
             disk_total: 953 * GB,
             disk_read_bps: (0.2 * MB as f64 + 3.0 * MB as f64 * busy) as u64,
@@ -422,5 +543,45 @@ mod tests {
         assert_eq!(Wsl::default().server_count(), 0);
         let off = s.read(false);
         assert!(off.apps_by_cpu.is_empty() && off.wsl.is_none());
+    }
+
+    #[test]
+    fn sample_has_one_card_or_two_and_gpu_pct_is_the_busiest() {
+        let x = Sample::default().read(false);
+        assert_eq!(x.gpus.len(), 1);
+        assert_eq!(x.gpu_pct, x.gpus[0].busy_pct);
+        let g = &x.gpus[0];
+        assert!(g.mem_used.unwrap() < g.mem_total.unwrap());
+        let two = Sample::with_cards(2).read(false);
+        assert_eq!(two.gpus.len(), 2);
+        let top = busiest_gpu(&two.gpus).unwrap();
+        assert_eq!(top.name, "NVIDIA GeForce RTX 4090");
+        assert_eq!(two.gpu_pct, top.busy_pct);
+        let none = Sample::with_cards(0).read(false);
+        assert!(none.gpus.is_empty() && none.gpu_pct.is_none());
+    }
+
+    #[test]
+    fn the_busiest_card_wins_and_a_tie_goes_to_more_memory() {
+        let card = |busy: Option<f32>, total: u64| Gpu {
+            busy_pct: busy,
+            mem_total: Some(total),
+            ..Gpu::default()
+        };
+        assert!(busiest_gpu(&[]).is_none());
+        let g = [card(Some(5.0), 1), card(Some(40.0), 1), card(None, 9)];
+        assert_eq!(busiest_gpu(&g), Some(&g[1]));
+        // Idle integrated graphics and an idle discrete card: the discrete one.
+        let g = [card(Some(0.0), 512 * MB), card(Some(0.0), 16 * GB)];
+        assert_eq!(busiest_gpu(&g), Some(&g[1]));
+        // An exact tie of everything: the first listed.
+        let g = [card(Some(3.0), GB), card(Some(3.0), GB)];
+        assert!(std::ptr::eq(busiest_gpu(&g).unwrap(), &g[0]));
+        // No reading anywhere: still a card to name, and gpu_pct stays None.
+        let mut s = Snapshot::default();
+        s.set_gpus(vec![card(None, GB)]);
+        assert_eq!((s.gpus.len(), s.gpu_pct), (1, None));
+        s.set_gpus(vec![card(Some(2.0), GB), card(Some(7.5), GB)]);
+        assert_eq!(s.gpu_pct, Some(7.5));
     }
 }
